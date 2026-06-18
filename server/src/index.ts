@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import { env, isProd } from './env.js';
 import { apiRouter } from './routes/index.js';
@@ -14,9 +15,13 @@ const publicDir = path.resolve(__dirname, '../public');
 
 const app = express();
 
-// Detrás del proxy de Render: confiar en 1 salto para que el rate-limit y los logs
-// vean la IP real del cliente (X-Forwarded-For), no la del proxy.
+// Detrás de un proxy (Coolify/Traefik, Render): confiar en 1 salto para que el
+// rate-limit y los logs vean la IP real del cliente (X-Forwarded-For), no la del proxy.
 if (isProd) app.set('trust proxy', 1);
+
+// Compresión gzip de toda respuesta (API JSON + estáticos): clave cuando el cliente
+// está lejos del servidor, reduce mucho el tiempo de transferencia.
+app.use(compression());
 
 // Content-Security-Policy explícita para producción: la PWA usa un script inline
 // (bootstrap de tema), Google Fonts y previews de imagen en data:. Sin esto, el
@@ -71,9 +76,20 @@ app.use('/api', limiteGeneral);
 app.use('/api', apiRouter);
 
 // --- PWA estática (single-service) ---
-app.use(express.static(publicDir));
-// SPA fallback: cualquier ruta que no sea /api devuelve index.html
+// Los assets de Vite llevan hash en el nombre → se pueden cachear de forma agresiva.
+app.use(
+  express.static(publicDir, {
+    setHeaders: (res, filePath) => {
+      if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    },
+  }),
+);
+// SPA fallback: cualquier ruta que no sea /api devuelve index.html (sin cache, para
+// que un deploy nuevo se vea de inmediato).
 app.get(/^(?!\/api).*/, (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 

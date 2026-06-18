@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, ApiError } from '../api';
 import { useAuth, type Usuario } from '../auth';
+import NodoIsotipo from '../brand/NodoIsotipo';
 
 export default function Login() {
   const { login } = useAuth();
@@ -41,7 +42,10 @@ export default function Login() {
   if (!sel) {
     return (
       <div className="login">
-        <div className="login__wordmark">IBÉRICO</div>
+        <div className="login__lockup">
+          <NodoIsotipo size={64} glow />
+          <div className="login__wordmark">NODO</div>
+        </div>
         <p className="subtitle">¿Quién eres?</p>
         <div className="user-grid">
           {usuarios.map((u) => (

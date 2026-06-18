@@ -4,6 +4,7 @@ import { useAuth } from './auth';
 import { useTema } from './theme';
 import { Icono } from './icons';
 import { useOffline } from './offline';
+import NodoIsotipo from './brand/NodoIsotipo';
 
 interface Item {
   ruta: string;
@@ -47,8 +48,8 @@ export default function Shell({ children }: { children: ReactNode }) {
     <div className="shell">
       <aside className="nav-rail">
         <div className="nav-brand">
-          <span className="boar">🐗</span>
-          <span className="nav-wordmark">IBÉRICO</span>
+          <NodoIsotipo size={30} />
+          <span className="nav-wordmark">NODO</span>
         </div>
         <nav className="nav-links">
           {items.map((i) => (

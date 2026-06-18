@@ -10,7 +10,8 @@ import Configuracion from './screens/config/Configuracion';
 import OfflineBanner from './OfflineBanner';
 import SilviaBubble from './silvia/SilviaBubble';
 import Shell from './Shell';
-import type { JSX } from 'react';
+import SplashIntro from './brand/SplashIntro';
+import { useState, type JSX } from 'react';
 
 function SoloAdmin({ children, rol }: { children: JSX.Element; rol: Rol }) {
   const { usuario } = useAuth();
@@ -48,11 +49,22 @@ function AppBody() {
 }
 
 export default function App() {
+  const [splash, setSplash] = useState(() => !sessionStorage.getItem('nodo-splash'));
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AppBody />
-      </BrowserRouter>
-    </AuthProvider>
+    <>
+      {splash && (
+        <SplashIntro
+          onDone={() => {
+            sessionStorage.setItem('nodo-splash', '1');
+            setSplash(false);
+          }}
+        />
+      )}
+      <AuthProvider>
+        <BrowserRouter>
+          <AppBody />
+        </BrowserRouter>
+      </AuthProvider>
+    </>
   );
 }
