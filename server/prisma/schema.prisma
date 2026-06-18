@@ -1,0 +1,481 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ===========================================================================
+//  NÚCLEO MULTI-NEGOCIO + AUTH (Fase 1)
+// ===========================================================================
+
+enum RolUsuario {
+  admin
+  empleado
+}
+
+model negocios {
+  id           BigInt   @id @default(autoincrement())
+  nombre       String
+  tipo         String?
+  zona_horaria String   @default("America/Mexico_City")
+  creado_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  usuarios           usuarios[]
+  socios             socios[]
+  stores             stores[]
+  products           products[]
+  inventory_snapshot inventory_snapshot[]
+  purchases          purchases[]
+  zonas_inventario   zonas_inventario[]
+  ubicaciones_fondos ubicaciones_fondos[]
+  categorias_gasto   categorias_gasto[]
+  semanas            semanas[]
+  movimientos        movimientos[]
+  arqueos            arqueos[]
+  saldos_iniciales   saldos_iniciales[]
+  pasivos            pasivos[]
+  snapshots_patrimonio snapshots_patrimonio[]
+  checklists         checklists[]
+  silvia_mensajes    silvia_mensajes[]
+  silvia_memoria     silvia_memoria[]
+}
+
+model usuarios {
+  id          BigInt        @id @default(autoincrement())
+  negocio_id  BigInt
+  nombre      String
+  rol         RolUsuario    @default(empleado)
+  pin_hash    String
+  activo      Boolean       @default(true)
+  creado_at   DateTime      @default(now()) @db.Timestamptz(6)
+  negocios    negocios      @relation(fields: [negocio_id], references: [id])
+  movimientos movimientos[]
+  arqueos     arqueos[]
+  checklist_item_resultados checklist_item_resultados[]
+
+  @@index([negocio_id])
+}
+
+model socios {
+  id                 BigInt               @id @default(autoincrement())
+  negocio_id         BigInt
+  nombre             String
+  activo             Boolean              @default(true)
+  negocios           negocios             @relation(fields: [negocio_id], references: [id])
+  ubicaciones_fondos ubicaciones_fondos[]
+  movimientos        movimientos[]
+
+  @@index([negocio_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model ingests {
+  id                      BigInt   @id @default(autoincrement())
+  chat_id                 BigInt
+  mode                    String
+  telegram_file_id        String
+  telegram_file_unique_id String?
+  mime_type               String?
+  file_name               String?
+  file_size               Int?
+  created_at              DateTime @default(now()) @db.Timestamptz(6)
+  status                  String   @default("pending")
+  error                   String?
+}
+
+model inventory_lines {
+  snapshot_id        BigInt
+  product_id         BigInt
+  zona_id            BigInt
+  qty_captura        Decimal            @default(0) @db.Decimal(12, 2)
+  // Factor aplicado AL MOMENTO de capturar (snapshot de product_zone_units.factor).
+  // Histórico = 1 (los datos viejos ya estaban en unidad base). total_base = qty_captura * factor.
+  factor             Decimal            @default(1) @db.Decimal(12, 4)
+  products           products           @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  inventory_snapshot inventory_snapshot @relation(fields: [snapshot_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  zonas_inventario   zonas_inventario   @relation(fields: [zona_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@id([snapshot_id, product_id, zona_id])
+  @@index([zona_id])
+}
+
+// ===========================================================================
+//  INVENTARIO v2 — zonas configurables + unidades de captura (Fase 2)
+// ===========================================================================
+
+model zonas_inventario {
+  id         BigInt   @id @default(autoincrement())
+  negocio_id BigInt
+  nombre     String
+  orden      Int      @default(0)
+  negocios   negocios @relation(fields: [negocio_id], references: [id])
+
+  inventory_lines    inventory_lines[]
+  product_zone_units product_zone_units[]
+
+  @@unique([negocio_id, nombre])
+  @@index([negocio_id])
+}
+
+model product_zone_units {
+  id             BigInt           @id @default(autoincrement())
+  product_id     BigInt
+  zona_id        BigInt
+  unidad_captura String
+  factor         Decimal          @default(1) @db.Decimal(12, 4)
+  products       products         @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  zonas_inventario zonas_inventario @relation(fields: [zona_id], references: [id], onDelete: Cascade)
+
+  @@unique([product_id, zona_id])
+  @@index([zona_id])
+}
+
+model producto_costos_historicos {
+  id         BigInt   @id @default(autoincrement())
+  product_id BigInt
+  fecha      DateTime @db.Date
+  costo      Decimal  @db.Decimal(12, 2)
+  products   products @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@index([product_id])
+}
+
+model inventory_snapshot {
+  id              BigInt            @id @default(autoincrement())
+  negocio_id      BigInt
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  inventory_lines inventory_lines[]
+  negocios        negocios          @relation(fields: [negocio_id], references: [id])
+
+  @@index([negocio_id])
+}
+
+model product_aliases {
+  id         BigInt   @id @default(autoincrement())
+  product_id BigInt
+  alias      String   @unique
+  products   products @relation(fields: [product_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([product_id], map: "idx_product_aliases_product_id")
+}
+
+model products {
+  id              BigInt            @id @default(autoincrement())
+  negocio_id      BigInt
+  name            String
+  store_id        BigInt
+  base_qty        Decimal           @default(0) @db.Decimal(12, 2)
+  active          Boolean           @default(true)
+  unit_cost       Decimal?          @db.Decimal(12, 2)
+  inventory_lines inventory_lines[]
+  product_aliases product_aliases[]
+  stores          stores            @relation(fields: [store_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  negocios        negocios          @relation(fields: [negocio_id], references: [id])
+  purchase_lines  purchase_lines[]
+  product_zone_units product_zone_units[]
+  producto_costos_historicos producto_costos_historicos[]
+
+  @@unique([negocio_id, name])
+  @@index([negocio_id])
+}
+
+model purchase_lines {
+  purchase_id BigInt
+  product_id  BigInt
+  qty         Decimal   @default(0) @db.Decimal(12, 2)
+  products    products  @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  purchases   purchases @relation(fields: [purchase_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@id([purchase_id, product_id])
+}
+
+model purchases {
+  id             BigInt           @id @default(autoincrement())
+  negocio_id     BigInt
+  created_at     DateTime         @default(now()) @db.Timestamptz(6)
+  purchase_lines purchase_lines[]
+  negocios       negocios         @relation(fields: [negocio_id], references: [id])
+
+  @@index([negocio_id])
+}
+
+model stores {
+  id         BigInt     @id @default(autoincrement())
+  negocio_id BigInt
+  name       String
+  products   products[]
+  negocios   negocios   @relation(fields: [negocio_id], references: [id])
+
+  @@unique([negocio_id, name])
+  @@index([negocio_id])
+}
+
+// ===========================================================================
+//  FINANZAS (Fase 3)
+// ===========================================================================
+
+enum TipoUbicacion {
+  banco
+  efectivo
+}
+
+enum EstadoSemana {
+  abierta
+  cerrada
+}
+
+enum TipoMovimiento {
+  venta_efectivo
+  venta_tarjeta
+  propina_tarjeta
+  comision_terminal
+  gasto
+  sueldo
+  compra_inventario
+  transferencia
+  retiro_socio
+  deposito
+  propina_pagada
+}
+
+model ubicaciones_fondos {
+  id         BigInt        @id @default(autoincrement())
+  negocio_id BigInt
+  nombre     String
+  tipo       TipoUbicacion
+  socio_id   BigInt?
+  activo     Boolean       @default(true)
+  negocios   negocios      @relation(fields: [negocio_id], references: [id])
+  socios     socios?       @relation(fields: [socio_id], references: [id])
+
+  mov_origen       movimientos[]      @relation("mov_origen")
+  mov_destino      movimientos[]      @relation("mov_destino")
+  arqueos          arqueos[]
+  saldos_iniciales saldos_iniciales[]
+  cierres_semana   cierres_semana[]
+
+  @@index([negocio_id])
+}
+
+model categorias_gasto {
+  id          BigInt        @id @default(autoincrement())
+  negocio_id  BigInt
+  nombre      String
+  activo      Boolean       @default(true)
+  negocios    negocios      @relation(fields: [negocio_id], references: [id])
+  movimientos movimientos[]
+
+  @@unique([negocio_id, nombre])
+  @@index([negocio_id])
+}
+
+model semanas {
+  id           BigInt           @id @default(autoincrement())
+  negocio_id   BigInt
+  etiqueta     String
+  fecha_inicio DateTime         @db.Date
+  fecha_fin    DateTime         @db.Date
+  estado       EstadoSemana     @default(abierta)
+  cerrada_at   DateTime?        @db.Timestamptz(6)
+  negocios     negocios         @relation(fields: [negocio_id], references: [id])
+  movimientos  movimientos[]
+  arqueos      arqueos[]
+  cierres      cierres_semana[]
+
+  @@unique([negocio_id, fecha_inicio])
+  @@index([negocio_id])
+}
+
+model movimientos {
+  id                   BigInt              @id @default(autoincrement())
+  negocio_id           BigInt
+  semana_id            BigInt
+  fecha                DateTime            @db.Date
+  tipo                 TipoMovimiento
+  monto                Decimal             @db.Decimal(12, 2)
+  ubicacion_origen_id  BigInt?
+  ubicacion_destino_id BigInt?
+  categoria_id         BigInt?
+  socio_id             BigInt?
+  facturado            Boolean             @default(false)
+  descripcion          String?
+  usuario_id           BigInt
+  creado_at            DateTime            @default(now()) @db.Timestamptz(6)
+  negocios             negocios            @relation(fields: [negocio_id], references: [id])
+  semanas              semanas             @relation(fields: [semana_id], references: [id])
+  ubicacion_origen     ubicaciones_fondos? @relation("mov_origen", fields: [ubicacion_origen_id], references: [id])
+  ubicacion_destino    ubicaciones_fondos? @relation("mov_destino", fields: [ubicacion_destino_id], references: [id])
+  categorias_gasto     categorias_gasto?   @relation(fields: [categoria_id], references: [id])
+  socios               socios?             @relation(fields: [socio_id], references: [id])
+  usuarios             usuarios            @relation(fields: [usuario_id], references: [id])
+
+  @@index([negocio_id])
+  @@index([semana_id])
+}
+
+model arqueos {
+  id           BigInt             @id @default(autoincrement())
+  negocio_id   BigInt
+  semana_id    BigInt
+  fecha        DateTime           @db.Date
+  ubicacion_id BigInt
+  monto_real   Decimal            @db.Decimal(12, 2)
+  usuario_id   BigInt
+  creado_at    DateTime           @default(now()) @db.Timestamptz(6)
+  negocios     negocios           @relation(fields: [negocio_id], references: [id])
+  semanas      semanas            @relation(fields: [semana_id], references: [id])
+  ubicaciones  ubicaciones_fondos @relation(fields: [ubicacion_id], references: [id])
+  usuarios     usuarios           @relation(fields: [usuario_id], references: [id])
+
+  @@index([semana_id])
+  @@index([negocio_id])
+}
+
+// Bootstrap: saldo inicial por ubicación, fijado UNA sola vez (no editable).
+model saldos_iniciales {
+  id           BigInt             @id @default(autoincrement())
+  negocio_id   BigInt
+  ubicacion_id BigInt             @unique
+  monto        Decimal            @db.Decimal(12, 2)
+  negocios     negocios           @relation(fields: [negocio_id], references: [id])
+  ubicaciones  ubicaciones_fondos @relation(fields: [ubicacion_id], references: [id])
+
+  @@index([negocio_id])
+}
+
+// Saldo de cierre por ubicación, congelado al cerrar la semana (encadena con la siguiente).
+model cierres_semana {
+  id            BigInt             @id @default(autoincrement())
+  semana_id     BigInt
+  ubicacion_id  BigInt
+  saldo_inicial Decimal            @db.Decimal(12, 2)
+  saldo_teorico Decimal            @db.Decimal(12, 2)
+  saldo_real    Decimal?           @db.Decimal(12, 2)
+  saldo_final   Decimal            @db.Decimal(12, 2)
+  semanas       semanas            @relation(fields: [semana_id], references: [id])
+  ubicaciones   ubicaciones_fondos @relation(fields: [ubicacion_id], references: [id])
+
+  @@unique([semana_id, ubicacion_id])
+}
+
+// ===========================================================================
+//  PATRIMONIO (Fase 4)
+// ===========================================================================
+
+model pasivos {
+  id         BigInt   @id @default(autoincrement())
+  negocio_id BigInt
+  nombre     String
+  monto      Decimal  @db.Decimal(12, 2)
+  tipo       String?
+  activo     Boolean  @default(true)
+  negocios   negocios @relation(fields: [negocio_id], references: [id])
+
+  @@index([negocio_id])
+}
+
+model snapshots_patrimonio {
+  id               BigInt   @id @default(autoincrement())
+  negocio_id       BigInt
+  fecha            DateTime @db.Date
+  total_banco      Decimal  @db.Decimal(12, 2)
+  total_efectivo   Decimal  @db.Decimal(12, 2)
+  total_inventario Decimal  @db.Decimal(12, 2)
+  total_pasivos    Decimal  @db.Decimal(12, 2)
+  patrimonio_neto  Decimal  @db.Decimal(12, 2)
+  creado_at        DateTime @default(now()) @db.Timestamptz(6)
+  negocios         negocios @relation(fields: [negocio_id], references: [id])
+
+  @@unique([negocio_id, fecha])
+  @@index([negocio_id])
+}
+
+// ===========================================================================
+//  TAREAS — checklists apertura/cierre (Fase 5)
+// ===========================================================================
+
+enum TipoChecklist {
+  apertura
+  cierre
+}
+
+model checklists {
+  id         BigInt                 @id @default(autoincrement())
+  negocio_id BigInt
+  nombre     String
+  tipo       TipoChecklist
+  activo     Boolean                @default(true)
+  negocios   negocios               @relation(fields: [negocio_id], references: [id])
+  items      checklist_items[]
+  instancias checklist_instancias[]
+
+  @@index([negocio_id])
+}
+
+model checklist_items {
+  id           BigInt                       @id @default(autoincrement())
+  checklist_id BigInt
+  texto        String
+  orden        Int                          @default(0)
+  checklists   checklists                   @relation(fields: [checklist_id], references: [id], onDelete: Cascade)
+  resultados   checklist_item_resultados[]
+
+  @@index([checklist_id])
+}
+
+model checklist_instancias {
+  id           BigInt                      @id @default(autoincrement())
+  checklist_id BigInt
+  fecha        DateTime                    @db.Date
+  estado       String                      @default("abierta")
+  checklists   checklists                  @relation(fields: [checklist_id], references: [id], onDelete: Cascade)
+  resultados   checklist_item_resultados[]
+
+  @@unique([checklist_id, fecha])
+  @@index([checklist_id])
+}
+
+model checklist_item_resultados {
+  id            BigInt               @id @default(autoincrement())
+  instancia_id  BigInt
+  item_id       BigInt
+  completado    Boolean              @default(false)
+  usuario_id    BigInt?
+  completado_at DateTime?            @db.Timestamptz(6)
+  instancia     checklist_instancias @relation(fields: [instancia_id], references: [id], onDelete: Cascade)
+  item          checklist_items      @relation(fields: [item_id], references: [id], onDelete: Cascade)
+  usuarios      usuarios?            @relation(fields: [usuario_id], references: [id])
+
+  @@unique([instancia_id, item_id])
+  @@index([instancia_id])
+}
+
+// ===========================================================================
+//  SILVIA — coach de negocio con IA y memoria (feature extra)
+// ===========================================================================
+
+model silvia_mensajes {
+  id         BigInt   @id @default(autoincrement())
+  negocio_id BigInt
+  rol        String   // 'user' | 'assistant'
+  contenido  String
+  creado_at  DateTime @default(now()) @db.Timestamptz(6)
+  negocios   negocios @relation(fields: [negocio_id], references: [id])
+
+  @@index([negocio_id])
+}
+
+model silvia_memoria {
+  id         BigInt    @id @default(autoincrement())
+  negocio_id BigInt
+  tipo       String    // 'evento' | 'aprendizaje' | 'nota'
+  contenido  String
+  fecha      DateTime? @db.Date
+  creado_at  DateTime  @default(now()) @db.Timestamptz(6)
+  negocios   negocios  @relation(fields: [negocio_id], references: [id])
+
+  @@index([negocio_id])
+}
