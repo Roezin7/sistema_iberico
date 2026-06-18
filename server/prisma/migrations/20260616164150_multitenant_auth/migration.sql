@@ -60,8 +60,8 @@ ALTER TABLE "inventory_snapshot" ALTER COLUMN "negocio_id" SET NOT NULL;
 ALTER TABLE "purchases"          ALTER COLUMN "negocio_id" SET NOT NULL;
 
 -- DropConstraint: unicidad global de name -> pasa a ser por negocio
-ALTER TABLE "products" DROP CONSTRAINT "products_name_key";
-ALTER TABLE "stores" DROP CONSTRAINT "stores_name_key";
+ALTER TABLE "products" DROP CONSTRAINT IF EXISTS "products_name_key";
+ALTER TABLE "stores" DROP CONSTRAINT IF EXISTS "stores_name_key";
 
 -- CreateIndex
 CREATE INDEX "usuarios_negocio_id_idx" ON "usuarios"("negocio_id");
