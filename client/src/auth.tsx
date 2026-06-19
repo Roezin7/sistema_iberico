@@ -44,6 +44,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    // Borra el chat de Silvia al cerrar sesión (solo admin tiene Silvia). Best-effort:
+    // se dispara antes de limpiar el token para que la petición vaya autenticada.
+    if (usuario?.rol === 'admin') {
+      void api('/silvia/historial', { method: 'DELETE' }).catch(() => {});
+    }
     setToken(null);
     setUsuario(null);
   }

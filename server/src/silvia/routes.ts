@@ -21,6 +21,12 @@ silviaRouter.get('/historial', asyncHandler(async (req, res) => {
   res.json(await svc.historial(req.auth!.negocioId));
 }));
 
+/** Borra la conversación (al cerrar sesión). Conserva la memoria/aprendizajes. */
+silviaRouter.delete('/historial', asyncHandler(async (req, res) => {
+  await svc.borrarHistorial(req.auth!.negocioId);
+  res.status(204).end();
+}));
+
 silviaRouter.post('/chat', asyncHandler(async (req, res) => {
   const { mensaje } = z.object({ mensaje: z.string().min(1).max(2000) }).parse(req.body);
   res.json(await svc.chat(req.auth!.negocioId, mensaje));

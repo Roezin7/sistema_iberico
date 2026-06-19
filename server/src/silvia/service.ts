@@ -39,3 +39,9 @@ export async function borrarMemoria(negocioId: bigint, id: bigint) {
   if (m) await prisma.silvia_memoria.delete({ where: { id } });
   return { ok: true };
 }
+
+/** Borra el historial de conversación (no la memoria/aprendizajes). Se usa al cerrar sesión. */
+export async function borrarHistorial(negocioId: bigint) {
+  await prisma.silvia_mensajes.deleteMany({ where: { negocio_id: negocioId } });
+  return { ok: true };
+}
