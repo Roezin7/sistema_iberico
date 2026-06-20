@@ -1528,3 +1528,31 @@ select:disabled {
   .nodo-iso--anim .nodo-node { transform: none; }
   .splash-word { color: rgba(233, 231, 226, 0.92); -webkit-text-stroke: 0; }
 }
+
+/* ---------- Secciones por categoría (inventario / conteo) ---------- */
+.cat-group {
+  margin-bottom: 1rem;
+}
+.cat-head {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 0.6rem 0.85rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  color: var(--ink);
+}
+.cat-head:hover {
+  border-color: var(--border-strong);
+}
+.cat-head__title {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+}

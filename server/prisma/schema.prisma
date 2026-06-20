@@ -30,6 +30,7 @@ model negocios {
   inventory_snapshot inventory_snapshot[]
   purchases          purchases[]
   zonas_inventario   zonas_inventario[]
+  categorias_inventario categorias_inventario[]
   ubicaciones_fondos ubicaciones_fondos[]
   categorias_gasto   categorias_gasto[]
   semanas            semanas[]
@@ -170,15 +171,30 @@ model products {
   base_qty        Decimal           @default(0) @db.Decimal(12, 2)
   active          Boolean           @default(true)
   unit_cost       Decimal?          @db.Decimal(12, 2)
+  categoria_id    BigInt?
   inventory_lines inventory_lines[]
   product_aliases product_aliases[]
   stores          stores            @relation(fields: [store_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   negocios        negocios          @relation(fields: [negocio_id], references: [id])
+  categorias_inventario categorias_inventario? @relation(fields: [categoria_id], references: [id])
   purchase_lines  purchase_lines[]
   product_zone_units product_zone_units[]
   producto_costos_historicos producto_costos_historicos[]
 
   @@unique([negocio_id, name])
+  @@index([negocio_id])
+}
+
+model categorias_inventario {
+  id         BigInt     @id @default(autoincrement())
+  negocio_id BigInt
+  nombre     String
+  orden      Int        @default(0)
+  activo     Boolean    @default(true)
+  negocios   negocios   @relation(fields: [negocio_id], references: [id])
+  products   products[]
+
+  @@unique([negocio_id, nombre])
   @@index([negocio_id])
 }
 

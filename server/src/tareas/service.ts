@@ -36,6 +36,14 @@ export async function actualizarChecklist(negocioId: bigint, id: bigint, b: { no
   return { ok: true };
 }
 
+export async function eliminarChecklist(negocioId: bigint, id: bigint) {
+  const c = await prisma.checklists.findFirst({ where: { id, negocio_id: negocioId } });
+  if (!c) throw new HttpError(404, 'Checklist no encontrado');
+  // items, instancias y resultados se borran en cascada (onDelete: Cascade).
+  await prisma.checklists.delete({ where: { id } });
+  return { ok: true };
+}
+
 async function checklistDelNegocio(negocioId: bigint, checklistId: bigint) {
   const c = await prisma.checklists.findFirst({ where: { id: checklistId, negocio_id: negocioId } });
   if (!c) throw new HttpError(404, 'Checklist no encontrado');

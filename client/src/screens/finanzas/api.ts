@@ -62,6 +62,7 @@ export const finanzas = {
   guardarDia: (id: number, body: { fecha: string; venta_efectivo: number; venta_tarjeta: number; propina_tarjeta: number; gasto_efectivo: number; sueldos: number }) =>
     api<ResumenDiario>(`/finanzas/semanas/${id}/dias`, { method: 'PUT', body }),
   crearMovimiento: (body: Record<string, unknown>) => api('/finanzas/movimientos', { method: 'POST', body }),
+  borrarMovimiento: (id: number) => api(`/finanzas/movimientos/${id}`, { method: 'DELETE' }),
   crearArqueo: (body: Record<string, unknown>) => api('/finanzas/arqueos', { method: 'POST', body }),
   cerrar: (id: number) => api<Resumen>(`/finanzas/semanas/${id}/cerrar`, { method: 'POST', body: {} }),
   reabrir: (id: number) => api<Semana>(`/finanzas/semanas/${id}/reabrir`, { method: 'POST', body: {} }),

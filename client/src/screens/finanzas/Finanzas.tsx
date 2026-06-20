@@ -417,6 +417,20 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
               </small>
             </div>
             <span>{mxn(m.monto)}</span>
+            {semana.estado === 'abierta' && (
+              <button
+                className="icon-btn"
+                title="Borrar movimiento"
+                aria-label="Borrar movimiento"
+                onClick={async () => {
+                  if (!confirm('¿Borrar este movimiento? Afecta el cuadre de la semana.')) return;
+                  await finanzas.borrarMovimiento(m.id);
+                  onChange();
+                }}
+              >
+                ✕
+              </button>
+            )}
           </li>
         ))}
       </ul>

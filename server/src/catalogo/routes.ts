@@ -41,7 +41,7 @@ catalogoRouter.get(
   asyncHandler(async (req, res) => {
     const productos = await prisma.products.findMany({
       where: { negocio_id: req.auth!.negocioId },
-      include: { stores: true, product_zone_units: true },
+      include: { stores: true, product_zone_units: true, categorias_inventario: true },
       orderBy: { name: 'asc' },
     });
     res.json(
@@ -53,6 +53,8 @@ catalogoRouter.get(
         base_qty: num(p.base_qty),
         unit_cost: num(p.unit_cost),
         active: p.active,
+        categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
+        categoria: p.categorias_inventario?.nombre ?? null,
         unidades: p.product_zone_units.map((u) => ({
           id: Number(u.id),
           zona_id: Number(u.zona_id),
@@ -70,6 +72,7 @@ const productoBody = z.object({
   base_qty: z.coerce.number().min(0).default(0),
   unit_cost: z.coerce.number().min(0).nullable().optional(),
   active: z.boolean().optional(),
+  categoria_id: z.coerce.number().int().positive().nullable().optional(),
 });
 
 /** POST /catalogo/products (admin) */
@@ -86,6 +89,7 @@ catalogoRouter.post(
         base_qty: b.base_qty,
         unit_cost: b.unit_cost ?? null,
         active: b.active ?? true,
+        categoria_id: b.categoria_id != null ? BigInt(b.categoria_id) : null,
       },
     });
     res.status(201).json({ id: Number(creado.id) });
@@ -109,9 +113,66 @@ catalogoRouter.patch(
         base_qty: b.base_qty,
         unit_cost: b.unit_cost === undefined ? undefined : b.unit_cost,
         active: b.active,
+        categoria_id: b.categoria_id === undefined ? undefined : b.categoria_id != null ? BigInt(b.categoria_id) : null,
       },
     });
     res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------------------
+//  CATEGORÍAS DE INVENTARIO (alcohol, cocina, congelado, …) — para agrupar
+// ---------------------------------------------------------------------------
+
+/** GET /catalogo/categorias-inventario — cualquier usuario (se usa al agrupar el conteo). */
+catalogoRouter.get(
+  '/categorias-inventario',
+  asyncHandler(async (req, res) => {
+    const cats = await prisma.categorias_inventario.findMany({
+      where: { negocio_id: req.auth!.negocioId },
+      orderBy: [{ orden: 'asc' }, { nombre: 'asc' }],
+    });
+    res.json(cats.map((c) => ({ id: Number(c.id), nombre: c.nombre, orden: c.orden, activo: c.activo })));
+  }),
+);
+
+const catInvBody = z.object({ nombre: z.string().min(1), orden: z.coerce.number().int().optional() });
+
+catalogoRouter.post(
+  '/categorias-inventario',
+  soloAdmin,
+  asyncHandler(async (req, res) => {
+    const b = catInvBody.parse(req.body);
+    const c = await prisma.categorias_inventario.create({
+      data: { negocio_id: req.auth!.negocioId, nombre: b.nombre, orden: b.orden ?? 0 },
+    });
+    res.status(201).json({ id: Number(c.id) });
+  }),
+);
+
+catalogoRouter.patch(
+  '/categorias-inventario/:id',
+  soloAdmin,
+  asyncHandler(async (req, res) => {
+    const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+    const b = z.object({ nombre: z.string().min(1).optional(), orden: z.coerce.number().int().optional(), activo: z.boolean().optional() }).parse(req.body);
+    const cat = await prisma.categorias_inventario.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
+    if (!cat) throw new HttpError(404, 'Categoría no encontrada');
+    await prisma.categorias_inventario.update({ where: { id }, data: { nombre: b.nombre, orden: b.orden, activo: b.activo } });
+    res.json({ ok: true });
+  }),
+);
+
+/** DELETE — los productos de esa categoría quedan sin categoría (FK ON DELETE SET NULL). */
+catalogoRouter.delete(
+  '/categorias-inventario/:id',
+  soloAdmin,
+  asyncHandler(async (req, res) => {
+    const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+    const cat = await prisma.categorias_inventario.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
+    if (!cat) throw new HttpError(404, 'Categoría no encontrada');
+    await prisma.categorias_inventario.delete({ where: { id } });
+    res.status(204).end();
   }),
 );
 
@@ -137,6 +198,20 @@ catalogoRouter.post(
     const { nombre } = z.object({ nombre: z.string().min(1) }).parse(req.body);
     const s = await prisma.stores.create({ data: { negocio_id: req.auth!.negocioId, name: nombre } });
     res.status(201).json({ id: Number(s.id) });
+  }),
+);
+
+/** PATCH /stores/:id (admin) — renombrar tienda. */
+catalogoRouter.patch(
+  '/stores/:id',
+  soloAdmin,
+  asyncHandler(async (req, res) => {
+    const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+    const { nombre } = z.object({ nombre: z.string().min(1) }).parse(req.body);
+    const store = await prisma.stores.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
+    if (!store) throw new HttpError(404, 'Tienda no encontrada');
+    await prisma.stores.update({ where: { id }, data: { name: nombre } });
+    res.json({ ok: true });
   }),
 );
 

@@ -5,7 +5,7 @@ import { Icono } from '../../icons';
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
-type Tab = 'general' | 'inventario' | 'finanzas';
+type Tab = 'general' | 'inventario' | 'finanzas' | 'tareas';
 
 export default function Configuracion() {
   const [tab, setTab] = useState<Tab>('general');
@@ -21,11 +21,13 @@ export default function Configuracion() {
         <button className={tab === 'general' ? 'tab tab--on' : 'tab'} onClick={() => setTab('general')}>General</button>
         <button className={tab === 'inventario' ? 'tab tab--on' : 'tab'} onClick={() => setTab('inventario')}>Inventario</button>
         <button className={tab === 'finanzas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('finanzas')}>Finanzas</button>
+        <button className={tab === 'tareas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('tareas')}>Tareas</button>
       </nav>
       <div className="tab-body">
         {tab === 'general' && <General />}
         {tab === 'inventario' && <InventarioCfg />}
         {tab === 'finanzas' && <FinanzasCfg />}
+        {tab === 'tareas' && <TareasCfg />}
       </div>
     </div>
   );
@@ -201,16 +203,18 @@ function ListaEditable({
 // ===========================================================================
 interface Store { id: number; nombre: string }
 interface Zona { id: number; nombre: string; orden: number }
+interface CategoriaInv { id: number; nombre: string; orden: number; activo: boolean }
 interface UnidadZona { id: number; zona_id: number; unidad_captura: string; factor: number }
 interface Producto {
   id: number; nombre: string; store_id: number; store: string;
-  base_qty: number; unit_cost: number | null; active: boolean; unidades: UnidadZona[];
+  base_qty: number; unit_cost: number | null; active: boolean; categoria_id: number | null; unidades: UnidadZona[];
 }
 
 function InventarioCfg() {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [zonas, setZonas] = useState<Zona[]>([]);
+  const [categorias, setCategorias] = useState<CategoriaInv[]>([]);
   const [filtro, setFiltro] = useState('');
   const [mostrarInactivos, setMostrarInactivos] = useState(false);
   const [nuevoAbierto, setNuevoAbierto] = useState(false);
@@ -219,7 +223,8 @@ function InventarioCfg() {
     api<Producto[]>('/catalogo/products'),
     api<Store[]>('/catalogo/stores'),
     api<Zona[]>('/catalogo/zonas'),
-  ]).then(([p, s, z]) => { setProductos(p); setStores(s); setZonas(z); });
+    api<CategoriaInv[]>('/catalogo/categorias-inventario'),
+  ]).then(([p, s, z, c]) => { setProductos(p); setStores(s); setZonas(z); setCategorias(c); });
   useEffect(() => { void cargar(); }, []);
 
   const filtrados = useMemo(
@@ -231,12 +236,13 @@ function InventarioCfg() {
 
   return (
     <>
+      <CategoriasInvCfg categorias={categorias} onChange={cargar} />
       <ZonasCfg zonas={zonas} onChange={cargar} />
 
       <button className="btn-primary" style={{ marginBottom: '0.75rem' }} onClick={() => setNuevoAbierto((v) => !v)}>
         {nuevoAbierto ? 'Cerrar' : '+ Nuevo producto'}
       </button>
-      {nuevoAbierto && <NuevoProducto stores={stores} onCreado={() => { setNuevoAbierto(false); cargar(); }} onNuevaTienda={cargar} />}
+      {nuevoAbierto && <NuevoProducto stores={stores} categorias={categorias} onCreado={() => { setNuevoAbierto(false); cargar(); }} onNuevaTienda={cargar} />}
 
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
       <label className="kv" style={{ borderBottom: 'none', cursor: 'pointer' }}>
@@ -244,9 +250,39 @@ function InventarioCfg() {
         <input type="checkbox" style={{ minHeight: 'auto', width: 18, height: 18 }} checked={mostrarInactivos} onChange={(e) => setMostrarInactivos(e.target.checked)} />
       </label>
 
-      {filtrados.map((p) => <ProductoRow key={p.id} p={p} stores={stores} zonas={zonas} onChange={cargar} />)}
+      {filtrados.map((p) => <ProductoRow key={p.id} p={p} stores={stores} zonas={zonas} categorias={categorias} onChange={cargar} />)}
       {filtrados.length === 0 && <p className="muted">Sin resultados.</p>}
     </>
+  );
+}
+
+// --- Categorías de inventario (alcohol, cocina, congelado, …) ---
+function CategoriasInvCfg({ categorias, onChange }: { categorias: CategoriaInv[]; onChange: () => void }) {
+  const [nombre, setNombre] = useState('');
+  return (
+    <div className="resumen-card" style={{ gap: '0.5rem' }}>
+      <strong>Categorías de inventario</strong>
+      <p className="muted">Sirven para agrupar el conteo y el inventario (alcohol, cocina, congelado…).</p>
+      <ul className="conteo-list" style={{ boxShadow: 'none' }}>
+        {categorias.length === 0 && <li className="conteo-row"><span className="muted">Aún no hay categorías.</span></li>}
+        {categorias.map((c) => (
+          <li key={c.id} className="conteo-row" style={{ opacity: c.activo ? 1 : 0.5, gap: '0.4rem', flexWrap: 'wrap' }}>
+            <input defaultValue={c.nombre} style={{ flex: 1, minWidth: 110, minHeight: 40 }}
+              onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== c.nombre) void api(`/catalogo/categorias-inventario/${c.id}`, { method: 'PATCH', body: { nombre: v } }).then(onChange); }} />
+            <input type="number" defaultValue={c.orden} title="Orden" style={{ width: 64, minHeight: 40, textAlign: 'right' }}
+              onBlur={(e) => { const v = Number(e.target.value); if (v !== c.orden) void api(`/catalogo/categorias-inventario/${c.id}`, { method: 'PATCH', body: { orden: v } }).then(onChange); }} />
+            <button className="link-btn" title="Eliminar categoría" onClick={async () => {
+              if (!confirm(`¿Eliminar la categoría "${c.nombre}"? Los productos quedarán sin categoría.`)) return;
+              await api(`/catalogo/categorias-inventario/${c.id}`, { method: 'DELETE' }); onChange();
+            }}>✕</button>
+          </li>
+        ))}
+      </ul>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <input style={{ flex: 1 }} placeholder="Nueva categoría (ej. Alcohol)" value={nombre} onChange={(e) => setNombre(e.target.value)} />
+        <button className="btn-secondary" onClick={async () => { if (!nombre.trim()) return; await api('/catalogo/categorias-inventario', { method: 'POST', body: { nombre: nombre.trim(), orden: categorias.length + 1 } }); setNombre(''); onChange(); }}>+ Categoría</button>
+      </div>
+    </div>
   );
 }
 
@@ -273,9 +309,10 @@ function ZonasCfg({ zonas, onChange }: { zonas: Zona[]; onChange: () => void }) 
   );
 }
 
-function NuevoProducto({ stores, onCreado, onNuevaTienda }: { stores: Store[]; onCreado: () => void; onNuevaTienda: () => void }) {
+function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores: Store[]; categorias: CategoriaInv[]; onCreado: () => void; onNuevaTienda: () => void }) {
   const [nombre, setNombre] = useState('');
   const [storeId, setStoreId] = useState<number | ''>(stores[0]?.id ?? '');
+  const [categoriaId, setCategoriaId] = useState<number | ''>('');
   const [baseQty, setBaseQty] = useState('');
   const [costo, setCosto] = useState('');
   const [error, setError] = useState('');
@@ -288,6 +325,10 @@ function NuevoProducto({ stores, onCreado, onNuevaTienda }: { stores: Store[]; o
       <select value={storeId} onChange={(e) => setStoreId(Number(e.target.value))}>
         <option value="">— Tienda —</option>
         {stores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+      </select>
+      <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value === '' ? '' : Number(e.target.value))}>
+        <option value="">— Categoría (opcional) —</option>
+        {categorias.filter((c) => c.activo).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
       </select>
       <div style={{ display: 'flex', gap: '0.5rem' }}>
         <input style={{ flex: 1 }} placeholder="Nueva tienda…" value={nuevaTienda} onChange={(e) => setNuevaTienda(e.target.value)} />
@@ -306,6 +347,7 @@ function NuevoProducto({ stores, onCreado, onNuevaTienda }: { stores: Store[]; o
           await api('/catalogo/products', { method: 'POST', body: {
             nombre: nombre.trim(), store_id: storeId, base_qty: Number(baseQty) || 0,
             unit_cost: costo === '' ? null : Number(costo),
+            categoria_id: categoriaId === '' ? null : categoriaId,
           } });
           onCreado();
         } catch (e) { setError(e instanceof Error ? e.message : 'Error'); }
@@ -314,10 +356,11 @@ function NuevoProducto({ stores, onCreado, onNuevaTienda }: { stores: Store[]; o
   );
 }
 
-function ProductoRow({ p, stores, zonas, onChange }: { p: Producto; stores: Store[]; zonas: Zona[]; onChange: () => void }) {
+function ProductoRow({ p, stores, zonas, categorias, onChange }: { p: Producto; stores: Store[]; zonas: Zona[]; categorias: CategoriaInv[]; onChange: () => void }) {
   const [abierto, setAbierto] = useState(false);
   const [nombre, setNombre] = useState(p.nombre);
   const [storeId, setStoreId] = useState(p.store_id);
+  const [categoriaId, setCategoriaId] = useState<number | ''>(p.categoria_id ?? '');
   const [baseQty, setBaseQty] = useState(String(p.base_qty));
   const [costo, setCosto] = useState(p.unit_cost == null ? '' : String(p.unit_cost));
   const [ok, setOk] = useState(false);
@@ -326,6 +369,7 @@ function ProductoRow({ p, stores, zonas, onChange }: { p: Producto; stores: Stor
     await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: {
       nombre: nombre.trim(), store_id: storeId, base_qty: Number(baseQty) || 0,
       unit_cost: costo === '' ? null : Number(costo),
+      categoria_id: categoriaId === '' ? null : categoriaId,
     } });
     setOk(true); setTimeout(() => setOk(false), 1200); onChange();
   }
@@ -342,6 +386,12 @@ function ProductoRow({ p, stores, zonas, onChange }: { p: Producto; stores: Stor
           <select value={storeId} onChange={(e) => setStoreId(Number(e.target.value))}>
             {stores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
           </select>
+          <label className="muted">Categoría
+            <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value === '' ? '' : Number(e.target.value))}>
+              <option value="">— Sin categoría —</option>
+              {categorias.filter((c) => c.activo || c.id === p.categoria_id).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+          </label>
           <label className="muted">Cantidad mínima (unidades base)
             <input type="number" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} />
           </label>
@@ -471,6 +521,75 @@ function Ubicaciones({ cfg, onChange }: { cfg: AdminConfig; onChange: () => void
         await api('/finanzas/ubicaciones', { method: 'POST', body: { nombre: nombre.trim(), tipo, socio_id: socioId === '' ? null : socioId } });
         setNombre(''); setSocioId(''); onChange();
       }}>+ Agregar ubicación</button>
+    </div>
+  );
+}
+
+// ===========================================================================
+//  TAREAS: gestión de checklists de apertura/cierre
+// ===========================================================================
+interface ChkItem { id: number; texto: string; orden: number }
+interface Checklist { id: number; nombre: string; tipo: 'apertura' | 'cierre'; activo: boolean; items: ChkItem[] }
+
+function TareasCfg() {
+  const [cls, setCls] = useState<Checklist[]>([]);
+  const [nombre, setNombre] = useState('');
+  const [tipo, setTipo] = useState<'apertura' | 'cierre'>('apertura');
+  const cargar = () => api<Checklist[]>('/tareas/checklists').then(setCls);
+  useEffect(() => { void cargar(); }, []);
+
+  return (
+    <>
+      <div className="form-mov">
+        <strong>Nuevo checklist</strong>
+        <input placeholder="Nombre (ej. Apertura de barra)" value={nombre} onChange={(e) => setNombre(e.target.value)} />
+        <select value={tipo} onChange={(e) => setTipo(e.target.value as 'apertura' | 'cierre')}>
+          <option value="apertura">Apertura</option>
+          <option value="cierre">Cierre</option>
+        </select>
+        <button className="btn-primary" onClick={async () => {
+          if (!nombre.trim()) return;
+          await api('/tareas/checklists', { method: 'POST', body: { nombre: nombre.trim(), tipo } });
+          setNombre(''); cargar();
+        }}>Crear checklist</button>
+      </div>
+      {cls.length === 0 && <p className="muted">Aún no hay checklists.</p>}
+      {cls.map((c) => <ChecklistEditor key={c.id} c={c} onChange={cargar} />)}
+    </>
+  );
+}
+
+function ChecklistEditor({ c, onChange }: { c: Checklist; onChange: () => void }) {
+  const [nuevo, setNuevo] = useState('');
+  return (
+    <div className="resumen-card" style={{ gap: '0.4rem', opacity: c.activo ? 1 : 0.55 }}>
+      <div className="kv" style={{ borderBottom: 'none', gap: '0.4rem', flexWrap: 'wrap' }}>
+        <span>{c.tipo === 'apertura' ? '🌅' : '🌙'}</span>
+        <input defaultValue={c.nombre} style={{ flex: 1, minWidth: 120, minHeight: 40 }}
+          onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== c.nombre) void api(`/tareas/checklists/${c.id}`, { method: 'PATCH', body: { nombre: v } }).then(onChange); }} />
+        <button className="pill" onClick={async () => { await api(`/tareas/checklists/${c.id}`, { method: 'PATCH', body: { activo: !c.activo } }); onChange(); }}>
+          {c.activo ? 'Desactivar' : 'Activar'}
+        </button>
+        <button className="link-btn" title="Eliminar checklist" onClick={async () => {
+          if (!confirm(`¿Eliminar el checklist "${c.nombre}" y todos sus ítems?`)) return;
+          await api(`/tareas/checklists/${c.id}`, { method: 'DELETE' }); onChange();
+        }}>✕</button>
+      </div>
+      {c.items.map((it) => (
+        <div key={it.id} className="conteo-row" style={{ padding: '0.35rem 0', gap: '0.4rem' }}>
+          <input defaultValue={it.texto} style={{ flex: 1, minHeight: 38 }}
+            onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== it.texto) void api(`/tareas/items/${it.id}`, { method: 'PATCH', body: { texto: v } }).then(onChange); }} />
+          <button className="link-btn" title="Eliminar ítem" onClick={async () => { await api(`/tareas/items/${it.id}`, { method: 'DELETE' }); onChange(); }}>✕</button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.3rem' }}>
+        <input style={{ flex: 1 }} placeholder="Nuevo ítem…" value={nuevo} onChange={(e) => setNuevo(e.target.value)} />
+        <button className="btn-secondary" onClick={async () => {
+          if (!nuevo.trim()) return;
+          await api(`/tareas/checklists/${c.id}/items`, { method: 'POST', body: { texto: nuevo.trim(), orden: c.items.length + 1 } });
+          setNuevo(''); onChange();
+        }}>+ Ítem</button>
+      </div>
     </div>
   );
 }

@@ -36,6 +36,11 @@ tareasRouter.patch('/checklists/:id', soloAdmin, asyncHandler(async (req, res) =
   res.json(await svc.actualizarChecklist(req.auth!.negocioId, BigInt(id.parse(req.params.id)), b));
 }));
 
+tareasRouter.delete('/checklists/:id', soloAdmin, asyncHandler(async (req, res) => {
+  await svc.eliminarChecklist(req.auth!.negocioId, BigInt(id.parse(req.params.id)));
+  res.status(204).end();
+}));
+
 tareasRouter.post('/checklists/:id/items', soloAdmin, asyncHandler(async (req, res) => {
   const b = z.object({ texto: z.string().min(1), orden: z.coerce.number().int().optional() }).parse(req.body);
   res.status(201).json(await svc.agregarItem(req.auth!.negocioId, BigInt(id.parse(req.params.id)), b));

@@ -102,6 +102,11 @@ finanzasRouter.post('/movimientos', asyncHandler(async (req, res) => {
   res.status(201).json(await svc.crearMovimiento(req.auth!.negocioId, req.auth!.usuarioId, body));
 }));
 
+finanzasRouter.delete('/movimientos/:id', asyncHandler(async (req, res) => {
+  await svc.borrarMovimiento(req.auth!.negocioId, BigInt(id.parse(req.params.id)));
+  res.status(204).end();
+}));
+
 // --- Arqueos ---
 finanzasRouter.post('/arqueos', asyncHandler(async (req, res) => {
   const body = z.object({

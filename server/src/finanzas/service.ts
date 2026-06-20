@@ -662,3 +662,15 @@ export async function editarSocio(negocioId: bigint, id: bigint, data: { nombre?
   await prisma.socios.update({ where: { id }, data: { nombre: data.nombre, activo: data.activo } });
   return { ok: true };
 }
+
+/** Borra un movimiento. Solo en semana abierta (las cerradas tienen saldos congelados). */
+export async function borrarMovimiento(negocioId: bigint, id: bigint) {
+  const mov = await prisma.movimientos.findFirst({ where: { id, negocio_id: negocioId } });
+  if (!mov) throw new HttpError(404, 'Movimiento no encontrado');
+  const semana = await prisma.semanas.findUnique({ where: { id: mov.semana_id } });
+  if (!semana || semana.estado !== 'abierta') {
+    throw new HttpError(409, 'No se pueden borrar movimientos de una semana cerrada');
+  }
+  await prisma.movimientos.delete({ where: { id } });
+  return { ok: true };
+}

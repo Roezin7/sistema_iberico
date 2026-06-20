@@ -18,6 +18,8 @@ export interface ProductoActual {
   total_base: number;
   unit_cost: number | null;
   valor: number;
+  categoria_id: number | null;
+  categoria: string | null;
   por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number }[];
 }
 
@@ -34,7 +36,7 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
   const [productos, snap] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
-      include: { stores: true },
+      include: { stores: true, categorias_inventario: true },
       orderBy: { name: 'asc' },
     }),
     prisma.inventory_snapshot.findFirst({
@@ -74,6 +76,8 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
       total_base: totalBase,
       unit_cost: unitCost,
       valor: valorProducto(totalBase, unitCost),
+      categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
+      categoria: p.categorias_inventario?.nombre ?? null,
       por_zona: ls.map((l) => ({
         zona_id: Number(l.zona_id),
         zona: l.zonas_inventario.nombre,

@@ -4,14 +4,49 @@ import { Icono } from '../../icons';
 
 // --- Tipos de la API ---
 interface Zona { id: number; nombre: string; orden: number }
+interface Categoria { id: number; nombre: string; orden: number; activo: boolean }
 interface Unidad { zona_id: number; unidad_captura: string; factor: number }
 interface Producto {
   id: number; nombre: string; store: string; base_qty: number | null;
-  unit_cost: number | null; unidades: Unidad[];
+  unit_cost: number | null; unidades: Unidad[]; categoria_id: number | null; categoria: string | null;
 }
 interface ProductoActual {
   product_id: number; nombre: string; store: string; base_qty: number;
   total_base: number; unit_cost: number | null; valor: number;
+  categoria_id: number | null; categoria: string | null;
+}
+
+// Agrupa por categoría, respetando el orden configurado; "Sin categoría" al final.
+function agruparPorCategoria<T extends { categoria_id: number | null; categoria: string | null }>(
+  items: T[], cats: Categoria[],
+): { id: number | null; nombre: string; items: T[] }[] {
+  const orden = new Map(cats.map((c, i) => [c.id, c.orden * 1000 + i]));
+  const grupos = new Map<number | null, { nombre: string; items: T[] }>();
+  for (const it of items) {
+    const k = it.categoria_id;
+    if (!grupos.has(k)) grupos.set(k, { nombre: it.categoria ?? 'Sin categoría', items: [] });
+    grupos.get(k)!.items.push(it);
+  }
+  return [...grupos.entries()]
+    .map(([id, g]) => ({ id, nombre: g.nombre, items: g.items }))
+    .sort((a, b) => {
+      if (a.id == null) return 1;
+      if (b.id == null) return -1;
+      return (orden.get(a.id) ?? 0) - (orden.get(b.id) ?? 0);
+    });
+}
+
+function SeccionCategoria({ titulo, count, children }: { titulo: string; count: number; children: React.ReactNode }) {
+  const [abierto, setAbierto] = useState(true);
+  return (
+    <div className="cat-group">
+      <button className="cat-head" onClick={() => setAbierto((o) => !o)}>
+        <span className="cat-head__title">{titulo} <small className="muted">{count}</small></span>
+        <Icono name="chevron" size={16} style={{ transform: abierto ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {abierto && children}
+    </div>
+  );
 }
 interface Actual {
   snapshot_id: number | null; fecha: string | null; productos: ProductoActual[];
@@ -62,6 +97,7 @@ export default function Inventario() {
 function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [zonas, setZonas] = useState<Zona[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [zonaActiva, setZonaActiva] = useState<number | null>(null);
   const [valores, setValores] = useState<Record<string, string>>({}); // `${pid}:${zid}` -> texto
   const [filtro, setFiltro] = useState('');
@@ -69,19 +105,23 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
-    Promise.all([api<Zona[]>('/catalogo/zonas'), api<Producto[]>('/catalogo/products')]).then(
-      ([z, p]) => {
-        setZonas(z);
-        setProductos(p);
-        if (z[0]) setZonaActiva(z[0].id);
-      },
-    );
+    Promise.all([
+      api<Zona[]>('/catalogo/zonas'),
+      api<Producto[]>('/catalogo/products'),
+      api<Categoria[]>('/catalogo/categorias-inventario'),
+    ]).then(([z, p, c]) => {
+      setZonas(z);
+      setProductos(p);
+      setCategorias(c);
+      if (z[0]) setZonaActiva(z[0].id);
+    });
   }, []);
 
   const filtrados = useMemo(
     () => productos.filter((p) => p.nombre.toLowerCase().includes(filtro.toLowerCase())),
     [productos, filtro],
   );
+  const grupos = useMemo(() => agruparPorCategoria(filtrados, categorias), [filtrados, categorias]);
 
   const unidadDe = (p: Producto, zonaId: number): Unidad =>
     p.unidades.find((u) => u.zona_id === zonaId) ?? { zona_id: zonaId, unidad_captura: 'unidad base', factor: 1 };
@@ -126,39 +166,42 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       </div>
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
 
-      <ul className="conteo-list">
-        {zonaActiva != null &&
-          filtrados.map((p) => {
-            const u = unidadDe(p, zonaActiva);
-            const key = `${p.id}:${zonaActiva}`;
-            const esBool = u.unidad_captura === 'boolean';
-            return (
-              <li key={p.id} className="conteo-row">
-                <div className="conteo-info">
-                  <strong>{p.nombre}</strong>
-                  <small className="muted">{u.unidad_captura}{u.factor !== 1 ? ` ×${u.factor}` : ''} · {p.store}</small>
-                </div>
-                {esBool ? (
-                  <div className="bool-toggle">
-                    <button className={valores[key] === '1' ? 'pill pill--on' : 'pill'} onClick={() => setVal(p.id, zonaActiva, '1')}>Sí</button>
-                    <button className={valores[key] === '0' ? 'pill pill--on' : 'pill'} onClick={() => setVal(p.id, zonaActiva, '0')}>No</button>
+      {zonaActiva != null && grupos.map((g) => (
+        <SeccionCategoria key={g.id ?? 'sin'} titulo={g.nombre} count={g.items.length}>
+          <ul className="conteo-list">
+            {g.items.map((p) => {
+              const u = unidadDe(p, zonaActiva);
+              const key = `${p.id}:${zonaActiva}`;
+              const esBool = u.unidad_captura === 'boolean';
+              return (
+                <li key={p.id} className="conteo-row">
+                  <div className="conteo-info">
+                    <strong>{p.nombre}</strong>
+                    <small className="muted">{u.unidad_captura}{u.factor !== 1 ? ` ×${u.factor}` : ''} · {p.store}</small>
                   </div>
-                ) : (
-                  <input
-                    className="conteo-input"
-                    type="number"
-                    inputMode="decimal"
-                    step="any"
-                    min="0"
-                    placeholder="0"
-                    value={valores[key] ?? ''}
-                    onChange={(e) => setVal(p.id, zonaActiva, e.target.value)}
-                  />
-                )}
-              </li>
-            );
-          })}
-      </ul>
+                  {esBool ? (
+                    <div className="bool-toggle">
+                      <button className={valores[key] === '1' ? 'pill pill--on' : 'pill'} onClick={() => setVal(p.id, zonaActiva, '1')}>Sí</button>
+                      <button className={valores[key] === '0' ? 'pill pill--on' : 'pill'} onClick={() => setVal(p.id, zonaActiva, '0')}>No</button>
+                    </div>
+                  ) : (
+                    <input
+                      className="conteo-input"
+                      type="number"
+                      inputMode="decimal"
+                      step="any"
+                      min="0"
+                      placeholder="0"
+                      value={valores[key] ?? ''}
+                      onChange={(e) => setVal(p.id, zonaActiva, e.target.value)}
+                    />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </SeccionCategoria>
+      ))}
 
       {msg && <p className="error-msg">{msg}</p>}
       <div className="sticky-action">
@@ -310,8 +353,13 @@ function BorradorIA({ onGuardado }: { onGuardado: () => void }) {
 // ===========================================================================
 function InventarioActual() {
   const [data, setData] = useState<Actual | null>(null);
-  useEffect(() => { api<Actual>('/inventario/current').then(setData); }, []);
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
+  useEffect(() => {
+    api<Actual>('/inventario/current').then(setData);
+    api<Categoria[]>('/catalogo/categorias-inventario').then(setCategorias).catch(() => {});
+  }, []);
   if (!data) return <p className="muted">Cargando…</p>;
+  const grupos = agruparPorCategoria(data.productos, categorias);
 
   return (
     <>
@@ -325,17 +373,21 @@ function InventarioActual() {
       {data.sin_costo.length > 0 && (
         <p className="aviso">⚠️ Sin costo (no suman al valor): {data.sin_costo.map((s) => s.nombre).join(', ')}</p>
       )}
-      <ul className="conteo-list">
-        {data.productos.map((p) => (
-          <li key={p.product_id} className="conteo-row">
-            <div className="conteo-info">
-              <strong>{p.nombre}</strong>
-              <small className="muted">{p.total_base} / {p.base_qty} mín · {p.store}</small>
-            </div>
-            <span>{mxn(p.valor)}</span>
-          </li>
-        ))}
-      </ul>
+      {grupos.map((g) => (
+        <SeccionCategoria key={g.id ?? 'sin'} titulo={g.nombre} count={g.items.length}>
+          <ul className="conteo-list">
+            {g.items.map((p) => (
+              <li key={p.product_id} className="conteo-row">
+                <div className="conteo-info">
+                  <strong>{p.nombre}</strong>
+                  <small className="muted">{p.total_base} / {p.base_qty} mín · {p.store}</small>
+                </div>
+                <span>{mxn(p.valor)}</span>
+              </li>
+            ))}
+          </ul>
+        </SeccionCategoria>
+      ))}
     </>
   );
 }
