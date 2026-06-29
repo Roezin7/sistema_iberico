@@ -14,6 +14,7 @@ interface ProductoActual {
   product_id: number; nombre: string; store: string; base_qty: number;
   total_base: number; unit_cost: number | null; valor: number;
   categoria_id: number | null; categoria: string | null;
+  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number }[];
 }
 
 // Agrupa por categoría, respetando el orden configurado; "Sin categoría" al final.
@@ -109,11 +110,21 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       api<Zona[]>('/catalogo/zonas'),
       api<Producto[]>('/catalogo/products'),
       api<Categoria[]>('/catalogo/categorias-inventario'),
-    ]).then(([z, p, c]) => {
+      api<Actual>('/inventario/current'),
+    ]).then(([z, p, c, actual]) => {
       setZonas(z);
       setProductos(p);
       setCategorias(c);
       if (z[0]) setZonaActiva(z[0].id);
+      // Pre-carga el último conteo de cada zona: así, para corregir una cantidad
+      // basta editar ese campo y guardar, sin recapturar todo de nuevo.
+      const previos: Record<string, string> = {};
+      for (const prod of actual.productos) {
+        for (const pz of prod.por_zona) {
+          previos[`${prod.product_id}:${pz.zona_id}`] = String(pz.qty_captura);
+        }
+      }
+      setValores(previos);
     });
   }, []);
 
@@ -165,6 +176,9 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         ))}
       </div>
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
+      <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>
+        Se muestra tu último conteo. Corrige solo lo que cambie y guarda, o usa <b>Limpiar</b> para empezar de cero.
+      </p>
 
       {zonaActiva != null && grupos.map((g) => (
         <SeccionCategoria key={g.id ?? 'sin'} titulo={g.nombre} count={g.items.length}>
@@ -206,6 +220,9 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       {msg && <p className="error-msg">{msg}</p>}
       <div className="sticky-action">
         <span className="muted">{capturados} capturados</span>
+        <button className="btn-secondary" onClick={() => setValores({})} disabled={guardando || capturados === 0}>
+          Limpiar
+        </button>
         <button className="btn-primary" onClick={guardar} disabled={guardando}>
           {guardando ? 'Guardando…' : 'Guardar conteo'}
         </button>
