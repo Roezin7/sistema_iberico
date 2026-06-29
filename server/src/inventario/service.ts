@@ -31,26 +31,58 @@ export interface InventarioActual {
   sin_costo: { product_id: number; nombre: string }[];
 }
 
-/** Inventario "actual" = último snapshot del negocio, agregado por producto y zona. */
+/**
+ * Inventario "actual" = el ÚLTIMO conteo de CADA zona (Bodega, Local, …) por
+ * separado, agregado por producto. Volver a contar una zona reemplaza SOLO esa
+ * zona: no borra lo ya contado en las demás.
+ */
 export async function inventarioActual(negocioId: bigint): Promise<InventarioActual> {
-  const [productos, snap] = await Promise.all([
+  const [productos, snaps] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
       include: { stores: true, categorias_inventario: true },
       orderBy: { name: 'asc' },
     }),
-    prisma.inventory_snapshot.findFirst({
+    prisma.inventory_snapshot.findMany({
       where: { negocio_id: negocioId },
-      orderBy: { id: 'desc' },
+      select: { id: true, created_at: true },
     }),
   ]);
 
-  const lineas = snap
+  const fechaPorSnap = new Map(snaps.map((s) => [s.id.toString(), s.created_at]));
+  const snapIds = snaps.map((s) => s.id);
+
+  // Por cada zona, el snapshot más reciente que la haya contado.
+  const ultimoPorZona = snapIds.length
+    ? await prisma.inventory_lines.groupBy({
+        by: ['zona_id'],
+        where: { snapshot_id: { in: snapIds } },
+        _max: { snapshot_id: true },
+      })
+    : [];
+
+  const pares = ultimoPorZona
+    .map((g) => ({ zona_id: g.zona_id, snapshot_id: g._max.snapshot_id }))
+    .filter((p): p is { zona_id: bigint; snapshot_id: bigint } => p.snapshot_id != null);
+
+  // Líneas vigentes = las del último conteo de cada zona.
+  const lineas = pares.length
     ? await prisma.inventory_lines.findMany({
-        where: { snapshot_id: snap.id },
+        where: { OR: pares.map((p) => ({ snapshot_id: p.snapshot_id, zona_id: p.zona_id })) },
         include: { zonas_inventario: true },
       })
     : [];
+
+  // Fecha/snapshot a mostrar = el conteo por zona más reciente.
+  let snapIdActual: bigint | null = null;
+  let fechaActual: Date | null = null;
+  for (const p of pares) {
+    const f = fechaPorSnap.get(p.snapshot_id.toString());
+    if (f && (fechaActual == null || f > fechaActual)) {
+      fechaActual = f;
+      snapIdActual = p.snapshot_id;
+    }
+  }
 
   // Agrupar líneas por producto.
   const lineasPorProducto = new Map<string, typeof lineas>();
@@ -90,8 +122,8 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
   const valorTotal = Math.round(result.reduce((a, p) => a + p.valor, 0) * 100) / 100;
 
   return {
-    snapshot_id: snap ? Number(snap.id) : null,
-    fecha: snap ? snap.created_at.toISOString() : null,
+    snapshot_id: snapIdActual != null ? Number(snapIdActual) : null,
+    fecha: fechaActual ? fechaActual.toISOString() : null,
     productos: result,
     valor_total: valorTotal,
     sin_costo: sinCosto,
