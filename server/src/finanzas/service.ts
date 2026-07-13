@@ -104,7 +104,15 @@ export async function semanaActual(negocioId: bigint) {
 }
 
 export async function crearSemana(negocioId: bigint, fechaInicioStr?: string) {
-  const inicio = lunesDe(fechaInicioStr ? new Date(fechaInicioStr + 'T00:00:00Z') : new Date());
+  let inicio: Date;
+  if (fechaInicioStr) {
+    inicio = lunesDe(new Date(fechaInicioStr + 'T00:00:00Z'));
+  } else {
+    // Sin fecha explícita: continúa la cadena desde la última semana existente (abierta o
+    // cerrada), no desde "hoy" — así nunca se salta una semana aunque se abra tarde.
+    const ultima = await prisma.semanas.findFirst({ where: { negocio_id: negocioId }, orderBy: { fecha_inicio: 'desc' } });
+    inicio = ultima ? masDias(ultima.fecha_fin, 1) : lunesDe(new Date());
+  }
   const fin = masDias(inicio, 6);
   const existe = await prisma.semanas.findFirst({ where: { negocio_id: negocioId, fecha_inicio: inicio } });
   if (existe) throw new HttpError(409, 'Esa semana ya existe');

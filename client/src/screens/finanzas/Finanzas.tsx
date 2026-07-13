@@ -6,11 +6,18 @@ import {
 import { Icono } from '../../icons';
 import { descargarCSV } from '../../csv';
 
+function sumarDias(fechaIso: string, n: number): string {
+  const d = new Date(fechaIso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 export default function Finanzas() {
   const [ref, setRef] = useState<Referencias | null>(null);
   const [saldosFijados, setSaldosFijados] = useState<boolean | null>(null);
   const [semanas, setSemanas] = useState<Semana[]>([]);
   const [semanaId, setSemanaId] = useState<number | null>(null);
+  const [fechaNueva, setFechaNueva] = useState('');
 
   async function recargar() {
     const [r, si, sems] = await Promise.all([
@@ -22,6 +29,13 @@ export default function Finanzas() {
     setSemanaId((prev) => prev ?? sems.find((s) => s.estado === 'abierta')?.id ?? sems[0]?.id ?? null);
   }
   useEffect(() => { void recargar(); }, []);
+
+  // Siguiente semana en la cadena: el día después del fecha_fin de la última semana
+  // registrada (abierta o cerrada). Editable para poder abrir una semana anterior que
+  // se haya quedado sin abrir, y así no perder ni saltar ninguna.
+  const ultima = semanas[0]; // semanas viene ordenado por fecha_inicio desc
+  const siguiente = ultima ? sumarDias(ultima.fecha_fin, 1) : undefined;
+  useEffect(() => { if (siguiente) setFechaNueva(siguiente); }, [siguiente]);
 
   if (!ref || saldosFijados == null) return <Marco><p className="muted">Cargando…</p></Marco>;
   if (!saldosFijados) return <Marco><SetupSaldos ref_={ref} onListo={recargar} /></Marco>;
@@ -36,7 +50,11 @@ export default function Finanzas() {
             <option key={s.id} value={s.id}>{s.etiqueta} {s.estado === 'cerrada' ? '🔒' : '·'}</option>
           ))}
         </select>
-        <button className="pill" onClick={async () => { await finanzas.crearSemana(); recargar(); }}>+ Semana</button>
+        <input type="date" value={fechaNueva} onChange={(e) => setFechaNueva(e.target.value)} title="Lunes de la semana a abrir" />
+        <button className="pill" onClick={async () => {
+          try { const s = await finanzas.crearSemana(fechaNueva || undefined); setSemanaId(s.id); recargar(); }
+          catch (e) { alert(e instanceof Error ? e.message : 'No se pudo crear la semana'); }
+        }}>+ Semana</button>
       </div>
       {!semana ? (
         <p className="muted">No hay semanas. Crea una para empezar.</p>
