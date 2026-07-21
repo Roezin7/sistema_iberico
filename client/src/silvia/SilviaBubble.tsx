@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../api';
 import { useAuth } from '../auth';
 import { Icono } from '../icons';
+import { usePrompt } from '../ui/ConfirmProvider';
 
 interface Msg { id?: number; rol: 'user' | 'assistant'; contenido: string }
 
@@ -28,6 +29,7 @@ function posInicial() {
 
 export default function SilviaBubble() {
   const { usuario } = useAuth();
+  const pedir = usePrompt();
   const [disponible, setDisponible] = useState(false);
   const [abierto, setAbierto] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -111,7 +113,11 @@ export default function SilviaBubble() {
   }
 
   async function registrarEvento() {
-    const contenido = prompt('¿Qué cambió en el negocio? (ej. "Subimos el precio de la cerveza", "Nuevo mesero el lunes")');
+    const contenido = await pedir({
+      title: 'Registrar evento',
+      message: '¿Qué cambió en el negocio?',
+      placeholder: 'ej. "Subimos el precio de la cerveza", "Nuevo mesero el lunes"',
+    });
     if (!contenido?.trim()) return;
     await api('/silvia/eventos', { method: 'POST', body: { contenido: contenido.trim() } });
     setMsgs((m) => [...m, { rol: 'assistant', contenido: `📌 Anoté el evento: "${contenido.trim()}". Lo tomaré en cuenta.` }]);

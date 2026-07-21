@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { Icono } from '../../icons';
+import { Cargando } from '../../ui/Cargando';
 
 // --- Tipos de la API ---
 interface Zona { id: number; nombre: string; orden: number }
@@ -335,13 +336,18 @@ function BorradorIA({ onGuardado }: { onGuardado: () => void }) {
 
       {lineas && lineas.length > 0 && (
         <>
-          {sinMatch > 0 && <p className="aviso">⚠️ {sinMatch} renglón(es) sin producto asignado. Elige el producto o quedarán fuera.</p>}
+          {sinMatch > 0 && (
+            <p className="aviso">
+              <Icono name="alertTriangle" size={16} />
+              {sinMatch} renglón(es) sin producto asignado. Elige el producto o quedarán fuera.
+            </p>
+          )}
           <ul className="conteo-list">
             {lineas.map((l, i) => (
               <li key={i} className="conteo-row" style={{ flexWrap: 'wrap', gap: '0.4rem' }}>
                 <div className="conteo-info" style={{ flex: '1 1 120px' }}>
                   <select value={l.product_id ?? ''} onChange={(e) => editar(i, { product_id: e.target.value === '' ? null : Number(e.target.value) })}
-                    style={{ minHeight: 38, borderColor: l.product_id == null ? 'var(--danger)' : undefined }}>
+                    className="field-sm" style={{ borderColor: l.product_id == null ? 'var(--danger)' : undefined }}>
                     <option value="">— Sin asignar —</option>
                     {productos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                   </select>
@@ -375,7 +381,7 @@ function InventarioActual() {
     api<Actual>('/inventario/current').then(setData);
     api<Categoria[]>('/catalogo/categorias-inventario').then(setCategorias).catch(() => {});
   }, []);
-  if (!data) return <p className="muted">Cargando…</p>;
+  if (!data) return <Cargando />;
   const grupos = agruparPorCategoria(data.productos, categorias);
 
   return (
@@ -388,7 +394,10 @@ function InventarioActual() {
         </small>
       </div>
       {data.sin_costo.length > 0 && (
-        <p className="aviso">⚠️ Sin costo (no suman al valor): {data.sin_costo.map((s) => s.nombre).join(', ')}</p>
+        <p className="aviso">
+          <Icono name="alertTriangle" size={16} />
+          Sin costo (no suman al valor): {data.sin_costo.map((s) => s.nombre).join(', ')}
+        </p>
       )}
       {grupos.map((g) => (
         <SeccionCategoria key={g.id ?? 'sin'} titulo={g.nombre} count={g.items.length}>
@@ -415,8 +424,12 @@ function InventarioActual() {
 function ListaDeCompras() {
   const [data, setData] = useState<ListaCompras | null>(null);
   useEffect(() => { api<ListaCompras>('/inventario/shopping-list').then(setData); }, []);
-  if (!data) return <p className="muted">Cargando…</p>;
-  if (data.grupos.length === 0) return <p className="muted">No falta nada por comprar. 🎉</p>;
+  if (!data) return <Cargando />;
+  if (data.grupos.length === 0) return (
+    <p className="muted" style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+      <Icono name="checkCircle" size={16} /> No falta nada por comprar.
+    </p>
+  );
 
   return (
     <>

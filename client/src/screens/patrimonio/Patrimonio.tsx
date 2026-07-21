@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { descargarCSV } from '../../csv';
+import { Cargando } from '../../ui/Cargando';
 
 interface Snapshot {
   id: number; fecha: string; total_banco: number; total_efectivo: number;
@@ -33,7 +34,7 @@ export default function Patrimonio() {
 function Tendencia() {
   const [data, setData] = useState<{ serie: Snapshot[]; ultimo: Snapshot | null } | null>(null);
   useEffect(() => { api<{ serie: Snapshot[]; ultimo: Snapshot | null }>('/patrimonio/tendencia').then(setData); }, []);
-  if (!data) return <p className="muted">Cargando…</p>;
+  if (!data) return <Cargando />;
   if (!data.ultimo) return <p className="muted">Aún no hay snapshots. Se generan automáticamente al cerrar cada semana.</p>;
   const u = data.ultimo;
   const fila = (l: string, v: number, color?: string) => (
@@ -91,7 +92,7 @@ function Sparkline({ serie }: { serie: Snapshot[] }) {
   const linea = xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
   const area = `${pad},${Hh - pad} ${linea} ${(W - pad).toFixed(1)},${Hh - pad}`;
   return (
-    <svg viewBox={`0 0 ${W} ${Hh}`} className="sparkline" preserveAspectRatio="none">
+    <svg viewBox={`0 0 ${W} ${Hh}`} className="sparkline chart-frame" preserveAspectRatio="none">
       <polygon points={area} fill="var(--data-vino)" opacity="0.1" />
       <polyline points={linea} fill="none" stroke="var(--data-vino)" strokeWidth="2" strokeLinejoin="round" />
     </svg>

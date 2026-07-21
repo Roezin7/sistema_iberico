@@ -86,6 +86,41 @@ const PATHS: Record<string, JSX.Element> = {
       <path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14Z" />
     </>
   ),
+  sunrise: (
+    <>
+      <path d="M12 3v5" />
+      <path d="M5.5 9.5l1.4 1.4M17.1 10.9l1.4-1.4" />
+      <path d="M2 17h20" />
+      <path d="M6 17a6 6 0 0 1 12 0" />
+      <path d="M4 21h16" />
+    </>
+  ),
+  alertTriangle: (
+    <>
+      <path d="M12 4 2 20h20L12 4Z" />
+      <path d="M12 10v4" />
+      <path d="M12 17v.01" />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </>
+  ),
+  alertCircle: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7.5v5" />
+      <path d="M12 15.5v.01" />
+    </>
+  ),
+  checkCircle: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12.5 11 15.5 16 9.5" />
+    </>
+  ),
 };
 
 interface IconoProps extends SVGProps<SVGSVGElement> {

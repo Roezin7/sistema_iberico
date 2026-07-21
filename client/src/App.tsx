@@ -11,6 +11,9 @@ import OfflineBanner from './OfflineBanner';
 import SilviaBubble from './silvia/SilviaBubble';
 import Shell from './Shell';
 import SplashIntro from './brand/SplashIntro';
+import { ConfirmProvider } from './ui/ConfirmProvider';
+import { ToastProvider } from './ui/ToastProvider';
+import { Cargando } from './ui/Cargando';
 import { useState, type JSX } from 'react';
 
 function SoloAdmin({ children, rol }: { children: JSX.Element; rol: Rol }) {
@@ -25,7 +28,7 @@ function AppBody() {
   if (cargando) {
     return (
       <div className="app-shell">
-        <p className="muted">Cargando…</p>
+        <Cargando />
       </div>
     );
   }
@@ -60,11 +63,15 @@ export default function App() {
           }}
         />
       )}
-      <AuthProvider>
-        <BrowserRouter>
-          <AppBody />
-        </BrowserRouter>
-      </AuthProvider>
+      <ConfirmProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <BrowserRouter>
+              <AppBody />
+            </BrowserRouter>
+          </AuthProvider>
+        </ToastProvider>
+      </ConfirmProvider>
     </>
   );
 }

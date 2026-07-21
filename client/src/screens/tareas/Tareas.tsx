@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../api';
 import { useAuth } from '../../auth';
 import { Icono } from '../../icons';
+import { Cargando } from '../../ui/Cargando';
 
 interface ItemDia { id: number; texto: string; orden: number; completado: boolean }
 interface ChecklistDia {
@@ -60,7 +61,7 @@ function Hoy() {
     await api('/tareas/resultados', { method: 'PATCH', body: { instancia_id, item_id: item.id, completado: !item.completado } });
   }
 
-  if (!dia) return <p className="muted">Cargando…</p>;
+  if (!dia) return <Cargando />;
   return (
     <>
       <input className="buscador" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
@@ -70,7 +71,9 @@ function Hoy() {
         return (
           <div key={c.checklist_id} className="resumen-card" style={{ gap: '0.4rem' }}>
             <div className="kv">
-              <strong>{c.tipo === 'apertura' ? '🌅' : '🌙'} {c.nombre}</strong>
+              <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                <Icono name={c.tipo === 'apertura' ? 'sunrise' : 'moon'} size={17} className="ttl-icon" /> {c.nombre}
+              </strong>
               <span className={completo ? 'badge-ok' : 'muted'}>{c.progreso.hechos}/{c.progreso.total}{completo ? ' ✓' : ''}</span>
             </div>
             {c.items.map((it) => (
@@ -118,7 +121,9 @@ function ChecklistEditor({ c, onChange }: { c: ChecklistAdmin; onChange: () => v
   return (
     <div className="resumen-card" style={{ gap: '0.3rem', opacity: c.activo ? 1 : 0.55 }}>
       <div className="kv">
-        <strong>{c.tipo === 'apertura' ? '🌅' : '🌙'} {c.nombre}</strong>
+        <strong style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+          <Icono name={c.tipo === 'apertura' ? 'sunrise' : 'moon'} size={17} className="ttl-icon" /> {c.nombre}
+        </strong>
         <button className="pill" onClick={async () => {
           await api(`/tareas/checklists/${c.id}`, { method: 'PATCH', body: { activo: !c.activo } }); onChange();
         }}>{c.activo ? 'Desactivar' : 'Activar'}</button>
@@ -126,7 +131,7 @@ function ChecklistEditor({ c, onChange }: { c: ChecklistAdmin; onChange: () => v
       {c.items.map((it) => (
         <div key={it.id} className="conteo-row" style={{ padding: '0.3rem 0' }}>
           <span>{it.texto}</span>
-          <button className="link-btn" onClick={async () => { await api(`/tareas/items/${it.id}`, { method: 'DELETE' }); onChange(); }}>✕</button>
+          <button className="link-btn" aria-label={`Eliminar ítem ${it.texto}`} onClick={async () => { await api(`/tareas/items/${it.id}`, { method: 'DELETE' }); onChange(); }}>✕</button>
         </div>
       ))}
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>

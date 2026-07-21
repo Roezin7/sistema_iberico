@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { Icono } from '../../icons';
+import { useConfirm, usePrompt } from '../../ui/ConfirmProvider';
+import { useToast } from '../../ui/ToastProvider';
+import { Cargando } from '../../ui/Cargando';
 
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
@@ -62,7 +65,7 @@ function General() {
     setTimeout(() => setMsg(''), 1500);
   }
 
-  if (!negocio || !cfg) return <p className="muted">Cargando…</p>;
+  if (!negocio || !cfg) return <Cargando />;
 
   return (
     <>
@@ -105,13 +108,15 @@ function Usuarios() {
   const [urol, setURol] = useState<'admin' | 'empleado'>('empleado');
   const [pin, setPin] = useState('');
   const [err, setErr] = useState('');
+  const pedir = usePrompt();
+  const { success, error } = useToast();
   const cargar = () => api<UsuarioAdmin[]>('/auth/admin/usuarios').then(setUsers);
   useEffect(() => { void cargar(); }, []);
 
   const patch = (u: UsuarioAdmin, data: Record<string, unknown>) =>
     api(`/auth/admin/usuarios/${u.id}`, { method: 'PATCH', body: data })
       .then(cargar)
-      .catch((e) => alert(e instanceof Error ? e.message : 'Error'));
+      .catch((e) => error(e instanceof Error ? e.message : 'Error'));
 
   async function crear() {
     setErr('');
@@ -123,22 +128,21 @@ function Usuarios() {
   }
 
   async function resetPin(u: UsuarioAdmin) {
-    const p = prompt(`Nuevo PIN para ${u.nombre} (mínimo 4 dígitos):`);
+    const p = await pedir({ title: 'Restablecer PIN', message: `Nuevo PIN para ${u.nombre}`, placeholder: 'Mínimo 4 dígitos', minLength: 4 });
     if (!p) return;
-    if (p.length < 4) { alert('El PIN debe tener al menos 4 dígitos.'); return; }
-    try { await api(`/auth/admin/usuarios/${u.id}/reset-pin`, { method: 'POST', body: { pin_nuevo: p } }); alert('PIN actualizado ✓'); }
-    catch (e) { alert(e instanceof Error ? e.message : 'Error'); }
+    try { await api(`/auth/admin/usuarios/${u.id}/reset-pin`, { method: 'POST', body: { pin_nuevo: p } }); success('PIN actualizado'); }
+    catch (e) { error(e instanceof Error ? e.message : 'Error'); }
   }
 
   return (
     <div className="resumen-card" style={{ gap: '0.5rem' }}>
       <strong>Usuarios y PINs</strong>
-      <ul className="conteo-list" style={{ boxShadow: 'none' }}>
+      <ul className="conteo-list list-flat">
         {users.map((u) => (
-          <li key={u.id} className="conteo-row" style={{ opacity: u.activo ? 1 : 0.5, flexWrap: 'wrap' }}>
-            <input defaultValue={u.nombre} style={{ flex: 1, minWidth: 120, minHeight: 40 }}
+          <li key={u.id} className={`conteo-row ${u.activo ? '' : 'is-inactive'}`} style={{ flexWrap: 'wrap' }}>
+            <input defaultValue={u.nombre} className="field-md" style={{ flex: 1, minWidth: 120 }}
               onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== u.nombre) void patch(u, { nombre: v }); }} />
-            <select value={u.rol} onChange={(e) => void patch(u, { rol: e.target.value })} style={{ minHeight: 40 }}>
+            <select value={u.rol} onChange={(e) => void patch(u, { rol: e.target.value })} className="field-md">
               <option value="empleado">empleado</option>
               <option value="admin">admin</option>
             </select>
@@ -175,13 +179,14 @@ function ListaEditable({
   return (
     <div className="resumen-card" style={{ gap: '0.5rem' }}>
       <strong>{titulo}</strong>
-      <ul className="conteo-list" style={{ boxShadow: 'none' }}>
+      <ul className="conteo-list list-flat">
         {items.length === 0 && <li className="conteo-row"><span className="muted">Aún no hay.</span></li>}
         {items.map((it) => (
-          <li key={it.id} className="conteo-row" style={{ opacity: it.activo ? 1 : 0.5 }}>
+          <li key={it.id} className={`conteo-row ${it.activo ? '' : 'is-inactive'}`}>
             <input
               defaultValue={it.nombre}
-              style={{ flex: 1, minHeight: 40 }}
+              className="field-md"
+              style={{ flex: 1 }}
               onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== it.nombre) void onRenombrar(it.id, v); }}
             />
             <button className="pill" onClick={() => void onToggle(it.id, !it.activo)}>
@@ -190,7 +195,7 @@ function ListaEditable({
           </li>
         ))}
       </ul>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div className="row-actions">
         <input style={{ flex: 1 }} placeholder={placeholder} value={nuevo} onChange={(e) => setNuevo(e.target.value)} />
         <button className="btn-secondary" onClick={async () => { if (!nuevo.trim()) return; await onCrear(nuevo.trim()); setNuevo(''); }}>+ Agregar</button>
       </div>
@@ -259,26 +264,28 @@ function InventarioCfg() {
 // --- Categorías de inventario (alcohol, cocina, congelado, …) ---
 function CategoriasInvCfg({ categorias, onChange }: { categorias: CategoriaInv[]; onChange: () => void }) {
   const [nombre, setNombre] = useState('');
+  const confirmar = useConfirm();
   return (
     <div className="resumen-card" style={{ gap: '0.5rem' }}>
       <strong>Categorías de inventario</strong>
       <p className="muted">Sirven para agrupar el conteo y el inventario (alcohol, cocina, congelado…).</p>
-      <ul className="conteo-list" style={{ boxShadow: 'none' }}>
+      <ul className="conteo-list list-flat">
         {categorias.length === 0 && <li className="conteo-row"><span className="muted">Aún no hay categorías.</span></li>}
         {categorias.map((c) => (
-          <li key={c.id} className="conteo-row" style={{ opacity: c.activo ? 1 : 0.5, gap: '0.4rem', flexWrap: 'wrap' }}>
-            <input defaultValue={c.nombre} style={{ flex: 1, minWidth: 110, minHeight: 40 }}
+          <li key={c.id} className={`conteo-row ${c.activo ? '' : 'is-inactive'}`} style={{ gap: '0.4rem', flexWrap: 'wrap' }}>
+            <input defaultValue={c.nombre} className="field-md" style={{ flex: 1, minWidth: 110 }}
               onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== c.nombre) void api(`/catalogo/categorias-inventario/${c.id}`, { method: 'PATCH', body: { nombre: v } }).then(onChange); }} />
-            <input type="number" defaultValue={c.orden} title="Orden" style={{ width: 64, minHeight: 40, textAlign: 'right' }}
+            <input type="number" defaultValue={c.orden} title="Orden" className="field-md" style={{ width: 64, textAlign: 'right' }}
               onBlur={(e) => { const v = Number(e.target.value); if (v !== c.orden) void api(`/catalogo/categorias-inventario/${c.id}`, { method: 'PATCH', body: { orden: v } }).then(onChange); }} />
-            <button className="link-btn" title="Eliminar categoría" onClick={async () => {
-              if (!confirm(`¿Eliminar la categoría "${c.nombre}"? Los productos quedarán sin categoría.`)) return;
+            <button className="link-btn" title="Eliminar categoría" aria-label={`Eliminar categoría ${c.nombre}`} onClick={async () => {
+              const ok = await confirmar({ message: `¿Eliminar la categoría "${c.nombre}"? Los productos quedarán sin categoría.`, tone: 'danger', confirmText: 'Eliminar' });
+              if (!ok) return;
               await api(`/catalogo/categorias-inventario/${c.id}`, { method: 'DELETE' }); onChange();
             }}>✕</button>
           </li>
         ))}
       </ul>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div className="row-actions">
         <input style={{ flex: 1 }} placeholder="Nueva categoría (ej. Alcohol)" value={nombre} onChange={(e) => setNombre(e.target.value)} />
         <button className="btn-secondary" onClick={async () => { if (!nombre.trim()) return; await api('/catalogo/categorias-inventario', { method: 'POST', body: { nombre: nombre.trim(), orden: categorias.length + 1 } }); setNombre(''); onChange(); }}>+ Categoría</button>
       </div>
@@ -292,16 +299,16 @@ function ZonasCfg({ zonas, onChange }: { zonas: Zona[]; onChange: () => void }) 
   return (
     <div className="resumen-card" style={{ gap: '0.5rem' }}>
       <strong>Zonas de inventario</strong>
-      <ul className="conteo-list" style={{ boxShadow: 'none' }}>
+      <ul className="conteo-list list-flat">
         {zonas.map((z) => (
           <li key={z.id} className="conteo-row">
-            <input defaultValue={z.nombre} style={{ flex: 1, minHeight: 40 }}
+            <input defaultValue={z.nombre} className="field-md" style={{ flex: 1 }}
               onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== z.nombre) void api(`/catalogo/zonas/${z.id}`, { method: 'PATCH', body: { nombre: v } }).then(onChange); }} />
             <span className="muted">orden {z.orden}</span>
           </li>
         ))}
       </ul>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div className="row-actions">
         <input style={{ flex: 1 }} placeholder="Nueva zona (ej. Barra)" value={nombre} onChange={(e) => setNombre(e.target.value)} />
         <button className="btn-secondary" onClick={async () => { if (!nombre.trim()) return; await api('/catalogo/zonas', { method: 'POST', body: { nombre: nombre.trim(), orden: zonas.length + 1 } }); setNombre(''); onChange(); }}>+ Zona</button>
       </div>
@@ -330,7 +337,7 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
         <option value="">— Categoría (opcional) —</option>
         {categorias.filter((c) => c.activo).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
       </select>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
+      <div className="row-actions">
         <input style={{ flex: 1 }} placeholder="Nueva tienda…" value={nuevaTienda} onChange={(e) => setNuevaTienda(e.target.value)} />
         <button className="btn-secondary" onClick={async () => { if (!nuevaTienda.trim()) return; await api('/catalogo/stores', { method: 'POST', body: { nombre: nuevaTienda.trim() } }); setNuevaTienda(''); onNuevaTienda(); }}>+ Tienda</button>
       </div>
@@ -375,7 +382,7 @@ function ProductoRow({ p, stores, zonas, categorias, onChange }: { p: Producto; 
   }
 
   return (
-    <div className="resumen-card" style={{ gap: '0.4rem', opacity: p.active ? 1 : 0.55 }}>
+    <div className={`resumen-card ${p.active ? '' : 'is-inactive'}`} style={{ gap: '0.4rem' }}>
       <div className="kv" style={{ borderBottom: 'none', cursor: 'pointer' }} onClick={() => setAbierto((v) => !v)}>
         <strong>{p.nombre} {!p.active && <span className="chip chip--warn">inactivo</span>}</strong>
         <span className="muted">mín {p.base_qty} · {mxn(p.unit_cost)} · {p.store}</span>
@@ -398,7 +405,7 @@ function ProductoRow({ p, stores, zonas, categorias, onChange }: { p: Producto; 
           <label className="muted">Costo por unidad
             <input type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="—" />
           </label>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div className="row-actions">
             <button className="btn-primary" style={{ flex: 1 }} onClick={guardar}>{ok ? 'Guardado ✓' : 'Guardar'}</button>
             <button className="btn-secondary" onClick={async () => { await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: { active: !p.active } }); onChange(); }}>
               {p.active ? 'Quitar' : 'Reactivar'}
@@ -422,15 +429,15 @@ function UnidadZonaRow({ productId, zona, unidad, onChange }: { productId: numbe
   return (
     <div className="kv" style={{ borderBottom: 'none', gap: '0.4rem', flexWrap: 'wrap' }}>
       <span style={{ minWidth: 60 }}>{zona.nombre}</span>
-      <input value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="unidad" style={{ flex: 1, minWidth: 90, minHeight: 38 }} />
+      <input value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="unidad" className="field-sm" style={{ flex: 1, minWidth: 90 }} />
       <span className="muted">×</span>
-      <input type="number" inputMode="decimal" value={factor} onChange={(e) => setFactor(e.target.value)} style={{ width: 70, minHeight: 38, textAlign: 'right' }} />
+      <input type="number" inputMode="decimal" value={factor} onChange={(e) => setFactor(e.target.value)} className="field-sm" style={{ width: 70, textAlign: 'right' }} />
       <button className="pill" onClick={async () => {
         await api('/catalogo/product-zone-units', { method: 'PUT', body: { product_id: productId, zona_id: zona.id, unidad_captura: tipo.trim() || 'unidad', factor: Number(factor) || 1 } });
         onChange();
       }}>Guardar</button>
       {unidad && (
-        <button className="link-btn" title="Quitar de esta zona" onClick={async () => { await api(`/catalogo/product-zone-units/${unidad.id}`, { method: 'DELETE' }); onChange(); }}>✕</button>
+        <button className="link-btn" title="Quitar de esta zona" aria-label={`Quitar ${zona.nombre} de esta zona`} onClick={async () => { await api(`/catalogo/product-zone-units/${unidad.id}`, { method: 'DELETE' }); onChange(); }}>✕</button>
       )}
     </div>
   );
@@ -443,7 +450,7 @@ function FinanzasCfg() {
   const [cfg, setCfg] = useState<AdminConfig | null>(null);
   const cargar = () => api<AdminConfig>('/finanzas/config').then(setCfg);
   useEffect(() => { void cargar(); }, []);
-  if (!cfg) return <p className="muted">Cargando…</p>;
+  if (!cfg) return <Cargando />;
   return (
     <>
       <SaldosIniciales cfg={cfg} onChange={cargar} />
@@ -493,9 +500,9 @@ function Ubicaciones({ cfg, onChange }: { cfg: AdminConfig; onChange: () => void
   return (
     <div className="resumen-card" style={{ gap: '0.5rem' }}>
       <strong>Ubicaciones de fondos</strong>
-      <ul className="conteo-list" style={{ boxShadow: 'none' }}>
+      <ul className="conteo-list list-flat">
         {cfg.ubicaciones.map((u) => (
-          <li key={u.id} className="conteo-row" style={{ opacity: u.activo ? 1 : 0.5 }}>
+          <li key={u.id} className={`conteo-row ${u.activo ? '' : 'is-inactive'}`}>
             <div className="conteo-info">
               <strong>{u.nombre}</strong>
               <small className="muted">{u.tipo}{u.socio_id ? ` · ${nombreSocio(u.socio_id) ?? 'socio'}` : ''}</small>
@@ -561,28 +568,30 @@ function TareasCfg() {
 
 function ChecklistEditor({ c, onChange }: { c: Checklist; onChange: () => void }) {
   const [nuevo, setNuevo] = useState('');
+  const confirmar = useConfirm();
   return (
-    <div className="resumen-card" style={{ gap: '0.4rem', opacity: c.activo ? 1 : 0.55 }}>
+    <div className={`resumen-card ${c.activo ? '' : 'is-inactive'}`} style={{ gap: '0.4rem' }}>
       <div className="kv" style={{ borderBottom: 'none', gap: '0.4rem', flexWrap: 'wrap' }}>
-        <span>{c.tipo === 'apertura' ? '🌅' : '🌙'}</span>
-        <input defaultValue={c.nombre} style={{ flex: 1, minWidth: 120, minHeight: 40 }}
+        <Icono name={c.tipo === 'apertura' ? 'sunrise' : 'moon'} size={18} className="ttl-icon" />
+        <input defaultValue={c.nombre} className="field-md" style={{ flex: 1, minWidth: 120 }}
           onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== c.nombre) void api(`/tareas/checklists/${c.id}`, { method: 'PATCH', body: { nombre: v } }).then(onChange); }} />
         <button className="pill" onClick={async () => { await api(`/tareas/checklists/${c.id}`, { method: 'PATCH', body: { activo: !c.activo } }); onChange(); }}>
           {c.activo ? 'Desactivar' : 'Activar'}
         </button>
-        <button className="link-btn" title="Eliminar checklist" onClick={async () => {
-          if (!confirm(`¿Eliminar el checklist "${c.nombre}" y todos sus ítems?`)) return;
+        <button className="link-btn" title="Eliminar checklist" aria-label={`Eliminar checklist ${c.nombre}`} onClick={async () => {
+          const ok = await confirmar({ message: `¿Eliminar el checklist "${c.nombre}" y todos sus ítems?`, tone: 'danger', confirmText: 'Eliminar' });
+          if (!ok) return;
           await api(`/tareas/checklists/${c.id}`, { method: 'DELETE' }); onChange();
         }}>✕</button>
       </div>
       {c.items.map((it) => (
         <div key={it.id} className="conteo-row" style={{ padding: '0.35rem 0', gap: '0.4rem' }}>
-          <input defaultValue={it.texto} style={{ flex: 1, minHeight: 38 }}
+          <input defaultValue={it.texto} className="field-sm" style={{ flex: 1 }}
             onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== it.texto) void api(`/tareas/items/${it.id}`, { method: 'PATCH', body: { texto: v } }).then(onChange); }} />
-          <button className="link-btn" title="Eliminar ítem" onClick={async () => { await api(`/tareas/items/${it.id}`, { method: 'DELETE' }); onChange(); }}>✕</button>
+          <button className="link-btn" title="Eliminar ítem" aria-label={`Eliminar ítem ${it.texto}`} onClick={async () => { await api(`/tareas/items/${it.id}`, { method: 'DELETE' }); onChange(); }}>✕</button>
         </div>
       ))}
-      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.3rem' }}>
+      <div className="row-actions" style={{ marginTop: '0.3rem' }}>
         <input style={{ flex: 1 }} placeholder="Nuevo ítem…" value={nuevo} onChange={(e) => setNuevo(e.target.value)} />
         <button className="btn-secondary" onClick={async () => {
           if (!nuevo.trim()) return;

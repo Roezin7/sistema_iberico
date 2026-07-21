@@ -5,6 +5,9 @@ import {
 } from './api';
 import { Icono } from '../../icons';
 import { descargarCSV } from '../../csv';
+import { useConfirm } from '../../ui/ConfirmProvider';
+import { useToast } from '../../ui/ToastProvider';
+import { Cargando } from '../../ui/Cargando';
 
 function sumarDias(fechaIso: string, n: number): string {
   const d = new Date(fechaIso + 'T00:00:00Z');
@@ -18,6 +21,7 @@ export default function Finanzas() {
   const [semanas, setSemanas] = useState<Semana[]>([]);
   const [semanaId, setSemanaId] = useState<number | null>(null);
   const [fechaNueva, setFechaNueva] = useState('');
+  const { error } = useToast();
 
   async function recargar() {
     const [r, si, sems] = await Promise.all([
@@ -37,7 +41,7 @@ export default function Finanzas() {
   const siguiente = ultima ? sumarDias(ultima.fecha_fin, 1) : undefined;
   useEffect(() => { if (siguiente) setFechaNueva(siguiente); }, [siguiente]);
 
-  if (!ref || saldosFijados == null) return <Marco><p className="muted">Cargando…</p></Marco>;
+  if (!ref || saldosFijados == null) return <Marco><Cargando /></Marco>;
   if (!saldosFijados) return <Marco><SetupSaldos ref_={ref} onListo={recargar} /></Marco>;
 
   const semana = semanas.find((s) => s.id === semanaId) ?? null;
@@ -53,7 +57,7 @@ export default function Finanzas() {
         <input type="date" value={fechaNueva} onChange={(e) => setFechaNueva(e.target.value)} title="Lunes de la semana a abrir" />
         <button className="pill" onClick={async () => {
           try { const s = await finanzas.crearSemana(fechaNueva || undefined); setSemanaId(s.id); recargar(); }
-          catch (e) { alert(e instanceof Error ? e.message : 'No se pudo crear la semana'); }
+          catch (e) { error(e instanceof Error ? e.message : 'No se pudo crear la semana'); }
         }}>+ Semana</button>
       </div>
       {!semana ? (
@@ -111,6 +115,8 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
   const [movs, setMovs] = useState<Movimiento[]>([]);
   const [cuadre, setCuadre] = useState<FilaCuadre[]>([]);
   const [dias, setDias] = useState<DiaFila[]>([]);
+  const confirmar = useConfirm();
+  const { error } = useToast();
 
   async function cargar() {
     const [r, m, c, d] = await Promise.all([
@@ -130,9 +136,13 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
           <span className={abierta ? 'chip chip--info' : 'chip chip--ok'}>{abierta ? 'Abierta' : 'Cerrada'}</span>
           {!abierta && (
             <button className="link-btn" onClick={async () => {
-              if (!confirm('¿Reabrir la semana para editarla? Se quitarán la comisión de terminal y el snapshot de patrimonio de esta semana; se regeneran al volver a cerrar.')) return;
+              const ok = await confirmar({
+                message: '¿Reabrir la semana para editarla? Se quitarán la comisión de terminal y el snapshot de patrimonio de esta semana; se regeneran al volver a cerrar.',
+                tone: 'danger', confirmText: 'Reabrir',
+              });
+              if (!ok) return;
               try { await finanzas.reabrir(semana.id); onCambio(); cargar(); }
-              catch (e) { alert(e instanceof Error ? e.message : 'No se pudo reabrir'); }
+              catch (e) { error(e instanceof Error ? e.message : 'No se pudo reabrir'); }
             }}>Reabrir</button>
           )}
         </span>
@@ -155,7 +165,11 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
 
       {abierta && (tab === 'resumen' || tab === 'cuadre') && (
         <button className="btn-primary" style={{ marginTop: '1.5rem' }} onClick={async () => {
-          if (!confirm('¿Cerrar la semana? Se generará la comisión de terminal y se congelarán los saldos.')) return;
+          const ok = await confirmar({
+            message: '¿Cerrar la semana? Se generará la comisión de terminal y se congelarán los saldos.',
+            confirmText: 'Cerrar semana',
+          });
+          if (!ok) return;
           await finanzas.cerrar(semana.id); onCambio(); cargar();
         }}>Cerrar semana</button>
       )}
@@ -167,6 +181,7 @@ function DiaView({ semana, dias, onChange }: { semana: Semana; dias: DiaFila[]; 
   const abierta = semana.estado === 'abierta';
   const maxVenta = Math.max(1, ...dias.map((d) => d.total_ventas));
   const totalSemana = dias.reduce((a, d) => a + d.total_ventas, 0);
+  const promedio = dias.length ? totalSemana / dias.length : 0;
 
   return (
     <>
@@ -175,14 +190,18 @@ function DiaView({ semana, dias, onChange }: { semana: Semana; dias: DiaFila[]; 
         <strong className="big-number">{mxn(totalSemana)}</strong>
       </div>
 
-      {/* Mini-gráfica de barras por día */}
-      <div className="dia-chart">
-        {dias.map((d) => (
-          <div key={d.fecha} className="dia-bar-wrap" title={`${d.dia} ${mxn(d.total_ventas)}`}>
-            <div className="dia-bar" style={{ height: `${(d.total_ventas / maxVenta) * 100}%` }} />
-            <small className="muted">{d.dia}</small>
-          </div>
-        ))}
+      {/* Mini-gráfica de barras por día — misma paleta de datos que Patrimonio:
+          vino resalta el día tope, olivo los que superan el promedio de la semana. */}
+      <div className="dia-chart chart-frame">
+        {dias.map((d) => {
+          const claseBarra = d.total_ventas >= maxVenta ? 'dia-bar--max' : d.total_ventas > promedio ? 'dia-bar--alto' : '';
+          return (
+            <div key={d.fecha} className="dia-bar-wrap" title={`${d.dia} ${mxn(d.total_ventas)}`}>
+              <div className={`dia-bar ${claseBarra}`} style={{ height: `${(d.total_ventas / maxVenta) * 100}%` }} />
+              <small className="muted">{d.dia}</small>
+            </div>
+          );
+        })}
       </div>
 
       {dias.map((d) => (
@@ -263,19 +282,19 @@ function ResumenView({ r }: { r: Resumen }) {
   return (
     <>
       <div className="kpi-grid">
-        <div className="kpi">
+        <div className="kpi kpi--vino">
           <div className="kpi__label">Utilidad</div>
           <div className="kpi__value">{mxn(r.utilidad)}</div>
         </div>
-        <div className="kpi">
+        <div className="kpi kpi--ochre">
           <div className="kpi__label">Margen</div>
           <div className="kpi__value">{(r.margen * 100).toFixed(1)}%</div>
         </div>
-        <div className="kpi">
+        <div className="kpi kpi--olivo">
           <div className="kpi__label">Utilidad %</div>
           <div className="kpi__value">{(r.utilidad_pct * 100).toFixed(0)}%</div>
         </div>
-        <div className="kpi">
+        <div className="kpi kpi--azulejo">
           <div className="kpi__label">Ventas totales</div>
           <div className="kpi__value">{mxn(r.ventas.total)}</div>
         </div>
@@ -400,6 +419,7 @@ function CuadreView({ ref_, semana, filas, onChange }: { ref_: Referencias; sema
 
 function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; semana: Semana; movs: Movimiento[]; onChange: () => void }) {
   const nombreUbic = (id: number | null) => ref_.ubicaciones.find((u) => u.id === id)?.nombre ?? '';
+  const confirmar = useConfirm();
 
   function exportar() {
     descargarCSV(
@@ -441,7 +461,8 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
                 title="Borrar movimiento"
                 aria-label="Borrar movimiento"
                 onClick={async () => {
-                  if (!confirm('¿Borrar este movimiento? Afecta el cuadre de la semana.')) return;
+                  const ok = await confirmar({ message: '¿Borrar este movimiento? Afecta el cuadre de la semana.', tone: 'danger', confirmText: 'Borrar' });
+                  if (!ok) return;
                   await finanzas.borrarMovimiento(m.id);
                   onChange();
                 }}
