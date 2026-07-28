@@ -69,7 +69,9 @@ Burbuja flotante (esquina inferior derecha, solo admin) con una coach que observ
 KPIs reales del negocio (ventas/semana, utilidad, margen, comisión, patrimonio, inventario)
 y da recomendaciones accionables. Tiene **memoria**: conversación persistente, registro de
 **eventos/cambios** del negocio (botón 📌) y **aprendizajes** que ella misma guarda vía
-tool-use. Modelo: `claude-opus-4-8` con adaptive thinking.
+tool-use. También puede consultar el inventario detallado en tiempo real (producto, categoría,
+tienda, zona, existencia, objetivo, costo, faltante y capital parado). Modelo:
+`claude-opus-4-8` con adaptive thinking.
 
 - Solo se activa si `ANTHROPIC_API_KEY` está configurada en el servidor (si no, la burbuja
   no aparece y `/api/silvia/chat` responde 503).

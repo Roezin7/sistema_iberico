@@ -62,7 +62,7 @@ export async function contextoNegocio(negocioId: bigint): Promise<string> {
       `Inventario: valor a costo ${mxn(inv.valor_total)}; compra sugerida ${mxn(compras.total)} ` +
         `en ${compras.grupos.length} tiendas` +
         (inv.sin_costo.length ? `; ${inv.sin_costo.length} productos sin costo` : '') +
-        '.',
+        `. El detalle completo por producto, categoría, tienda y zona está disponible en la herramienta consultar_inventario.`,
     );
   } catch {
     /* sin inventario */
