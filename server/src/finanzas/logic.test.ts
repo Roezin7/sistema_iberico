@@ -201,17 +201,27 @@ describe('estadoResultadosMensual', () => {
 
   it('excluye transferencias, depósitos y retiros del resultado', () => {
     const [feb] = estadoResultadosMensual(['2026-02'], movs);
-    expect(feb!.ventas.total).toBe(10000);
+    expect(feb!.ventas.total).toBe(10500);
     expect(feb!.gastos_totales).toBe(1100);
     expect(feb!.retiros_socios).toBe(2000); // informativo, debajo de la línea
-    // ventas_netas 9910.45 − compras 3000 − sueldos 1200 − gastos 1100
-    expect(feb!.utilidad_operativa).toBe(4610.45);
+    // ventas_netas 10410.45 − compras 3000 − sueldos 1200 − gastos 1100 − propinas pagadas 400
+    expect(feb!.utilidad_operativa).toBe(4710.45);
   });
 
-  it('deja las propinas fuera de ventas y reporta lo que se debe al personal', () => {
+  it('incluye las propinas en ventas: su salida ya está restada del efectivo', () => {
+    const soloPropina = [mov({ fecha: '2026-02-01', tipo: 'propina_tarjeta', monto: 500 })];
+    const [feb] = estadoResultadosMensual(['2026-02'], soloPropina);
+    expect(feb!.ventas).toEqual({ efectivo: 0, tarjeta: 0, propinas: 500, total: 500 });
+    // No hay salida capturada, así que no resta: es un lavado, no una pérdida.
+    expect(feb!.propinas_pagadas).toBe(0);
+    expect(feb!.utilidad_operativa).toBe(500);
+  });
+
+  it('una propina_pagada explícita sí resta, porque esa salida no venía descontada', () => {
     const [feb] = estadoResultadosMensual(['2026-02'], movs);
-    expect(feb!.ventas.total).toBe(10000);
-    expect(feb!.propinas).toEqual({ cobradas: 500, pagadas: 400, neto: 100 });
+    expect(feb!.propinas_pagadas).toBe(400);
+    const sinPago = estadoResultadosMensual(['2026-02'], movs.filter((m) => m.tipo !== 'propina_pagada'));
+    expect(sinPago[0]!.utilidad_operativa).toBe(5110.45); // 400 más
   });
 
   it('agrupa gastos por categoría, sumando repetidas y de mayor a menor', () => {
@@ -235,7 +245,7 @@ describe('estadoResultadosMensual', () => {
     expect(feb!.costo_ventas_metodo).toBe('inventario');
     expect(feb!.variacion_inventario).toBe(1000);
     expect(feb!.costo_ventas).toBe(2000); // 3000 comprados − 1000 que no se consumió
-    expect(feb!.utilidad_bruta).toBe(7910.45); // ventas_netas 9910.45 − costo 2000
+    expect(feb!.utilidad_bruta).toBe(8410.45); // ventas_netas 10410.45 − costo 2000
   });
 
   it('ignora el inventario si falta uno de los dos extremos', () => {
@@ -256,7 +266,7 @@ describe('estadoResultadosMensual', () => {
     const filas = estadoResultadosMensual(['2026-01', '2026-02'], movs);
     expect(filas.map((f) => f.mes)).toEqual(['2026-01', '2026-02']);
     expect(filas[0]!.ventas.total).toBe(50000);
-    expect(filas[1]!.ventas.total).toBe(10000);
+    expect(filas[1]!.ventas.total).toBe(10500);
   });
 
   it('el balance facturado incluye las propinas cobradas por terminal', () => {

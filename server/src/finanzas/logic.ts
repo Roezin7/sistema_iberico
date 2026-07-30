@@ -94,11 +94,16 @@ export function capitalSocio(transferenciasACajaFuerte: number, retiros: number)
 // ingreso o gasto real; transferencia y deposito son movimientos internos o de
 // financiamiento y no tocan el resultado.
 //
-// Las propinas quedan FUERA de ventas: el negocio las cobra por terminal y las
-// entrega al personal, así que no son ingreso propio. Se reportan como partida
-// informativa (lo cobrado menos lo pagado es dinero que se debe al personal).
-// Los retiros de socios tampoco son gasto: son reparto de utilidad, y van
-// debajo de la línea.
+// Las propinas SÍ entran en ventas, igual que en resumenSemana. No porque sean
+// ingreso del negocio, sino porque su salida ya está descontada: se cobran por
+// terminal (entran al banco) y se entregan al personal en efectivo antes de
+// capturar la venta en efectivo del día. O sea que venta_efectivo ya viene neta
+// de lo entregado; dejar las propinas fuera de ventas restaría esa salida dos
+// veces y subestimaría la utilidad justo por el monto de las propinas.
+// Un movimiento propina_pagada explícito es el caso contrario —ahí la salida no
+// venía descontada—, así que ese sí se resta como costo.
+// Los retiros de socios no son gasto: son reparto de utilidad, y van debajo de
+// la línea.
 
 /** Devuelve los últimos `n` meses calendario ('YYYY-MM'), el más antiguo primero. */
 export function mesesRecientes(hasta: Date, n: number): string[] {
@@ -130,7 +135,7 @@ export interface InventarioMes {
 
 export interface FilaPnl {
   mes: string;
-  ventas: { efectivo: number; tarjeta: number; total: number };
+  ventas: { efectivo: number; tarjeta: number; propinas: number; total: number };
   comision_terminal: number;
   ventas_netas: number;
   compras_inventario: number;
@@ -142,9 +147,9 @@ export interface FilaPnl {
   sueldos: number;
   gastos_por_categoria: { categoria: string; monto: number }[];
   gastos_totales: number;
+  propinas_pagadas: number;
   utilidad_operativa: number;
   margen_operativo: number;
-  propinas: { cobradas: number; pagadas: number; neto: number };
   retiros_socios: number;
   facturado: { tarjeta: number; gastos: number; balance: number };
   inventario: InventarioMes | null;
@@ -189,7 +194,8 @@ export function estadoResultadosMensual(
 
     const efectivo = porTipo('venta_efectivo');
     const tarjeta = porTipo('venta_tarjeta');
-    const ventasTotal = redondear(efectivo + tarjeta);
+    const propinas = porTipo('propina_tarjeta');
+    const ventasTotal = redondear(efectivo + tarjeta + propinas);
     const comision = porTipo('comision_terminal');
     const ventasNetas = redondear(ventasTotal - comision);
 
@@ -213,16 +219,17 @@ export function estadoResultadosMensual(
       .sort((a, b) => b.monto - a.monto);
     const gastosTotales = redondear(gastosPorCategoria.reduce((a, g) => a + g.monto, 0));
 
-    const utilidadOperativa = redondear(utilidadBruta - sueldos - gastosTotales);
-
-    const propinasCobradas = porTipo('propina_tarjeta');
+    // Sólo las propinas capturadas como salida explícita son costo: las del flujo
+    // normal ya vienen restadas de la venta en efectivo del día.
     const propinasPagadas = porTipo('propina_pagada');
-    const facturadoTarjeta = redondear(tarjeta + propinasCobradas);
+    const utilidadOperativa = redondear(utilidadBruta - sueldos - gastosTotales - propinasPagadas);
+
+    const facturadoTarjeta = redondear(tarjeta + propinas);
     const facturadoGastos = suma((m) => m.facturado);
 
     return {
       mes,
-      ventas: { efectivo, tarjeta, total: ventasTotal },
+      ventas: { efectivo, tarjeta, propinas, total: ventasTotal },
       comision_terminal: comision,
       ventas_netas: ventasNetas,
       compras_inventario: compras,
@@ -234,13 +241,9 @@ export function estadoResultadosMensual(
       sueldos,
       gastos_por_categoria: gastosPorCategoria,
       gastos_totales: gastosTotales,
+      propinas_pagadas: propinasPagadas,
       utilidad_operativa: utilidadOperativa,
       margen_operativo: margen(utilidadOperativa, ventasTotal),
-      propinas: {
-        cobradas: propinasCobradas,
-        pagadas: propinasPagadas,
-        neto: redondear(propinasCobradas - propinasPagadas),
-      },
       retiros_socios: porTipo('retiro_socio'),
       facturado: {
         tarjeta: facturadoTarjeta,
@@ -271,7 +274,12 @@ export function totalizarPnl(filas: FilaPnl[]): Omit<FilaPnl, 'mes' | 'inventari
 
   return {
     meses: filas.length,
-    ventas: { efectivo: sum((f) => f.ventas.efectivo), tarjeta: sum((f) => f.ventas.tarjeta), total: ventasTotal },
+    ventas: {
+      efectivo: sum((f) => f.ventas.efectivo),
+      tarjeta: sum((f) => f.ventas.tarjeta),
+      propinas: sum((f) => f.ventas.propinas),
+      total: ventasTotal,
+    },
     comision_terminal: sum((f) => f.comision_terminal),
     ventas_netas: sum((f) => f.ventas_netas),
     compras_inventario: sum((f) => f.compras_inventario),
@@ -284,13 +292,9 @@ export function totalizarPnl(filas: FilaPnl[]): Omit<FilaPnl, 'mes' | 'inventari
       .map(([categoria, monto]) => ({ categoria, monto }))
       .sort((a, b) => b.monto - a.monto),
     gastos_totales: sum((f) => f.gastos_totales),
+    propinas_pagadas: sum((f) => f.propinas_pagadas),
     utilidad_operativa: utilidadOperativa,
     margen_operativo: margen(utilidadOperativa, ventasTotal),
-    propinas: {
-      cobradas: sum((f) => f.propinas.cobradas),
-      pagadas: sum((f) => f.propinas.pagadas),
-      neto: sum((f) => f.propinas.neto),
-    },
     retiros_socios: sum((f) => f.retiros_socios),
     facturado: {
       tarjeta: sum((f) => f.facturado.tarjeta),

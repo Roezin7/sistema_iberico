@@ -207,10 +207,10 @@ async function loopHerramientas(
               ...pnl,
               notas: [
                 'Montos en MXN. Un mes con parcial=true va a la mitad: no lo compares contra meses completos sin advertirlo.',
-                'ventas.total = efectivo + tarjeta. Las propinas NO son ingreso del negocio (se cobran por terminal y se entregan al personal); van aparte en propinas, donde neto = cobradas − pagadas es lo que se le debe al personal.',
+                'ventas.total = efectivo + tarjeta + propinas. Las propinas se cobran por terminal y se entregan al personal en efectivo antes de capturar la venta en efectivo del día, así que venta_efectivo ya viene neta de esa salida: incluirlas en ventas es lo que hace que las dos patas se cancelen. NO son dinero que se le deba al personal ni ingreso extra del negocio. propinas_pagadas es aparte: son salidas capturadas explícitamente (poco comunes) y esas sí restan de la utilidad.',
                 'ventas_netas = ventas.total − comision_terminal (1.99% sobre tarjeta + propinas).',
                 'costo_ventas con metodo="inventario" = compras − variación del inventario valuado (lo comprado que se quedó en almacén no es costo del mes). Con metodo="compras" no había inventario valuado en ese mes y se usan las compras tal cual, así que la utilidad de ese mes se mueve con las compras y no con el consumo real: dilo cuando compares meses con métodos distintos.',
-                'utilidad_operativa = utilidad_bruta − sueldos − gastos_totales. Los retiros de socios NO son gasto: son reparto de utilidad y van debajo de la línea.',
+                'utilidad_operativa = utilidad_bruta − sueldos − gastos_totales − propinas_pagadas. Los retiros de socios NO son gasto: son reparto de utilidad y van debajo de la línea.',
                 'Los márgenes son fracción sobre ventas.total (0.25 = 25%).',
                 'Los movimientos migrados del Excel (jul-2025 a may-2026) tienen todos los gastos bajo la categoría "Histórico": en esos meses no hay desglose por categoría y no debes afirmar que sí.',
                 'sin_movimientos=true significa que no hay nada capturado en ese mes, no que el negocio no vendió.',
