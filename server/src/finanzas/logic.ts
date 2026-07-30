@@ -86,6 +86,221 @@ export function capitalSocio(transferenciasACajaFuerte: number, retiros: number)
   return redondear(transferenciasACajaFuerte - retiros);
 }
 
+// ===========================================================================
+//  ESTADO DE RESULTADOS (P&L) MENSUAL
+// ===========================================================================
+// Se arma sobre los movimientos, agrupados por mes calendario de su fecha (no
+// por semana: las semanas cruzan meses). Sólo entran los tipos que representan
+// ingreso o gasto real; transferencia y deposito son movimientos internos o de
+// financiamiento y no tocan el resultado.
+//
+// Las propinas quedan FUERA de ventas: el negocio las cobra por terminal y las
+// entrega al personal, así que no son ingreso propio. Se reportan como partida
+// informativa (lo cobrado menos lo pagado es dinero que se debe al personal).
+// Los retiros de socios tampoco son gasto: son reparto de utilidad, y van
+// debajo de la línea.
+
+/** Devuelve los últimos `n` meses calendario ('YYYY-MM'), el más antiguo primero. */
+export function mesesRecientes(hasta: Date, n: number): string[] {
+  const out: string[] = [];
+  let anio = hasta.getUTCFullYear();
+  let mes = hasta.getUTCMonth();
+  for (let i = 0; i < n; i++) {
+    out.unshift(`${anio}-${String(mes + 1).padStart(2, '0')}`);
+    if (--mes < 0) { mes = 11; anio--; }
+  }
+  return out;
+}
+
+export interface MovimientoPnl {
+  fecha: string; // 'YYYY-MM-DD'
+  tipo: TipoMovimiento;
+  monto: number;
+  categoria: string | null;
+  facturado: boolean;
+}
+
+/** Valor del inventario a costo en los extremos del mes (de snapshots_patrimonio). */
+export interface InventarioMes {
+  inicial: number | null;
+  final: number | null;
+  fecha_inicial: string | null;
+  fecha_final: string | null;
+}
+
+export interface FilaPnl {
+  mes: string;
+  ventas: { efectivo: number; tarjeta: number; total: number };
+  comision_terminal: number;
+  ventas_netas: number;
+  compras_inventario: number;
+  variacion_inventario: number | null;
+  costo_ventas: number;
+  costo_ventas_metodo: 'inventario' | 'compras';
+  utilidad_bruta: number;
+  margen_bruto: number;
+  sueldos: number;
+  gastos_por_categoria: { categoria: string; monto: number }[];
+  gastos_totales: number;
+  utilidad_operativa: number;
+  margen_operativo: number;
+  propinas: { cobradas: number; pagadas: number; neto: number };
+  retiros_socios: number;
+  facturado: { tarjeta: number; gastos: number; balance: number };
+  inventario: InventarioMes | null;
+  sin_movimientos: boolean;
+}
+
+const SIN_CATEGORIA = 'Sin categoría';
+
+/**
+ * Margen como fracción de las ventas, a 4 decimales. `redondear` dejaría saltos
+ * de 1%, que esconden diferencias reales al comparar meses.
+ */
+function margen(utilidad: number, ventas: number): number {
+  return ventas ? Math.round((utilidad / ventas) * 10_000) / 10_000 : 0;
+}
+
+/**
+ * Arma una fila de P&L por cada mes pedido. `movs` puede traer movimientos de
+ * cualquier fecha: los que caen fuera de `meses` se ignoran.
+ *
+ * El costo de ventas usa la variación de inventario cuando hay snapshots que
+ * enmarquen el mes (compras − lo que se quedó en el almacén); si no los hay
+ * —el histórico no tiene inventario valuado— cae a las compras del mes y lo
+ * declara en `costo_ventas_metodo`.
+ */
+export function estadoResultadosMensual(
+  meses: string[],
+  movs: MovimientoPnl[],
+  inventarioPorMes: Record<string, InventarioMes> = {},
+): FilaPnl[] {
+  const porMes = new Map<string, MovimientoPnl[]>(meses.map((m) => [m, []]));
+  for (const m of movs) {
+    const bucket = porMes.get(m.fecha.slice(0, 7));
+    if (bucket) bucket.push(m);
+  }
+
+  return meses.map((mes) => {
+    const delMes = porMes.get(mes)!;
+    const suma = (pred: (m: MovimientoPnl) => boolean) =>
+      redondear(delMes.filter(pred).reduce((a, m) => a + m.monto, 0));
+    const porTipo = (tipo: TipoMovimiento) => suma((m) => m.tipo === tipo);
+
+    const efectivo = porTipo('venta_efectivo');
+    const tarjeta = porTipo('venta_tarjeta');
+    const ventasTotal = redondear(efectivo + tarjeta);
+    const comision = porTipo('comision_terminal');
+    const ventasNetas = redondear(ventasTotal - comision);
+
+    const compras = porTipo('compra_inventario');
+    const inv = inventarioPorMes[mes] ?? null;
+    const variacion =
+      inv && inv.inicial != null && inv.final != null ? redondear(inv.final - inv.inicial) : null;
+    // Compras que no se consumieron se quedan en el almacén: no son costo del mes.
+    const costoVentas = variacion == null ? compras : redondear(compras - variacion);
+    const utilidadBruta = redondear(ventasNetas - costoVentas);
+
+    const sueldos = porTipo('sueldo');
+    const gastosMap = new Map<string, number>();
+    for (const m of delMes) {
+      if (m.tipo !== 'gasto') continue;
+      const k = m.categoria ?? SIN_CATEGORIA;
+      gastosMap.set(k, redondear((gastosMap.get(k) ?? 0) + m.monto));
+    }
+    const gastosPorCategoria = [...gastosMap.entries()]
+      .map(([categoria, monto]) => ({ categoria, monto }))
+      .sort((a, b) => b.monto - a.monto);
+    const gastosTotales = redondear(gastosPorCategoria.reduce((a, g) => a + g.monto, 0));
+
+    const utilidadOperativa = redondear(utilidadBruta - sueldos - gastosTotales);
+
+    const propinasCobradas = porTipo('propina_tarjeta');
+    const propinasPagadas = porTipo('propina_pagada');
+    const facturadoTarjeta = redondear(tarjeta + propinasCobradas);
+    const facturadoGastos = suma((m) => m.facturado);
+
+    return {
+      mes,
+      ventas: { efectivo, tarjeta, total: ventasTotal },
+      comision_terminal: comision,
+      ventas_netas: ventasNetas,
+      compras_inventario: compras,
+      variacion_inventario: variacion,
+      costo_ventas: costoVentas,
+      costo_ventas_metodo: variacion == null ? 'compras' : 'inventario',
+      utilidad_bruta: utilidadBruta,
+      margen_bruto: margen(utilidadBruta, ventasTotal),
+      sueldos,
+      gastos_por_categoria: gastosPorCategoria,
+      gastos_totales: gastosTotales,
+      utilidad_operativa: utilidadOperativa,
+      margen_operativo: margen(utilidadOperativa, ventasTotal),
+      propinas: {
+        cobradas: propinasCobradas,
+        pagadas: propinasPagadas,
+        neto: redondear(propinasCobradas - propinasPagadas),
+      },
+      retiros_socios: porTipo('retiro_socio'),
+      facturado: {
+        tarjeta: facturadoTarjeta,
+        gastos: facturadoGastos,
+        balance: redondear(facturadoTarjeta - facturadoGastos),
+      },
+      inventario: inv,
+      sin_movimientos: delMes.length === 0,
+    };
+  });
+}
+
+/** Columna "total del periodo": suma las filas mensuales y recalcula los márgenes. */
+export function totalizarPnl(filas: FilaPnl[]): Omit<FilaPnl, 'mes' | 'inventario' | 'costo_ventas_metodo'> & { meses: number } {
+  const sum = (f: (x: FilaPnl) => number) => redondear(filas.reduce((a, x) => a + f(x), 0));
+
+  const gastosMap = new Map<string, number>();
+  for (const fila of filas) {
+    for (const g of fila.gastos_por_categoria) {
+      gastosMap.set(g.categoria, redondear((gastosMap.get(g.categoria) ?? 0) + g.monto));
+    }
+  }
+
+  const ventasTotal = sum((f) => f.ventas.total);
+  const utilidadBruta = sum((f) => f.utilidad_bruta);
+  const utilidadOperativa = sum((f) => f.utilidad_operativa);
+  const conVariacion = filas.filter((f) => f.variacion_inventario != null);
+
+  return {
+    meses: filas.length,
+    ventas: { efectivo: sum((f) => f.ventas.efectivo), tarjeta: sum((f) => f.ventas.tarjeta), total: ventasTotal },
+    comision_terminal: sum((f) => f.comision_terminal),
+    ventas_netas: sum((f) => f.ventas_netas),
+    compras_inventario: sum((f) => f.compras_inventario),
+    variacion_inventario: conVariacion.length ? redondear(conVariacion.reduce((a, f) => a + f.variacion_inventario!, 0)) : null,
+    costo_ventas: sum((f) => f.costo_ventas),
+    utilidad_bruta: utilidadBruta,
+    margen_bruto: margen(utilidadBruta, ventasTotal),
+    sueldos: sum((f) => f.sueldos),
+    gastos_por_categoria: [...gastosMap.entries()]
+      .map(([categoria, monto]) => ({ categoria, monto }))
+      .sort((a, b) => b.monto - a.monto),
+    gastos_totales: sum((f) => f.gastos_totales),
+    utilidad_operativa: utilidadOperativa,
+    margen_operativo: margen(utilidadOperativa, ventasTotal),
+    propinas: {
+      cobradas: sum((f) => f.propinas.cobradas),
+      pagadas: sum((f) => f.propinas.pagadas),
+      neto: sum((f) => f.propinas.neto),
+    },
+    retiros_socios: sum((f) => f.retiros_socios),
+    facturado: {
+      tarjeta: sum((f) => f.facturado.tarjeta),
+      gastos: sum((f) => f.facturado.gastos),
+      balance: sum((f) => f.facturado.balance),
+    },
+    sin_movimientos: filas.every((f) => f.sin_movimientos),
+  };
+}
+
 // --- Reglas de qué campos exige cada tipo de movimiento (spec §4.3) -------
 export interface ReglaMov {
   requiereOrigen: boolean;

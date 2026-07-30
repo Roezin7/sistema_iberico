@@ -6,6 +6,10 @@ import {
   resumenSemana,
   capitalSocio,
   COMISION_RATE,
+  mesesRecientes,
+  estadoResultadosMensual,
+  totalizarPnl,
+  type MovimientoPnl,
 } from './logic.js';
 
 describe('comisionTerminal', () => {
@@ -153,5 +157,141 @@ describe('capitalSocio — retiros mayores que aportes', () => {
 describe('descuadre — redondeo de centavos', () => {
   it('evita ruido de punto flotante', () => {
     expect(descuadre(0.3, 0.1)).toBe(0.2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+//  Estado de resultados (P&L)
+// ---------------------------------------------------------------------------
+
+describe('mesesRecientes', () => {
+  it('devuelve los últimos N meses del más antiguo al más reciente', () => {
+    expect(mesesRecientes(new Date('2026-03-15T00:00:00Z'), 4)).toEqual([
+      '2025-12', '2026-01', '2026-02', '2026-03',
+    ]);
+  });
+  it('cruza el cambio de año hacia atrás', () => {
+    expect(mesesRecientes(new Date('2026-01-05T00:00:00Z'), 2)).toEqual(['2025-12', '2026-01']);
+  });
+});
+
+const mov = (o: Partial<MovimientoPnl> & Pick<MovimientoPnl, 'fecha' | 'tipo' | 'monto'>): MovimientoPnl => ({
+  categoria: null, facturado: false, ...o,
+});
+
+describe('estadoResultadosMensual', () => {
+  const movs: MovimientoPnl[] = [
+    mov({ fecha: '2026-02-03', tipo: 'venta_efectivo', monto: 6000 }),
+    mov({ fecha: '2026-02-04', tipo: 'venta_tarjeta', monto: 4000 }),
+    mov({ fecha: '2026-02-04', tipo: 'propina_tarjeta', monto: 500 }),
+    mov({ fecha: '2026-02-28', tipo: 'propina_pagada', monto: 400 }),
+    mov({ fecha: '2026-02-28', tipo: 'comision_terminal', monto: 89.55 }),
+    mov({ fecha: '2026-02-10', tipo: 'compra_inventario', monto: 3000, facturado: true }),
+    mov({ fecha: '2026-02-15', tipo: 'sueldo', monto: 1200 }),
+    mov({ fecha: '2026-02-16', tipo: 'gasto', monto: 700, categoria: 'Renta' }),
+    mov({ fecha: '2026-02-17', tipo: 'gasto', monto: 300, categoria: 'Servicios' }),
+    mov({ fecha: '2026-02-18', tipo: 'gasto', monto: 100, categoria: 'Renta' }),
+    // No entran al resultado: internos, financiamiento y reparto de utilidad.
+    mov({ fecha: '2026-02-20', tipo: 'transferencia', monto: 9999 }),
+    mov({ fecha: '2026-02-21', tipo: 'deposito', monto: 8888 }),
+    mov({ fecha: '2026-02-22', tipo: 'retiro_socio', monto: 2000 }),
+    // Otro mes: no debe contaminar febrero.
+    mov({ fecha: '2026-01-31', tipo: 'venta_efectivo', monto: 50000 }),
+  ];
+
+  it('excluye transferencias, depósitos y retiros del resultado', () => {
+    const [feb] = estadoResultadosMensual(['2026-02'], movs);
+    expect(feb!.ventas.total).toBe(10000);
+    expect(feb!.gastos_totales).toBe(1100);
+    expect(feb!.retiros_socios).toBe(2000); // informativo, debajo de la línea
+    // ventas_netas 9910.45 − compras 3000 − sueldos 1200 − gastos 1100
+    expect(feb!.utilidad_operativa).toBe(4610.45);
+  });
+
+  it('deja las propinas fuera de ventas y reporta lo que se debe al personal', () => {
+    const [feb] = estadoResultadosMensual(['2026-02'], movs);
+    expect(feb!.ventas.total).toBe(10000);
+    expect(feb!.propinas).toEqual({ cobradas: 500, pagadas: 400, neto: 100 });
+  });
+
+  it('agrupa gastos por categoría, sumando repetidas y de mayor a menor', () => {
+    const [feb] = estadoResultadosMensual(['2026-02'], movs);
+    expect(feb!.gastos_por_categoria).toEqual([
+      { categoria: 'Renta', monto: 800 },
+      { categoria: 'Servicios', monto: 300 },
+    ]);
+  });
+
+  it('sin snapshots de inventario el costo de ventas son las compras', () => {
+    const [feb] = estadoResultadosMensual(['2026-02'], movs);
+    expect(feb!.costo_ventas_metodo).toBe('compras');
+    expect(feb!.costo_ventas).toBe(3000);
+    expect(feb!.variacion_inventario).toBeNull();
+  });
+
+  it('con inventario valuado descuenta lo que se quedó en el almacén', () => {
+    const inv = { '2026-02': { inicial: 20000, final: 21000, fecha_inicial: '2026-01-25', fecha_final: '2026-02-22' } };
+    const [feb] = estadoResultadosMensual(['2026-02'], movs, inv);
+    expect(feb!.costo_ventas_metodo).toBe('inventario');
+    expect(feb!.variacion_inventario).toBe(1000);
+    expect(feb!.costo_ventas).toBe(2000); // 3000 comprados − 1000 que no se consumió
+    expect(feb!.utilidad_bruta).toBe(7910.45); // ventas_netas 9910.45 − costo 2000
+  });
+
+  it('ignora el inventario si falta uno de los dos extremos', () => {
+    const inv = { '2026-02': { inicial: null, final: 21000, fecha_inicial: null, fecha_final: '2026-02-22' } };
+    const [feb] = estadoResultadosMensual(['2026-02'], movs, inv);
+    expect(feb!.costo_ventas_metodo).toBe('compras');
+    expect(feb!.costo_ventas).toBe(3000);
+  });
+
+  it('marca los meses sin movimientos y no divide entre cero', () => {
+    const [mar] = estadoResultadosMensual(['2026-03'], movs);
+    expect(mar!.sin_movimientos).toBe(true);
+    expect(mar!.margen_bruto).toBe(0);
+    expect(mar!.margen_operativo).toBe(0);
+  });
+
+  it('devuelve una fila por mes pedido, en orden, sin mezclar meses', () => {
+    const filas = estadoResultadosMensual(['2026-01', '2026-02'], movs);
+    expect(filas.map((f) => f.mes)).toEqual(['2026-01', '2026-02']);
+    expect(filas[0]!.ventas.total).toBe(50000);
+    expect(filas[1]!.ventas.total).toBe(10000);
+  });
+
+  it('el balance facturado incluye las propinas cobradas por terminal', () => {
+    const [feb] = estadoResultadosMensual(['2026-02'], movs);
+    expect(feb!.facturado.tarjeta).toBe(4500); // 4000 tarjeta + 500 propinas
+    expect(feb!.facturado.gastos).toBe(3000);
+    expect(feb!.facturado.balance).toBe(1500);
+  });
+});
+
+describe('totalizarPnl', () => {
+  const movs: MovimientoPnl[] = [
+    mov({ fecha: '2026-01-10', tipo: 'venta_efectivo', monto: 1000 }),
+    mov({ fecha: '2026-01-11', tipo: 'gasto', monto: 100, categoria: 'Renta' }),
+    mov({ fecha: '2026-02-10', tipo: 'venta_efectivo', monto: 3000 }),
+    mov({ fecha: '2026-02-11', tipo: 'gasto', monto: 200, categoria: 'Renta' }),
+    mov({ fecha: '2026-02-12', tipo: 'gasto', monto: 50, categoria: 'Otros' }),
+  ];
+  const filas = estadoResultadosMensual(['2026-01', '2026-02'], movs);
+
+  it('suma los meses y consolida las categorías de gasto', () => {
+    const t = totalizarPnl(filas);
+    expect(t.meses).toBe(2);
+    expect(t.ventas.total).toBe(4000);
+    expect(t.gastos_por_categoria).toEqual([
+      { categoria: 'Renta', monto: 300 },
+      { categoria: 'Otros', monto: 50 },
+    ]);
+    expect(t.gastos_totales).toBe(350);
+  });
+
+  it('recalcula el margen sobre el total, no promedia los márgenes mensuales', () => {
+    const t = totalizarPnl(filas);
+    // Margen del periodo = 3650/4000; promediar 0.9 y 0.9167 daría otro número.
+    expect(t.margen_operativo).toBe(0.9125);
+    expect(t.utilidad_operativa).toBe(3650);
   });
 });

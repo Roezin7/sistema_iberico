@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { env } from '../env.js';
 import { HttpError } from '../middleware/error.js';
 import { inventarioActual, listaCompras } from '../inventario/service.js';
+import { estadoResultados } from '../finanzas/service.js';
 import { contextoNegocio } from './context.js';
 
 const MODELO = 'claude-opus-4-8';
@@ -27,6 +28,7 @@ Reglas:
 - USA solo los números que te doy en el contexto. NUNCA inventes cifras. Si falta un dato, dilo y sugiere capturarlo.
 - Piensa como negocio de bar en México: margen, rotación de inventario, comisión de terminal (1.99%), control de efectivo y faltantes, costos de cerveza/licor, propinas, sueldos.
 - Tienes acceso al inventario detallado y actualizado mediante consultar_inventario. Úsala siempre que pregunten por productos, categorías, tiendas, zonas, faltantes, excedentes, compras o capital parado. Aplica exactamente filtros como "sin alcohol" y no afirmes que falta el desglose sin consultar primero.
+- Tienes el estado de resultados mes a mes mediante estado_resultados, con historia desde julio 2025. Úsala siempre que pregunten por P&L, utilidad, rentabilidad, márgenes, costos, gastos o cómo va el negocio contra meses anteriores; el contexto de abajo sólo trae las últimas semanas, así que no respondas de memoria ni digas que no hay histórico sin consultar. Lee las notas que devuelve y respeta lo que dicen sobre meses parciales, propinas y el método del costo de ventas.
 - Para inventario, "capital parado" es el valor a costo de existencias que exceden el nivel objetivo (base_qty): max(total_base - base_qty, 0) × unit_cost. Distingue ese excedente del valor total existente y aclara cuando un producto no tenga costo o categoría.
 - Si detectas algo relevante y duradero del negocio (un patrón, una decisión, una preferencia, el efecto de un cambio), guárdalo con la herramienta recordar_aprendizaje para recordarlo en el futuro. No guardes trivialidades ni datos que ya están en los números.
 - Toma en cuenta los eventos y aprendizajes previos (memoria) para dar continuidad: si el dueño hizo un cambio, evalúa su efecto.
@@ -47,6 +49,22 @@ const HERRAMIENTAS: Anthropic.Tool[] = [
     input_schema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'estado_resultados',
+    description:
+      'Devuelve el estado de resultados (P&L) mes por mes: ventas en efectivo y tarjeta, comisión de terminal, compras de inventario, costo de ventas, utilidad bruta, sueldos, gastos desglosados por categoría, utilidad operativa y márgenes, más el total del periodo. Úsala SIEMPRE que pregunten por P&L, estado de resultados, utilidad, rentabilidad, margen, costos, gastos, tendencia mensual o comparación entre meses. Hay historia desde julio 2025. Pide los meses que necesites (por defecto 6) y haz sobre el resultado las comparaciones, tendencias o rankings que te pidan.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        meses: {
+          type: 'integer',
+          description: 'Cuántos meses hacia atrás incluir, contando el mes en curso. Entre 1 y 36; por defecto 6.',
+          minimum: 1,
+          maximum: 36,
+        },
+      },
     },
   },
   {
@@ -176,6 +194,26 @@ async function loopHerramientas(
                 'Las cantidades están expresadas en la unidad base configurada para cada producto.',
                 'capital_parado = max(existencia - objetivo, 0) × costo_unitario.',
                 'Un costo null significa que no se puede calcular el valor monetario de ese producto.',
+              ],
+            }),
+          });
+        } else if (block.name === 'estado_resultados') {
+          const meses = Number((block.input as { meses?: number }).meses) || 6;
+          const pnl = await estadoResultados(negocioId, meses);
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: block.id,
+            content: JSON.stringify({
+              ...pnl,
+              notas: [
+                'Montos en MXN. Un mes con parcial=true va a la mitad: no lo compares contra meses completos sin advertirlo.',
+                'ventas.total = efectivo + tarjeta. Las propinas NO son ingreso del negocio (se cobran por terminal y se entregan al personal); van aparte en propinas, donde neto = cobradas − pagadas es lo que se le debe al personal.',
+                'ventas_netas = ventas.total − comision_terminal (1.99% sobre tarjeta + propinas).',
+                'costo_ventas con metodo="inventario" = compras − variación del inventario valuado (lo comprado que se quedó en almacén no es costo del mes). Con metodo="compras" no había inventario valuado en ese mes y se usan las compras tal cual, así que la utilidad de ese mes se mueve con las compras y no con el consumo real: dilo cuando compares meses con métodos distintos.',
+                'utilidad_operativa = utilidad_bruta − sueldos − gastos_totales. Los retiros de socios NO son gasto: son reparto de utilidad y van debajo de la línea.',
+                'Los márgenes son fracción sobre ventas.total (0.25 = 25%).',
+                'Los movimientos migrados del Excel (jul-2025 a may-2026) tienen todos los gastos bajo la categoría "Histórico": en esos meses no hay desglose por categoría y no debes afirmar que sí.',
+                'sin_movimientos=true significa que no hay nada capturado en ese mes, no que el negocio no vendió.',
               ],
             }),
           });

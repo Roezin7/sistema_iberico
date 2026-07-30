@@ -10,7 +10,11 @@ import {
   capitalSocio,
   redondear,
   REGLAS_MOVIMIENTO,
+  mesesRecientes,
+  estadoResultadosMensual,
+  totalizarPnl,
   type MovBalance,
+  type InventarioMes,
 } from './logic.js';
 import { generarSnapshotEnCierre } from '../patrimonio/service.js';
 import { inventarioActual } from '../inventario/service.js';
@@ -681,4 +685,81 @@ export async function borrarMovimiento(negocioId: bigint, id: bigint) {
   }
   await prisma.movimientos.delete({ where: { id } });
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+//  Estado de resultados (P&L) por mes
+// ---------------------------------------------------------------------------
+
+/** Mapa mes -> valor del inventario al abrir y al cerrar, tomado de los snapshots de cierre. */
+function inventarioPorMes(
+  meses: string[],
+  snapshots: { fecha: Date; total_inventario: unknown }[],
+): Record<string, InventarioMes> {
+  const serie = snapshots
+    .map((s) => ({ fecha: iso(s.fecha), valor: num0(s.total_inventario as never) }))
+    .sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  const out: Record<string, InventarioMes> = {};
+  for (const mes of meses) {
+    // Inicial: el último cierre ANTES de que empiece el mes. Final: el último DENTRO del mes.
+    const previos = serie.filter((s) => s.fecha < `${mes}-01`);
+    const dentro = serie.filter((s) => s.fecha.slice(0, 7) === mes);
+    const ini = previos.length ? previos[previos.length - 1]! : null;
+    const fin = dentro.length ? dentro[dentro.length - 1]! : null;
+    out[mes] = {
+      inicial: ini ? ini.valor : null,
+      final: fin ? fin.valor : null,
+      fecha_inicial: ini ? ini.fecha : null,
+      fecha_final: fin ? fin.fecha : null,
+    };
+  }
+  return out;
+}
+
+/**
+ * Estado de resultados de los últimos `meses` meses calendario (el mes en curso
+ * incluido y marcado como parcial). Agrupa por fecha del movimiento, no por
+ * semana, porque las semanas cruzan meses.
+ */
+export async function estadoResultados(negocioId: bigint, meses = 6) {
+  const n = Math.min(Math.max(Math.trunc(meses) || 6, 1), 36);
+  const listaMeses = mesesRecientes(new Date(), n);
+  const desde = new Date(`${listaMeses[0]}-01T00:00:00.000Z`);
+  const ultimo = listaMeses[listaMeses.length - 1]!;
+  // Día 0 del mes siguiente = último día del mes pedido.
+  const hasta = new Date(Date.UTC(Number(ultimo.slice(0, 4)), Number(ultimo.slice(5, 7)), 0));
+
+  const [movs, snapshots] = await Promise.all([
+    prisma.movimientos.findMany({
+      where: { negocio_id: negocioId, fecha: { gte: desde, lte: hasta } },
+      select: { fecha: true, tipo: true, monto: true, facturado: true, categorias_gasto: { select: { nombre: true } } },
+      orderBy: { fecha: 'asc' },
+    }),
+    prisma.snapshots_patrimonio.findMany({
+      where: { negocio_id: negocioId },
+      select: { fecha: true, total_inventario: true },
+    }),
+  ]);
+
+  const filas = estadoResultadosMensual(
+    listaMeses,
+    movs.map((m) => ({
+      fecha: iso(m.fecha),
+      tipo: m.tipo,
+      monto: num0(m.monto),
+      categoria: m.categorias_gasto?.nombre ?? null,
+      facturado: m.facturado,
+    })),
+    inventarioPorMes(listaMeses, snapshots),
+  );
+
+  const mesEnCurso = iso(new Date()).slice(0, 7);
+  return {
+    desde: iso(desde),
+    hasta: iso(hasta),
+    mes_en_curso: mesEnCurso,
+    meses: filas.map((f) => ({ ...f, parcial: f.mes === mesEnCurso })),
+    total: totalizarPnl(filas),
+  };
 }
