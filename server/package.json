@@ -13,6 +13,7 @@
     "prisma:introspect": "prisma db pull",
     "prisma:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
+    "migrar:historico": "tsx scripts/migrar-historico.ts",
     "test": "vitest run"
   },
   "prisma": {
