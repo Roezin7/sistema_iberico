@@ -4,7 +4,14 @@
       "Bash(awk '{print $1, $2, $9}')",
       "Bash(lsof -nP -iTCP:5174 -sTCP:LISTEN)",
       "Bash(lsof -nP -iTCP:5175 -sTCP:LISTEN)",
-      "Bash(awk '{print $NF}')"
+      "Bash(awk '{print $NF}')",
+      "Bash(npm test *)",
+      "Bash(git -c user.name=Arturo -c user.email=arturohernandezdharak@gmail.com commit -q -m ' *)",
+      "Bash(which rsvg-convert *)",
+      "Bash(node -e \"require.resolve\\('sharp'\\); console.log\\('sharp OK'\\)\")",
+      "Bash(npm init *)",
+      "Bash(npm i *)",
+      "Bash(echo \"EXIT:$?\")"
     ]
   }
 }
