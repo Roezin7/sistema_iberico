@@ -20,6 +20,7 @@ const ITEMS: Item[] = [
   { ruta: '/finanzas', label: 'Finanzas', icono: 'wallet', soloAdmin: true },
   { ruta: '/patrimonio', label: 'Patrimonio', icono: 'trending', soloAdmin: true },
   { ruta: '/configuracion', label: 'Configuración', icono: 'settings', soloAdmin: true },
+  { ruta: '/marketing', label: 'Marketing', icono: 'sparkles', soloAdmin: true },
 ];
 
 export default function Shell({ children }: { children: ReactNode }) {
