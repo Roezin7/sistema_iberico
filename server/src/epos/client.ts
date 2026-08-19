@@ -42,7 +42,9 @@ function config() {
 
 async function get<T>(path: string, params: Record<string, string | number | undefined>): Promise<T> {
   const c = config();
-  const url = new URL(`${c.EPOS_API_BASE_URL.replace(/\/$/, '')}/${path.replace(/^\//, '')}`);
+  const configuredBase = c.EPOS_API_BASE_URL.replace(/\/+$/, '');
+  const apiBase = /\/api$/i.test(configuredBase) ? configuredBase : `${configuredBase}/api`;
+  const url = new URL(`${apiBase}/${path.replace(/^\//, '')}`);
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) url.searchParams.set(key, String(value));
   }
@@ -80,7 +82,7 @@ export async function dailySales(from: string, to: string, locationId?: number) 
 }
 
 export async function bookkeepingReport(from: string, to: string, locationId?: number) {
-  return get<EposReportRow[]>('Reports/BookKeepingReport', {
+  return get<EposReportRow[]>('Reports/BookkeepingReport', {
     FromDate: from,
     ToDate: to,
     LocationID: locationId ?? env.EPOS_LOCATION_ID,
