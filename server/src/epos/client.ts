@@ -80,7 +80,7 @@ export async function dailySales(from: string, to: string, locationId?: number) 
 }
 
 export async function bookkeepingReport(from: string, to: string, locationId?: number) {
-  return get<EposReportRow[]>('Reports/BookkeepingReport', {
+  return get<EposReportRow[]>('Reports/BookKeepingReport', {
     FromDate: from,
     ToDate: to,
     LocationID: locationId ?? env.EPOS_LOCATION_ID,
