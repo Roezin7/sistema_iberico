@@ -46,7 +46,7 @@ const metadata: Meta[] = [
   { nombre: 'Stella', unidad_base: 'pieza', contenido_compra: 1, unidad_compra: 'pieza' },
   { nombre: 'Ultra', unidad_base: 'pieza', contenido_compra: 1, unidad_compra: 'pieza' },
   { nombre: 'Frutos rojos', costo: 254, unidad_base: 'g', contenido_compra: 1810, unidad_compra: 'bolsa congelada' },
-  { nombre: 'Jamon Serrano', unidad_base: 'g', contenido_compra: 340, unidad_compra: 'paquete' },
+  { nombre: 'Jamon Serrano', costo: 199, unidad_base: 'g', contenido_compra: 340, unidad_compra: 'paquete' },
   { nombre: 'Salchichon', unidad_base: 'g', contenido_compra: 500, unidad_compra: 'pieza' },
   { nombre: 'Chorizo', unidad_base: 'g', contenido_compra: 500, unidad_compra: 'pieza' },
   { nombre: 'Pan', costo: 27.5, unidad_base: 'g', contenido_compra: 200, unidad_compra: 'pieza' },
@@ -59,11 +59,11 @@ const metadata: Meta[] = [
   { nombre: 'Harina', unidad_base: 'g', contenido_compra: 1000, unidad_compra: 'bolsa' },
   { nombre: 'Nieve', costo: 189, unidad_base: 'g', contenido_compra: 3400, unidad_compra: 'bote' },
   { nombre: 'Papas a la francesa', costo: 649, unidad_base: 'g', contenido_compra: 13600, unidad_compra: 'caja' },
-  { nombre: 'Tocino', unidad_base: 'g', contenido_compra: 567, unidad_compra: 'bolsa' },
+  { nombre: 'Tocino', costo: 183.11, unidad_base: 'g', contenido_compra: 567, unidad_compra: 'bolsa' },
   { nombre: 'Ketchup', unidad_base: 'g', contenido_compra: 1000, unidad_compra: 'envase' },
   { nombre: 'Vinagre balsamico', unidad_base: 'ml', contenido_compra: 1000, unidad_compra: 'botella' },
   { nombre: 'Café espresso', costo: 163, unidad_base: 'g', contenido_compra: 340, unidad_compra: 'bolsa' },
-  { nombre: 'Mermelada', unidad_base: 'g', contenido_compra: 1200, unidad_compra: 'lote interno' },
+  { nombre: 'Mermelada', costo: 201.51, unidad_base: 'g', contenido_compra: 1200, unidad_compra: 'lote interno' },
   { nombre: 'Queso amarillo', costo: 255, unidad_base: 'g', contenido_compra: 3000, unidad_compra: 'bote' },
   { nombre: 'Fanta Roja', unidad_base: 'ml', contenido_compra: 2000, unidad_compra: 'botella' },
   { nombre: 'Limón', unidad_base: 'pieza', contenido_compra: 14, unidad_compra: 'kg' },
@@ -71,6 +71,7 @@ const metadata: Meta[] = [
   { nombre: 'Miel Carlota', unidad_base: 'g', contenido_compra: 300, unidad_compra: 'envase' },
   { nombre: 'Pepino', unidad_base: 'g', contenido_compra: 1000, unidad_compra: 'kg' },
   { nombre: 'Perejil', unidad_base: 'pieza', contenido_compra: 50, unidad_compra: 'manojo' },
+  { nombre: 'Hierba buena', unidad_base: 'g', contenido_compra: 30, unidad_compra: 'manojo' },
   { nombre: 'Lechera', unidad_base: 'ml', contenido_compra: 257.95, unidad_compra: 'lata 335g' },
   { nombre: 'Carnation', unidad_base: 'ml', contenido_compra: 1000, unidad_compra: 'litro' },
   { nombre: 'Frutos secos', unidad_base: 'g', contenido_compra: 1000, unidad_compra: 'kg' },
@@ -92,7 +93,7 @@ const recipes: Record<string, Linea[]> = {
   'Paloma Grande': [['Limón', 4, 'pieza'], ['Hacienda de Tepa', 118.29, 'ml'], ['Squirt', 400, 'ml']],
   'Cuba de hacienda de tepa': [['Hacienda de Tepa', 59.15, 'ml'], ['Squirt', 250, 'ml']],
   'Michelob Ultra': [['Ultra', 1, 'pieza']],
-  'Piñada': [['Calahua', 118.29, 'ml'], ['Piña', 60, 'g'], ['Jugo de Piña', 200, 'ml'], ['Hielo', 1, 'unidad', 'servicio']],
+  'Piñada': [['Calahua', 118.29, 'ml'], ['Piña', 60, 'g'], ['Jugo de Piña', 200, 'ml']],
   'Limonada': [['Limón', 2, 'pieza'], ['Madrileña', 29.57, 'ml'], ['Sprite', 200, 'ml'], ['Agua natural', 100, 'ml', 'agua/hielo de servicio']],
   'Papas Ibéricas': [['Papas a la francesa', 150, 'g'], ['Tocino', 40, 'g'], ['Queso amarillo', 50, 'g']],
   'Michelada Chica': [['Michemix', 60, 'ml'], ['Corona', 1, 'pieza', 'alternativa operativa: Victoria']],
@@ -172,6 +173,15 @@ async function main() {
       notas: nombre === 'Copa de la Casa' ? 'Porción estándar provisional de 6 oz; medir copa real para confirmar.' : null,
       lineas: { create: lineas.map(([producto, cantidad, unidad, nota]) => ({ product_id: ids.get(producto)!, cantidad, unidad, nota: nota ?? null })) },
     } });
+  }
+  // Hielo se documenta como servicio operativo, no como insumo costeadable
+  // hasta confirmar presentación y rendimiento; evita dejar una línea con
+  // costo inventado en la Piñada.
+  const hieloId = ids.get('Hielo');
+  const pinada = await prisma.productos_menu.findUnique({ where: { negocio_id_nombre: { negocio_id: NEGOCIO, nombre: 'Piñada' } }, select: { id: true } });
+  if (hieloId && pinada) {
+    const version = await prisma.recetas.findFirst({ where: { producto_menu_id: pinada.id }, orderBy: { version: 'desc' }, select: { id: true } });
+    if (version) await prisma.receta_lineas.deleteMany({ where: { receta_id: version.id, product_id: hieloId } });
   }
   console.log(JSON.stringify({ ok: true, recetas_intentadas: Object.keys(recipes).length, productos_actualizados: metadata.length, faltantes: [...missing] }, null, 2));
 }
