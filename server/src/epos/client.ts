@@ -129,10 +129,16 @@ export function summarizeBookkeeping(rows: EposReportRow[]) {
 }
 
 export function summarizeDailySales(rows: EposDailySalesRow[]) {
+  // Algunas cuentas/reportes de Epos devuelven ventas y descuentos, pero dejan
+  // NoOfTrans e ItemQty vacíos. No convertir esos campos ausentes en cero:
+  // cero sería un dato falso y produciría diferencias artificiales contra
+  // Bookkeeping.
+  const tieneTransacciones = rows.some((row) => row.NoOfTrans !== null && row.NoOfTrans !== undefined);
+  const tieneUnidades = rows.some((row) => row.ItemQty !== null && row.ItemQty !== undefined);
   return {
     filas: rows.length,
-    transacciones: rows.reduce((sum, row) => sum + numberOrZero(row.NoOfTrans), 0),
-    unidades: rows.reduce((sum, row) => sum + numberOrZero(row.ItemQty), 0),
+    transacciones: tieneTransacciones ? rows.reduce((sum, row) => sum + numberOrZero(row.NoOfTrans), 0) : null,
+    unidades: tieneUnidades ? rows.reduce((sum, row) => sum + numberOrZero(row.ItemQty), 0) : null,
     ventas: rows.reduce((sum, row) => sum + numberOrZero(row.ValueIncVAT ?? row.Value), 0),
     descuentos: rows.reduce((sum, row) => sum + numberOrZero(row.Discount), 0),
     devoluciones: rows.reduce((sum, row) => sum + numberOrZero(row.RefundValue), 0),
@@ -154,8 +160,8 @@ export async function reconcilePreview(from: string, to: string, locationId?: nu
     bookkeeping: bookkeepingSummary,
     diferencias: {
       ventas: Math.round((dailySummary.ventas - bookkeepingSummary.ventas) * 100) / 100,
-      unidades: dailySummary.unidades - bookkeepingSummary.unidades,
-      transacciones: dailySummary.transacciones - bookkeepingSummary.transacciones,
+      unidades: dailySummary.unidades == null ? null : dailySummary.unidades - bookkeepingSummary.unidades,
+      transacciones: dailySummary.transacciones == null ? null : dailySummary.transacciones - bookkeepingSummary.transacciones,
     },
   };
 }
