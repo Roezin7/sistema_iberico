@@ -7,6 +7,7 @@ import {
   calcularSaldosTeoricos,
   descuadre,
   resumenSemana,
+  costoVentasPorInventario,
   capitalSocio,
   redondear,
   REGLAS_MOVIMIENTO,
@@ -17,7 +18,7 @@ import {
   type InventarioMes,
 } from './logic.js';
 import { generarSnapshotEnCierre } from '../patrimonio/service.js';
-import { inventarioActual } from '../inventario/service.js';
+import { inventarioActual, crearSnapshotConsolidado, valorSnapshot } from '../inventario/service.js';
 
 // --- Fechas (semana lunes→domingo) -----------------------------------------
 function lunesDe(fecha: Date): Date {
@@ -128,6 +129,7 @@ export async function crearSemana(negocioId: bigint, fechaInicioStr?: string) {
       fecha_fin: fin,
     },
   });
+  await asegurarInventarioSemanal(negocioId, s.id);
   return serializarSemana(s);
 }
 
@@ -146,6 +148,72 @@ async function getSemanaAbierta(negocioId: bigint, semanaId: bigint) {
   const s = await prisma.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId } });
   if (!s) throw new HttpError(404, 'Semana no encontrada');
   return s;
+}
+
+/**
+ * Garantiza que una semana tenga una apertura de inventario explícita. Para
+ * semanas nuevas se toma el cierre de la semana anterior; durante la
+ * migración se permite usar el último conteo histórico como bootstrap.
+ */
+async function asegurarInventarioSemanal(negocioId: bigint, semanaId: bigint) {
+  const existente = await prisma.inventario_semanal.findUnique({ where: { semana_id: semanaId } });
+  if (existente) return existente;
+
+  const semana = await prisma.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId } });
+  if (!semana) throw new HttpError(404, 'Semana no encontrada');
+
+  const anterior = await prisma.semanas.findFirst({
+    where: { negocio_id: negocioId, fecha_fin: { lt: semana.fecha_inicio } },
+    orderBy: { fecha_inicio: 'desc' },
+    include: { inventario_semanal: true },
+  });
+  let aperturaSnapshotId = anterior?.inventario_semanal?.cierre_snapshot_id ?? null;
+  let aperturaOrigen = aperturaSnapshotId ? 'cierre_semana_anterior' : null;
+
+  if (!aperturaSnapshotId) {
+    const limite = new Date(semana.fecha_inicio);
+    limite.setUTCDate(limite.getUTCDate() + 1);
+    const ultimo = await prisma.inventory_snapshot.findFirst({
+      where: { negocio_id: negocioId, created_at: { lt: limite } },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+      select: { id: true },
+    });
+    aperturaSnapshotId = ultimo?.id ?? null;
+    aperturaOrigen = aperturaSnapshotId ? 'conteo_historico_bootstrap' : null;
+  }
+
+  const aperturaValor = aperturaSnapshotId ? await valorSnapshot(negocioId, aperturaSnapshotId) : null;
+  return prisma.inventario_semanal.create({
+    data: {
+      negocio_id: negocioId,
+      semana_id: semanaId,
+      apertura_snapshot_id: aperturaSnapshotId,
+      apertura_valor: aperturaValor,
+      apertura_origen: aperturaOrigen,
+    },
+  });
+}
+
+async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
+  const semanal = await asegurarInventarioSemanal(negocioId, semanaId);
+  const movs = await prisma.movimientos.findMany({
+    where: { negocio_id: negocioId, semana_id: semanaId, tipo: 'compra_inventario' },
+    select: { monto: true },
+  });
+  const compras = redondear(movs.reduce((a, m) => a + num0(m.monto), 0));
+  const apertura = semanal.apertura_valor == null ? null : num0(semanal.apertura_valor);
+  const cierre = semanal.cierre_valor == null ? null : num0(semanal.cierre_valor);
+  const costoVentas = costoVentasPorInventario(apertura, compras, cierre);
+  return {
+    apertura_snapshot_id: semanal.apertura_snapshot_id == null ? null : Number(semanal.apertura_snapshot_id),
+    cierre_snapshot_id: semanal.cierre_snapshot_id == null ? null : Number(semanal.cierre_snapshot_id),
+    apertura_valor: apertura,
+    compras,
+    cierre_valor: cierre,
+    costo_ventas: costoVentas,
+    estado: cierre == null ? 'pendiente_cierre' : 'cerrado',
+    apertura_origen: semanal.apertura_origen,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +519,7 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
     comprasInventario,
     gastosFacturados,
   });
+  const inventario = await inventarioDeSemana(negocioId, semanaId);
 
   // Capital por socio.
   const ubicSocio = new Map<number, number>(); // ubicacion_id -> socio_id
@@ -473,6 +542,7 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
     ventas: { efectivo: ventaEfectivo, tarjeta: ventaTarjeta, propinas: propinaTarjeta, total: r.ventasTotales },
     comision_terminal_estimada: comisionTerminal(ventaTarjeta, propinaTarjeta),
     compras_inventario: comprasInventario,
+    inventario,
     utilidad: r.utilidad,
     margen: r.margen,
     utilidad_pct: r.utilidadPct,
@@ -490,6 +560,9 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
   const semana = await getSemanaAbierta(negocioId, semanaId);
   if (semana.estado === 'cerrada') throw new HttpError(409, 'La semana ya está cerrada');
 
+  // La semana debe tener una apertura congelada antes de registrar su cierre.
+  await asegurarInventarioSemanal(negocioId, semanaId);
+
   const [ubicaciones, banco, invActual] = await Promise.all([
     prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true } }),
     prisma.ubicaciones_fondos.findFirst({ where: { negocio_id: negocioId, tipo: 'banco' }, orderBy: { id: 'asc' } }),
@@ -499,6 +572,15 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
 
   await prisma.$transaction(async (tx) => {
     const movs = await tx.movimientos.findMany({ where: { semana_id: semanaId } });
+
+    // El último conteo vigente se consolida en un snapshot inmutable de cierre.
+    // Así, el próximo periodo abrirá exactamente con este inventario y no con
+    // el siguiente conteo global que se capture en otra zona.
+    const cierreSnapshot = await crearSnapshotConsolidado(tx, negocioId, invActual);
+    await tx.inventario_semanal.update({
+      where: { semana_id: semanaId },
+      data: { cierre_snapshot_id: cierreSnapshot.id, cierre_valor: valorInventario },
+    });
 
     // 1) Comisión de terminal automática (origen Banco), si hay ingreso por tarjeta y no existe ya.
     const ventaTarjeta = sumarPorTipo(movs, 'venta_tarjeta');
@@ -577,6 +659,10 @@ export async function reabrirSemana(negocioId: bigint, semanaId: bigint) {
     await tx.movimientos.deleteMany({ where: { semana_id: semanaId, tipo: 'comision_terminal' } });
     // El snapshot de patrimonio del cierre está identificado por (negocio, fecha_fin).
     await tx.snapshots_patrimonio.deleteMany({ where: { negocio_id: negocioId, fecha: semana.fecha_fin } });
+    await tx.inventario_semanal.updateMany({
+      where: { semana_id: semanaId },
+      data: { cierre_snapshot_id: null, cierre_valor: null },
+    });
     await tx.semanas.update({ where: { id: semanaId }, data: { estado: 'abierta', cerrada_at: null } });
   });
 

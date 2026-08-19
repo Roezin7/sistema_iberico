@@ -9,8 +9,20 @@ import {
   mesesRecientes,
   estadoResultadosMensual,
   totalizarPnl,
+  costoVentasPorInventario,
   type MovimientoPnl,
 } from './logic.js';
+
+describe('costoVentasPorInventario', () => {
+  it('usa apertura + compras − cierre', () => {
+    expect(costoVentasPorInventario(10000, 2500, 8000)).toBe(4500);
+  });
+
+  it('no inventa costo si falta un extremo', () => {
+    expect(costoVentasPorInventario(null, 2500, 8000)).toBeNull();
+    expect(costoVentasPorInventario(10000, 2500, null)).toBeNull();
+  });
+});
 
 describe('comisionTerminal', () => {
   it('1.99% sobre (ventas_tarjeta + propinas_tarjeta)', () => {

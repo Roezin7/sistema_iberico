@@ -34,6 +34,7 @@ model negocios {
   ubicaciones_fondos ubicaciones_fondos[]
   categorias_gasto   categorias_gasto[]
   semanas            semanas[]
+  inventario_semanal inventario_semanal[]
   conciliaciones_diarias conciliaciones_diarias[]
   movimientos        movimientos[]
   arqueos            arqueos[]
@@ -153,6 +154,8 @@ model inventory_snapshot {
   created_at      DateTime          @default(now()) @db.Timestamptz(6)
   inventory_lines inventory_lines[]
   negocios        negocios          @relation(fields: [negocio_id], references: [id])
+  aperturas_semanales inventario_semanal[] @relation("InventarioSemanalApertura")
+  cierres_semanales   inventario_semanal[] @relation("InventarioSemanalCierre")
 
   @@index([negocio_id])
 }
@@ -368,9 +371,34 @@ model semanas {
   arqueos      arqueos[]
   cierres      cierres_semana[]
   conciliaciones_diarias conciliaciones_diarias[]
+  inventario_semanal inventario_semanal?
 
   @@unique([negocio_id, fecha_inicio])
   @@index([negocio_id])
+}
+
+/// Cadena semanal de inventario. El cierre de una semana es la apertura de la
+/// siguiente; los snapshots históricos siguen siendo inmutables y pueden
+/// reutilizarse como apertura inicial durante la transición.
+model inventario_semanal {
+  id                   BigInt              @id @default(autoincrement())
+  negocio_id           BigInt
+  semana_id            BigInt              @unique
+  apertura_snapshot_id BigInt?
+  cierre_snapshot_id   BigInt?
+  apertura_valor       Decimal?            @db.Decimal(12, 2)
+  cierre_valor         Decimal?            @db.Decimal(12, 2)
+  apertura_origen      String?
+  creado_at            DateTime            @default(now()) @db.Timestamptz(6)
+  actualizado_at       DateTime            @updatedAt @db.Timestamptz(6)
+  negocios             negocios            @relation(fields: [negocio_id], references: [id])
+  semanas              semanas             @relation(fields: [semana_id], references: [id], onDelete: Cascade)
+  apertura_snapshot    inventory_snapshot? @relation("InventarioSemanalApertura", fields: [apertura_snapshot_id], references: [id])
+  cierre_snapshot      inventory_snapshot? @relation("InventarioSemanalCierre", fields: [cierre_snapshot_id], references: [id])
+
+  @@index([negocio_id])
+  @@index([apertura_snapshot_id])
+  @@index([cierre_snapshot_id])
 }
 
 enum EstadoConciliacionDiaria {

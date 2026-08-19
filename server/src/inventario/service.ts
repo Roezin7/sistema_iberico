@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import type { Prisma } from '@prisma/client';
 import { num, num0 } from '../lib/num.js';
 import { HttpError } from '../middleware/error.js';
 import {
@@ -29,6 +30,41 @@ export interface InventarioActual {
   productos: ProductoActual[];
   valor_total: number;
   sin_costo: { product_id: number; nombre: string }[];
+}
+
+/** Valor de un snapshot histórico usando el costo vigente del catálogo. */
+export async function valorSnapshot(negocioId: bigint, snapshotId: bigint | null): Promise<number> {
+  if (!snapshotId) return 0;
+  const lineas = await prisma.inventory_lines.findMany({
+    where: { snapshot_id: snapshotId, inventory_snapshot: { negocio_id: negocioId } },
+    include: { products: { select: { unit_cost: true } } },
+  });
+  return Math.round(lineas.reduce((total, l) => {
+    const costo = num(l.products.unit_cost);
+    return total + (costo == null ? 0 : num0(l.qty_captura) * num0(l.factor) * costo);
+  }, 0) * 100) / 100;
+}
+
+/**
+ * Crea un snapshot completo a partir del inventario vigente por zona. Esto es
+ * necesario porque los conteos normales pueden capturar una zona a la vez;
+ * el cierre semanal debe congelar el estado agregado de todas las zonas.
+ */
+export async function crearSnapshotConsolidado(
+  tx: Prisma.TransactionClient,
+  negocioId: bigint,
+  actual: InventarioActual,
+) {
+  const snap = await tx.inventory_snapshot.create({ data: { negocio_id: negocioId } });
+  const data = actual.productos.flatMap((p) => p.por_zona.map((z) => ({
+    snapshot_id: snap.id,
+    product_id: BigInt(p.product_id),
+    zona_id: BigInt(z.zona_id),
+    qty_captura: z.qty_captura,
+    factor: z.factor,
+  })));
+  if (data.length) await tx.inventory_lines.createMany({ data });
+  return snap;
 }
 
 /**

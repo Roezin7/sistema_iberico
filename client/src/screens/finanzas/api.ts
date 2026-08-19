@@ -32,6 +32,11 @@ export interface Resumen {
   facturado: { tarjeta_facturable: number; gastos_facturados: number; balance: number };
   capital_socios: { socio_id: number; nombre: string; transferencias: number; retiros: number; capital: number }[];
   saldo_inicial_total: number; saldo_real_final_total: number;
+  inventario: {
+    apertura_snapshot_id: number | null; cierre_snapshot_id: number | null;
+    apertura_valor: number | null; compras: number; cierre_valor: number | null;
+    costo_ventas: number | null; estado: 'pendiente_cierre' | 'cerrado'; apertura_origen: string | null;
+  };
 }
 export interface Movimiento {
   id: number; fecha: string; tipo: TipoMov; monto: number;

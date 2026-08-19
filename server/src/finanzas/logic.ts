@@ -79,6 +79,19 @@ export function resumenSemana(i: ResumenInput): ResumenSemana {
 }
 
 /**
+ * Costo consumido del periodo por inventario: apertura + entradas − cierre.
+ * Si falta uno de los extremos todavía no existe un costo defendible.
+ */
+export function costoVentasPorInventario(
+  apertura: number | null,
+  compras: number,
+  cierre: number | null,
+): number | null {
+  if (apertura == null || cierre == null) return null;
+  return redondear(apertura + compras - cierre);
+}
+
+/**
  * Capital de un socio = Σ transferencias a SU caja fuerte − Σ sus retiros.
  * (La transferencia a caja fuerte sigue siendo capital de la empresa; el retiro lo reduce.)
  */

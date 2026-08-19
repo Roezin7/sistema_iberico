@@ -308,6 +308,18 @@ function ResumenView({ r }: { r: Resumen }) {
         {fila('Compras inventario', mxn(r.compras_inventario))}
       </div>
       <div className="resumen-card">
+        <strong>Ciclo semanal de inventario</strong>
+        {fila('Inventario de apertura', mxn(r.inventario.apertura_valor))}
+        {fila('Compras de la semana', mxn(r.inventario.compras))}
+        {fila('Inventario de cierre', mxn(r.inventario.cierre_valor))}
+        {fila('Costo de ventas (apertura + compras − cierre)', mxn(r.inventario.costo_ventas))}
+        <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>
+          {r.inventario.estado === 'pendiente_cierre'
+            ? 'Pendiente: captura el inventario físico de cierre para abrir la siguiente semana con ese mismo saldo.'
+            : 'El inventario de cierre queda congelado y será la apertura de la siguiente semana.'}
+        </p>
+      </div>
+      <div className="resumen-card">
         <strong>Facturado (cuadre fiscal)</strong>
         {fila('Tarjeta facturable', mxn(r.facturado.tarjeta_facturable))}
         {fila('Gastos facturados', mxn(r.facturado.gastos_facturados))}
