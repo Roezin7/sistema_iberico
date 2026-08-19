@@ -216,6 +216,9 @@ interface RecetaLinea {
   nota: string | null;
   costo_unitario: number | null;
   costo_estimado: number | null;
+  cantidad_base: number | null;
+  unidad_base: string | null;
+  falta_configuracion: string[];
 }
 interface MenuReceta {
   id: number;
@@ -225,7 +228,15 @@ interface MenuReceta {
   activo: boolean;
   recetas: { id: number; version: number; estado: string; fuente: string | null; notas: string | null; lineas: RecetaLinea[] }[];
 }
-interface InsumoReceta { id: number; nombre: string; costo_unitario: number | null }
+interface InsumoReceta {
+  id: number;
+  nombre: string;
+  costo_unitario: number | null;
+  unidad_base: string | null;
+  contenido_compra: number | null;
+  unidad_compra: string | null;
+  rendimiento_util: number | null;
+}
 interface DraftLinea { product_id: string; cantidad: string; unidad: string; nota: string }
 
 function RecetasCfg() {
@@ -327,7 +338,7 @@ function RecetasCfg() {
           const r = p.recetas[0];
           const total = r?.lineas.reduce((s, l) => s + (l.costo_estimado ?? 0), 0) ?? null;
           return <div key={p.id} className="conteo-row" style={{ flexWrap: 'wrap', gap: '0.6rem' }}>
-            <div style={{ flex: 1, minWidth: 220 }}><strong>{p.nombre}</strong><div className="muted">v{r?.version ?? '—'} · {r?.estado ?? 'sin receta'} · costo {mxn(total)}</div></div>
+            <div style={{ flex: 1, minWidth: 220 }}><strong>{p.nombre}</strong><div className="muted">v{r?.version ?? '—'} · {r?.estado ?? 'sin receta'} · costo {mxn(total)}{r?.lineas.some((l) => l.falta_configuracion.length) ? ' · falta configuración de insumos' : ''}</div></div>
             <span className="muted">venta {mxn(p.precio_venta)}</span>
             <button className="pill" onClick={() => copiarVersion(p)}>Nueva versión</button>
           </div>;
@@ -347,6 +358,7 @@ interface UnidadZona { id: number; zona_id: number; unidad_captura: string; fact
 interface Producto {
   id: number; nombre: string; store_id: number; store: string;
   base_qty: number; unit_cost: number | null; active: boolean; categoria_id: number | null; unidades: UnidadZona[];
+  unidad_base: string | null; contenido_compra: number | null; unidad_compra: string | null; rendimiento_util: number | null;
 }
 
 function InventarioCfg() {
@@ -504,12 +516,20 @@ function ProductoRow({ p, stores, zonas, categorias, onChange }: { p: Producto; 
   const [categoriaId, setCategoriaId] = useState<number | ''>(p.categoria_id ?? '');
   const [baseQty, setBaseQty] = useState(String(p.base_qty));
   const [costo, setCosto] = useState(p.unit_cost == null ? '' : String(p.unit_cost));
+  const [unidadBase, setUnidadBase] = useState(p.unidad_base ?? '');
+  const [contenidoCompra, setContenidoCompra] = useState(p.contenido_compra == null ? '' : String(p.contenido_compra));
+  const [unidadCompra, setUnidadCompra] = useState(p.unidad_compra ?? '');
+  const [rendimiento, setRendimiento] = useState(String(p.rendimiento_util ?? 1));
   const [ok, setOk] = useState(false);
 
   async function guardar() {
     await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: {
       nombre: nombre.trim(), store_id: storeId, base_qty: Number(baseQty) || 0,
       unit_cost: costo === '' ? null : Number(costo),
+      unidad_base: unidadBase === '' ? null : unidadBase,
+      contenido_compra: contenidoCompra === '' ? null : Number(contenidoCompra),
+      unidad_compra: unidadCompra.trim() || null,
+      rendimiento_util: Number(rendimiento) || 1,
       categoria_id: categoriaId === '' ? null : categoriaId,
     } });
     setOk(true); setTimeout(() => setOk(false), 1200); onChange();
@@ -539,6 +559,24 @@ function ProductoRow({ p, stores, zonas, categorias, onChange }: { p: Producto; 
           <label className="muted">Costo por unidad
             <input type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="—" />
           </label>
+          <div className="dia-section">Costeo por presentación</div>
+          <p className="muted">El costo de receta se calcula con el contenido comprado, no con el precio completo del paquete.</p>
+          <div className="row-actions" style={{ flexWrap: 'wrap' }}>
+            <label className="muted" style={{ flex: 1, minWidth: 130 }}>Unidad base
+              <select value={unidadBase} onChange={(e) => setUnidadBase(e.target.value)}>
+                <option value="">— Pendiente —</option><option value="g">gramos</option><option value="ml">mililitros</option><option value="pieza">pieza</option><option value="unidad">unidad</option>
+              </select>
+            </label>
+            <label className="muted" style={{ flex: 1, minWidth: 130 }}>Contenido compra
+              <input type="number" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" />
+            </label>
+            <label className="muted" style={{ flex: 1, minWidth: 130 }}>Presentación
+              <input value={unidadCompra} onChange={(e) => setUnidadCompra(e.target.value)} placeholder="botella, bolsa…" />
+            </label>
+            <label className="muted" style={{ flex: 1, minWidth: 130 }}>Rendimiento útil
+              <input type="number" min="0.01" max="1" step="0.01" value={rendimiento} onChange={(e) => setRendimiento(e.target.value)} />
+            </label>
+          </div>
           <div className="row-actions">
             <button className="btn-primary" style={{ flex: 1 }} onClick={guardar}>{ok ? 'Guardado ✓' : 'Guardar'}</button>
             <button className="btn-secondary" onClick={async () => { await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: { active: !p.active } }); onChange(); }}>

@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { num } from '../lib/num.js';
 import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
+import { costoLinea } from './costeo.js';
 
 export const recetasRouter = Router();
 recetasRouter.use(requireAuth);
@@ -44,16 +45,24 @@ function serialize(p: any) {
       vigente_desde: r.vigente_desde,
       creado_at: r.creado_at,
       lineas: (r.lineas ?? []).map((l: any) => {
-        const costoUnitario = l.products?.unit_cost == null ? null : num(l.products.unit_cost);
         const cantidad = num(l.cantidad) ?? 0;
+        const costeo = costoLinea(cantidad, l.unidad, {
+          unitCost: num(l.products?.unit_cost),
+          unidadBase: l.products?.unidad_base ?? null,
+          contenidoCompra: num(l.products?.contenido_compra),
+          rendimientoUtil: num(l.products?.rendimiento_util),
+        });
         return {
           product_id: Number(l.product_id),
           producto: l.products?.name ?? null,
           cantidad,
           unidad: l.unidad,
           nota: l.nota,
-          costo_unitario: costoUnitario,
-          costo_estimado: costoUnitario == null ? null : cantidad * costoUnitario,
+          costo_unitario: costeo.costoUnitarioBase,
+          costo_estimado: costeo.costoEstimado,
+          cantidad_base: costeo.cantidadBase,
+          unidad_base: costeo.unidadBase,
+          falta_configuracion: costeo.faltaConfiguracion,
         };
       }),
     })),
@@ -67,7 +76,13 @@ recetasRouter.get('/', asyncHandler(async (req, res) => {
     include: {
       recetas: {
         orderBy: { version: 'desc' },
-        include: { lineas: { include: { products: { select: { name: true, unit_cost: true } } } } },
+        include: { lineas: { include: { products: { select: {
+          name: true,
+          unit_cost: true,
+          unidad_base: true,
+          contenido_compra: true,
+          rendimiento_util: true,
+        } } } } },
       },
     },
     orderBy: [{ activo: 'desc' }, { nombre: 'asc' }],
@@ -79,10 +94,26 @@ recetasRouter.get('/', asyncHandler(async (req, res) => {
 recetasRouter.get('/insumos', asyncHandler(async (req, res) => {
   const productos = await prisma.products.findMany({
     where: { negocio_id: req.auth!.negocioId, active: true },
-    select: { id: true, name: true, unit_cost: true },
+    select: {
+      id: true,
+      name: true,
+      unit_cost: true,
+      unidad_base: true,
+      contenido_compra: true,
+      unidad_compra: true,
+      rendimiento_util: true,
+    },
     orderBy: { name: 'asc' },
   });
-  res.json(productos.map((p) => ({ id: Number(p.id), nombre: p.name, costo_unitario: num(p.unit_cost) })));
+  res.json(productos.map((p) => ({
+    id: Number(p.id),
+    nombre: p.name,
+    costo_unitario: num(p.unit_cost),
+    unidad_base: p.unidad_base,
+    contenido_compra: num(p.contenido_compra),
+    unidad_compra: p.unidad_compra,
+    rendimiento_util: num(p.rendimiento_util),
+  })));
 }));
 
 /** POST /recetas — crea producto de menú y una nueva versión de receta. */
