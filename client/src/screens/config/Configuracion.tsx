@@ -8,7 +8,7 @@ import { Cargando } from '../../ui/Cargando';
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
-type Tab = 'general' | 'inventario' | 'finanzas' | 'tareas';
+type Tab = 'general' | 'inventario' | 'recetas' | 'finanzas' | 'tareas';
 
 export default function Configuracion() {
   const [tab, setTab] = useState<Tab>('general');
@@ -23,12 +23,14 @@ export default function Configuracion() {
       <nav className="tabs">
         <button className={tab === 'general' ? 'tab tab--on' : 'tab'} onClick={() => setTab('general')}>General</button>
         <button className={tab === 'inventario' ? 'tab tab--on' : 'tab'} onClick={() => setTab('inventario')}>Inventario</button>
+        <button className={tab === 'recetas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('recetas')}>Recetas y costeo</button>
         <button className={tab === 'finanzas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('finanzas')}>Finanzas</button>
         <button className={tab === 'tareas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('tareas')}>Tareas</button>
       </nav>
       <div className="tab-body">
         {tab === 'general' && <General />}
         {tab === 'inventario' && <InventarioCfg />}
+        {tab === 'recetas' && <RecetasCfg />}
         {tab === 'finanzas' && <FinanzasCfg />}
         {tab === 'tareas' && <TareasCfg />}
       </div>
@@ -200,6 +202,138 @@ function ListaEditable({
         <button className="btn-secondary" onClick={async () => { if (!nuevo.trim()) return; await onCrear(nuevo.trim()); setNuevo(''); }}>+ Agregar</button>
       </div>
     </div>
+  );
+}
+
+// ===========================================================================
+//  RECETAS Y COSTEO: cantidades editables, versionadas y separadas de ventas
+// ===========================================================================
+interface RecetaLinea {
+  product_id: number;
+  producto: string | null;
+  cantidad: number;
+  unidad: string;
+  nota: string | null;
+  costo_unitario: number | null;
+  costo_estimado: number | null;
+}
+interface MenuReceta {
+  id: number;
+  nombre: string;
+  epos_product_id: number | null;
+  precio_venta: number | null;
+  activo: boolean;
+  recetas: { id: number; version: number; estado: string; fuente: string | null; notas: string | null; lineas: RecetaLinea[] }[];
+}
+interface InsumoReceta { id: number; nombre: string; costo_unitario: number | null }
+interface DraftLinea { product_id: string; cantidad: string; unidad: string; nota: string }
+
+function RecetasCfg() {
+  const [menu, setMenu] = useState<MenuReceta[]>([]);
+  const [insumos, setInsumos] = useState<InsumoReceta[]>([]);
+  const [nombre, setNombre] = useState('');
+  const [eposId, setEposId] = useState('');
+  const [precio, setPrecio] = useState('');
+  const [fuente, setFuente] = useState('Screenshots de costeo 2026-08-12');
+  const [estado, setEstado] = useState<'borrador' | 'validada'>('borrador');
+  const [lineas, setLineas] = useState<DraftLinea[]>([]);
+  const [draft, setDraft] = useState<DraftLinea>({ product_id: '', cantidad: '', unidad: 'ml', nota: '' });
+  const [cargando, setCargando] = useState(true);
+  const [guardando, setGuardando] = useState(false);
+  const { success, error } = useToast();
+
+  const cargar = () => Promise.all([
+    api<MenuReceta[]>('/recetas'),
+    api<InsumoReceta[]>('/recetas/insumos'),
+  ]).then(([m, i]) => { setMenu(m); setInsumos(i); }).finally(() => setCargando(false));
+  useEffect(() => { void cargar(); }, []);
+
+  function agregarLinea() {
+    if (!draft.product_id || Number(draft.cantidad) <= 0 || !draft.unidad.trim()) return;
+    if (lineas.some((l) => l.product_id === draft.product_id)) { error('Ese ingrediente ya está en la receta.'); return; }
+    setLineas((v) => [...v, draft]);
+    setDraft({ product_id: '', cantidad: '', unidad: 'ml', nota: '' });
+  }
+
+  async function guardar() {
+    if (!nombre.trim() || lineas.length === 0) { error('Indica el nombre y agrega al menos un ingrediente.'); return; }
+    setGuardando(true);
+    try {
+      await api('/recetas', { method: 'POST', body: {
+        nombre: nombre.trim(),
+        epos_product_id: eposId ? Number(eposId) : null,
+        precio_venta: precio ? Number(precio) : null,
+        estado,
+        fuente: fuente.trim() || null,
+        lineas: lineas.map((l) => ({ product_id: Number(l.product_id), cantidad: Number(l.cantidad), unidad: l.unidad.trim(), nota: l.nota.trim() || null })),
+      } });
+      setNombre(''); setEposId(''); setPrecio(''); setLineas([]); setEstado('borrador');
+      await cargar();
+      success('Receta guardada como nueva versión');
+    } catch (e) { error(e instanceof Error ? e.message : 'No se pudo guardar la receta'); }
+    finally { setGuardando(false); }
+  }
+
+  function copiarVersion(p: MenuReceta) {
+    const r = p.recetas[0];
+    if (!r) return;
+    setNombre(p.nombre); setEposId(p.epos_product_id?.toString() ?? ''); setPrecio(p.precio_venta?.toString() ?? '');
+    setFuente(r.fuente ?? ''); setEstado('borrador');
+    setLineas(r.lineas.map((l) => ({ product_id: String(l.product_id), cantidad: String(l.cantidad), unidad: l.unidad, nota: l.nota ?? '' })));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  if (cargando) return <Cargando />;
+  return (
+    <>
+      <div className="resumen-card" style={{ gap: '0.65rem' }}>
+        <strong>Receta y costeo</strong>
+        <p className="muted">Configura cantidades y unidades por versión. El costo se calcula con el catálogo y después podrá sustituirse por FIFO; no cambia el precio real del POS.</p>
+        <div className="row-actions" style={{ flexWrap: 'wrap' }}>
+          <input placeholder="Producto de menú" value={nombre} onChange={(e) => setNombre(e.target.value)} style={{ flex: 2, minWidth: 180 }} />
+          <input placeholder="ID Epos (opcional)" inputMode="numeric" value={eposId} onChange={(e) => setEposId(e.target.value.replace(/\D/g, ''))} style={{ flex: 1, minWidth: 130 }} />
+          <input placeholder="Precio venta MXN (opcional)" inputMode="decimal" value={precio} onChange={(e) => setPrecio(e.target.value)} style={{ flex: 1, minWidth: 170 }} />
+        </div>
+        <div className="row-actions" style={{ flexWrap: 'wrap' }}>
+          <select value={draft.product_id} onChange={(e) => setDraft({ ...draft, product_id: e.target.value })} style={{ flex: 2, minWidth: 180 }}>
+            <option value="">Ingrediente del inventario…</option>
+            {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}{i.costo_unitario == null ? '' : ` · ${mxn(i.costo_unitario)}`}</option>)}
+          </select>
+          <input placeholder="Cantidad" inputMode="decimal" value={draft.cantidad} onChange={(e) => setDraft({ ...draft, cantidad: e.target.value })} style={{ width: 100 }} />
+          <select value={draft.unidad} onChange={(e) => setDraft({ ...draft, unidad: e.target.value })} style={{ width: 100 }}>
+            <option value="ml">ml</option><option value="g">g</option><option value="pieza">pieza</option><option value="oz">oz</option><option value="unidad">unidad</option>
+          </select>
+          <button className="btn-secondary" onClick={agregarLinea}>+ Ingrediente</button>
+        </div>
+        {lineas.length > 0 && <ul className="conteo-list list-flat">
+          {lineas.map((l, idx) => <li key={`${l.product_id}-${idx}`} className="conteo-row">
+            <span style={{ flex: 1 }}>{insumos.find((i) => String(i.id) === l.product_id)?.nombre ?? 'Ingrediente'}</span>
+            <span>{l.cantidad} {l.unidad}</span>
+            <button className="link-btn" onClick={() => setLineas((v) => v.filter((_, i) => i !== idx))}>Quitar</button>
+          </li>)}
+        </ul>}
+        <div className="row-actions" style={{ flexWrap: 'wrap' }}>
+          <input placeholder="Fuente o nota de validación" value={fuente} onChange={(e) => setFuente(e.target.value)} style={{ flex: 1, minWidth: 240 }} />
+          <select value={estado} onChange={(e) => setEstado(e.target.value as 'borrador' | 'validada')}><option value="borrador">Borrador</option><option value="validada">Validada</option></select>
+          <button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Guardar receta'}</button>
+        </div>
+      </div>
+
+      <div className="resumen-card" style={{ gap: '0.5rem' }}>
+        <strong>Catálogo de recetas</strong>
+        <p className="muted">Las versiones anteriores permanecen para no alterar semanas históricas.</p>
+        {menu.length === 0 && <p className="muted">Aún no hay recetas cargadas.</p>}
+        {menu.map((p) => {
+          const r = p.recetas[0];
+          const total = r?.lineas.reduce((s, l) => s + (l.costo_estimado ?? 0), 0) ?? null;
+          return <div key={p.id} className="conteo-row" style={{ flexWrap: 'wrap', gap: '0.6rem' }}>
+            <div style={{ flex: 1, minWidth: 220 }}><strong>{p.nombre}</strong><div className="muted">v{r?.version ?? '—'} · {r?.estado ?? 'sin receta'} · costo {mxn(total)}</div></div>
+            <span className="muted">venta {mxn(p.precio_venta)}</span>
+            <button className="pill" onClick={() => copiarVersion(p)}>Nueva versión</button>
+          </div>;
+        })}
+      </div>
+    </>
   );
 }
 

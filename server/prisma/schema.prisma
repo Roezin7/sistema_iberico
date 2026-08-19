@@ -34,6 +34,7 @@ model negocios {
   ubicaciones_fondos ubicaciones_fondos[]
   categorias_gasto   categorias_gasto[]
   semanas            semanas[]
+  conciliaciones_diarias conciliaciones_diarias[]
   movimientos        movimientos[]
   arqueos            arqueos[]
   saldos_iniciales   saldos_iniciales[]
@@ -42,6 +43,7 @@ model negocios {
   checklists         checklists[]
   silvia_mensajes    silvia_mensajes[]
   silvia_memoria     silvia_memoria[]
+  productos_menu     productos_menu[]
 }
 
 model usuarios {
@@ -56,6 +58,7 @@ model usuarios {
   movimientos movimientos[]
   arqueos     arqueos[]
   checklist_item_resultados checklist_item_resultados[]
+  conciliaciones_diarias conciliaciones_diarias[]
 
   @@index([negocio_id])
 }
@@ -180,6 +183,7 @@ model products {
   purchase_lines  purchase_lines[]
   product_zone_units product_zone_units[]
   producto_costos_historicos producto_costos_historicos[]
+  receta_lineas     receta_lineas[]
 
   @@unique([negocio_id, name])
   @@index([negocio_id])
@@ -227,6 +231,62 @@ model stores {
 
   @@unique([negocio_id, name])
   @@index([negocio_id])
+}
+
+// ===========================================================================
+//  MENÚ Y COSTEO — recetas versionadas (Fase Ibérico)
+// ===========================================================================
+
+/// Producto que se vende en el menú y que puede vincularse con Epos Now.
+/// El precio de venta es informativo; la venta real se toma del POS.
+model productos_menu {
+  id              BigInt    @id @default(autoincrement())
+  negocio_id      BigInt
+  nombre          String
+  epos_product_id Int?
+  precio_venta    Decimal?  @db.Decimal(12, 2)
+  activo          Boolean   @default(true)
+  creado_at       DateTime  @default(now()) @db.Timestamptz(6)
+  actualizado_at  DateTime  @updatedAt @db.Timestamptz(6)
+  negocios        negocios  @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
+  recetas         recetas[]
+
+  @@unique([negocio_id, nombre])
+  @@index([negocio_id, activo])
+  @@index([epos_product_id])
+}
+
+/// Una versión de receta. Se conserva para no reescribir costos históricos.
+model recetas {
+  id                BigInt         @id @default(autoincrement())
+  producto_menu_id  BigInt
+  version           Int            @default(1)
+  estado            String         @default("borrador")
+  fuente            String?
+  notas             String?
+  vigente_desde     DateTime?      @db.Date
+  creado_at         DateTime       @default(now()) @db.Timestamptz(6)
+  actualizado_at    DateTime       @updatedAt @db.Timestamptz(6)
+  productos_menu    productos_menu @relation(fields: [producto_menu_id], references: [id], onDelete: Cascade)
+  lineas            receta_lineas[]
+
+  @@unique([producto_menu_id, version])
+  @@index([producto_menu_id, estado])
+}
+
+/// Ingrediente consumido por una receta. La unidad explícita evita mezclar ml,
+/// g, piezas y unidades de compra.
+model receta_lineas {
+  receta_id   BigInt
+  product_id  BigInt
+  cantidad    Decimal  @db.Decimal(12, 4)
+  unidad      String
+  nota        String?
+  recetas     recetas  @relation(fields: [receta_id], references: [id], onDelete: Cascade)
+  products    products  @relation(fields: [product_id], references: [id], onDelete: Restrict)
+
+  @@id([receta_id, product_id])
+  @@index([product_id])
 }
 
 // ===========================================================================
@@ -300,8 +360,45 @@ model semanas {
   movimientos  movimientos[]
   arqueos      arqueos[]
   cierres      cierres_semana[]
+  conciliaciones_diarias conciliaciones_diarias[]
 
   @@unique([negocio_id, fecha_inicio])
+  @@index([negocio_id])
+}
+
+enum EstadoConciliacionDiaria {
+  revision
+  confirmada
+}
+
+/// Evidencia diaria de Epos y confirmación humana del saldo.
+/// No sustituye movimientos financieros ni modifica Epos Now.
+model conciliaciones_diarias {
+  id                 BigInt                   @id @default(autoincrement())
+  negocio_id         BigInt
+  semana_id          BigInt
+  fecha              DateTime                 @db.Date
+  estado             EstadoConciliacionDiaria @default(revision)
+  epos_ventas        Decimal                  @db.Decimal(12, 2)
+  epos_efectivo      Decimal                  @default(0) @db.Decimal(12, 2)
+  epos_tarjeta       Decimal                  @default(0) @db.Decimal(12, 2)
+  epos_otros         Decimal                  @default(0) @db.Decimal(12, 2)
+  confirmado_ventas  Decimal?
+  confirmado_efectivo Decimal?
+  confirmado_tarjeta Decimal?
+  confirmado_otros   Decimal?
+  cuentas_abiertas   Decimal                  @default(0) @db.Decimal(12, 2)
+  excepciones_json   String?
+  notas              String?
+  usuario_id         BigInt?
+  creado_at          DateTime                 @default(now()) @db.Timestamptz(6)
+  confirmado_at      DateTime?                @db.Timestamptz(6)
+  negocios           negocios                 @relation(fields: [negocio_id], references: [id])
+  semanas            semanas                  @relation(fields: [semana_id], references: [id])
+  usuarios           usuarios?                @relation(fields: [usuario_id], references: [id])
+
+  @@unique([negocio_id, fecha])
+  @@index([semana_id])
   @@index([negocio_id])
 }
 
