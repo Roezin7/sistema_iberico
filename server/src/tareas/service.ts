@@ -1,4 +1,4 @@
-import type { TipoChecklist } from '@prisma/client';
+import { Prisma, type TipoChecklist } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 
@@ -50,6 +50,33 @@ async function checklistDelNegocio(negocioId: bigint, checklistId: bigint) {
   return c;
 }
 
+/**
+ * Obtiene o crea la instancia diaria de un checklist.
+ *
+ * Aunque el upsert es idempotente, dos cargas simultáneas (por ejemplo, una
+ * doble petición del cliente o una reconexión) pueden intentar insertar la
+ * misma fila al mismo tiempo. PostgreSQL deja ganar a una de ellas y Prisma
+ * devuelve P2002 a la otra. En ese caso la fila ya existe y simplemente se
+ * vuelve a leer; no es un error operativo para el usuario.
+ */
+async function asegurarInstancia(checklistId: bigint, fecha: Date) {
+  try {
+    return await prisma.checklist_instancias.upsert({
+      where: { checklist_id_fecha: { checklist_id: checklistId, fecha } },
+      update: {},
+      create: { checklist_id: checklistId, fecha },
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      const existente = await prisma.checklist_instancias.findUnique({
+        where: { checklist_id_fecha: { checklist_id: checklistId, fecha } },
+      });
+      if (existente) return existente;
+    }
+    throw error;
+  }
+}
+
 export async function agregarItem(negocioId: bigint, checklistId: bigint, b: { texto: string; orden?: number }) {
   await checklistDelNegocio(negocioId, checklistId);
   const item = await prisma.checklist_items.create({
@@ -92,11 +119,7 @@ export async function diaDeTareas(negocioId: bigint, fechaStr: string) {
   const resultado = [];
   for (const c of checklists) {
     // Asegura la instancia del día (idempotente por unique [checklist_id, fecha]).
-    const instancia = await prisma.checklist_instancias.upsert({
-      where: { checklist_id_fecha: { checklist_id: c.id, fecha } },
-      update: {},
-      create: { checklist_id: c.id, fecha },
-    });
+    const instancia = await asegurarInstancia(c.id, fecha);
     const resultados = await prisma.checklist_item_resultados.findMany({ where: { instancia_id: instancia.id } });
     const doneMap = new Map(resultados.map((r) => [r.item_id.toString(), r.completado]));
 
