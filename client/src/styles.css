@@ -1918,6 +1918,9 @@ select:disabled {
 .quick-line__numbers input { min-width: 0; width: 50%; }
 .quick-pending { display: grid; gap: 1rem; }
 .quick-pending__card { border-color: rgba(220, 167, 69, .45); }
+.quick-day { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .8rem; }
+.quick-day__row { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-bottom: 1px solid var(--border); }
+.quick-day__row span { display: grid; gap: .15rem; }
 .inline-link { display: inline-block; margin-left: .8rem; color: var(--accent); }
 .dia-actions { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .info-box--compact { padding: .6rem .8rem; margin: .5rem 0; }

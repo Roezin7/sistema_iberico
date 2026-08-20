@@ -12,6 +12,7 @@ interface ExceptionRow { venta_id: number; fecha: string; producto: string; cant
 interface RefCompra { productos: Producto[]; ubicaciones: { id: number; nombre: string; tipo: string }[] }
 interface LineaRapida { product_id: number | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_base: string; unidad_compra: string; contenido_compra: string; costo_unitario: string; importe: string; confianza: number | null }
 interface Pendiente { id: number; fecha_recepcion: string; proveedor: string | null; ticket_ref: string | null; total: number; estado: string; foto: boolean; origen_pago_id: number | null; lineas: Array<{ id: number; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null; costo_unitario: number | null; importe: number; confianza: number | null; notas: string | null }> }
+interface CompraDia { id: number; fecha: string; proveedor: string | null; ticket_ref: string | null; total: number; estado: string; lineas: { tipo: string; producto: string; importe: number }[] }
 
 const mxn = (n: number) => n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 const hoy = new Date().toISOString().slice(0, 10);
@@ -31,6 +32,7 @@ export default function Compras() {
   const [lineas, setLineas] = useState<Linea[]>([lineaVacia()]);
   const [mensaje, setMensaje] = useState('');
   const [guardando, setGuardando] = useState(false);
+  const [comprasDia, setComprasDia] = useState<CompraDia[]>([]);
   const [from, setFrom] = useState(hoy);
   const [to, setTo] = useState(hoy);
   const [preview, setPreview] = useState<ConsumoResult | null>(null);
@@ -118,6 +120,8 @@ function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string; onSave
   const [guardando, setGuardando] = useState(false);
 
   useEffect(() => { api<RefCompra>('/inventario/compras/referencias').then((r) => { setRefs(r); const caja = r.ubicaciones.find((u) => u.tipo === 'efectivo'); if (caja) setOrigen(String(caja.id)); }).catch(() => setMensaje('No se pudieron cargar las referencias de compra.')); }, []);
+  async function cargarDia() { try { setComprasDia(await api<CompraDia[]>(`/inventario/compras?fecha=${encodeURIComponent(fecha)}`)); } catch { setComprasDia([]); } }
+  useEffect(() => { void cargarDia(); }, [fecha]);
 
   function fotoSeleccionada(file?: File) {
     if (!file) return;
@@ -145,7 +149,7 @@ function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string; onSave
     setGuardando(true); setMensaje('');
     try {
       await api('/inventario/compras/rapidas', { method: 'POST', body: { fecha_recepcion: fecha, proveedor: proveedor || null, ticket_ref: ticket || null, total: Number(total), origen_pago_id: Number(origen), notas: notas || null, foto_data: foto?.data ?? null, foto_mime: foto?.mime ?? null, lineas: validas.map((l) => ({ product_id: l.product_id, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente, cantidad_base: l.cantidad_base ? Number(l.cantidad_base) : null, unidad_compra: l.unidad_compra || null, contenido_compra: l.contenido_compra ? Number(l.contenido_compra) : null, costo_unitario: l.costo_unitario ? Number(l.costo_unitario) : null, importe: Number(l.importe), confianza: l.confianza })) } });
-      setMensaje('Compra enviada a revisión. No afecta FIFO ni caja hasta confirmarla.'); setProveedor(''); setTicket(''); setTotal(''); setNotas(''); setFoto(null); setLineas([{ product_id: null, tipo_linea: 'pendiente', descripcion_fuente: '', cantidad_base: '', unidad_compra: '', contenido_compra: '', costo_unitario: '', importe: '', confianza: null }]); onSaved();
+      setMensaje('Compra enviada a revisión. No afecta FIFO ni caja hasta confirmarla.'); setProveedor(''); setTicket(''); setTotal(''); setNotas(''); setFoto(null); setLineas([{ product_id: null, tipo_linea: 'pendiente', descripcion_fuente: '', cantidad_base: '', unidad_compra: '', contenido_compra: '', costo_unitario: '', importe: '', confianza: null }]); await cargarDia(); onSaved();
     } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo guardar la compra.'); }
     finally { setGuardando(false); }
   }
@@ -157,6 +161,7 @@ function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string; onSave
     <div className="form-grid form-grid--three"><label>Fecha<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></label><label>Proveedor<input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej. Costco" /></label><label>Ticket / folio<input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="Opcional, evita duplicados" /></label><label>Total del ticket<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value)}><option value="">Seleccionar…</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
     <div className="quick-lines">{lineas.map((l, i) => <div className="quick-line" key={i}><div className="quick-line__head"><strong>Línea {i + 1}</strong>{l.confianza != null && <span className="muted">sugerencia {Math.round(l.confianza * 100)}%</span>}</div><input placeholder="Descripción del ticket" value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} /><select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value as LineaRapida['tipo_linea'])}><option value="pendiente">Pendiente de clasificar</option><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option></select>{l.tipo_linea === 'inventario' && <select value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Producto…</option>{refs?.productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {p.unidad_base ?? 'sin unidad'}</option>)}</select>}<div className="quick-line__numbers"><input type="number" min="0" step="any" placeholder="Cantidad base" value={l.cantidad_base} onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /><input type="number" min="0" step="0.01" placeholder="Importe" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></div>{lineas.length > 1 && <button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))}>Quitar</button>}</div>)}</div>
     <div className="sticky-action"><button className="btn-secondary" onClick={() => setLineas((v) => [...v, { product_id: null, tipo_linea: 'pendiente', descripcion_fuente: '', cantidad_base: '', unidad_compra: '', contenido_compra: '', costo_unitario: '', importe: '', confianza: null }])}>Agregar línea</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Enviando…' : 'Enviar a revisión'}</button></div>
+    <div className="quick-day"><div className="section-heading"><div><h3>Compras del día</h3><p className="muted">Una compra confirmada aparece aquí y en el cierre diario.</p></div></div>{comprasDia.length === 0 ? <p className="muted">No hay compras registradas para esta fecha.</p> : comprasDia.map((c) => <div className="quick-day__row" key={c.id}><span><strong>{c.proveedor || 'Sin proveedor'}</strong><small className="muted">{c.ticket_ref || 'sin folio'} · {c.estado}</small></span><strong>{mxn(c.total)}</strong></div>)}</div>
   </section>;
 }
 

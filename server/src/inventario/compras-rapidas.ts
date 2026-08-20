@@ -116,6 +116,13 @@ export async function referenciasCompra(negocioId: bigint) {
   };
 }
 
+export async function listarCompras(negocioId: bigint, fecha?: string) {
+  const where: { negocio_id: bigint; fecha_recepcion?: Date } = { negocio_id: negocioId };
+  if (fecha) where.fecha_recepcion = fechaUTC(fecha);
+  const filas = await prisma.purchases.findMany({ where, include: { purchase_lines: { include: { products: { select: { name: true, unidad_base: true } } } }, capture_lines: true, movimientos: { select: { tipo: true, monto: true } } }, orderBy: [{ fecha_recepcion: 'desc' }, { id: 'desc' }] });
+  return filas.map((f) => ({ id: Number(f.id), fecha: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor, ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), estado: f.estado, origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null, movimientos: f.movimientos.map((m) => ({ tipo: m.tipo, monto: Number(m.monto) })), lineas: [...f.purchase_lines.map((l) => ({ tipo: 'inventario', producto: l.products.name, importe: Number(l.importe ?? 0) })), ...f.capture_lines.filter((l) => l.tipo_linea === 'gasto').map((l) => ({ tipo: 'gasto', producto: l.descripcion_fuente, importe: Number(l.importe) }))] }));
+}
+
 export async function obtenerFotoCompra(negocioId: bigint, purchaseId: bigint) {
   const compra = await prisma.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId }, select: { foto_data: true, foto_mime: true } });
   if (!compra?.foto_data || !compra.foto_mime) throw new HttpError(404, 'Esta compra no tiene fotografía');

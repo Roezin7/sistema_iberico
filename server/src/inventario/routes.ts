@@ -6,7 +6,7 @@ import { inventarioActual, listaCompras, crearConteo } from './service.js';
 import { borradorCompraTicket, borradorConteo, draftDisponible } from './draft.js';
 import { listarLotes, registrarCompra } from './compras.js';
 import { consumirVentasEpos } from './consumo-epos.js';
-import { actualizarBorradorLineas, confirmarBorradorCompra, crearBorradorCompra, listarBorradoresCompra, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra } from './compras-rapidas.js';
+import { actualizarBorradorLineas, confirmarBorradorCompra, crearBorradorCompra, listarBorradoresCompra, listarCompras, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra } from './compras-rapidas.js';
 
 export const inventarioRouter = Router();
 
@@ -53,6 +53,11 @@ inventarioRouter.post(
 
 inventarioRouter.get('/compras/referencias', asyncHandler(async (req, res) => {
   res.json(await referenciasCompra(req.auth!.negocioId));
+}));
+
+inventarioRouter.get('/compras', asyncHandler(async (req, res) => {
+  const fecha = req.query.fecha ? z.string().regex(/^\d{4}-\d{2}-\d{2}$/).parse(req.query.fecha) : undefined;
+  res.json(await listarCompras(req.auth!.negocioId, fecha));
 }));
 
 inventarioRouter.post('/compras/rapidas/ocr', asyncHandler(async (req, res) => {
