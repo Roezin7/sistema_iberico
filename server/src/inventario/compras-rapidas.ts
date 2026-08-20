@@ -179,7 +179,8 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       const prev = productos.get(key);
       const qty = Number(l.cantidad_base);
       const importe = Number(l.importe);
-      productos.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, costo: (prev.importe + importe) / (prev.qty + qty), unidad: prev.unidad ?? l.unidad_compra, contenido: prev.contenido ?? (l.contenido_compra == null ? null : Number(l.contenido_compra)) } : { qty, importe, costo: Number(l.costo_unitario), unidad: l.unidad_compra, contenido: l.contenido_compra == null ? null : Number(l.contenido_compra) });
+      const costo = l.costo_unitario == null ? importe / qty : Number(l.costo_unitario);
+      productos.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, costo: (prev.importe + importe) / (prev.qty + qty), unidad: prev.unidad ?? l.unidad_compra, contenido: prev.contenido ?? (l.contenido_compra == null ? null : Number(l.contenido_compra)) } : { qty, importe, costo, unidad: l.unidad_compra, contenido: l.contenido_compra == null ? null : Number(l.contenido_compra) });
     }
     for (const [productId, line] of productos) {
       const costo = line.costo;
