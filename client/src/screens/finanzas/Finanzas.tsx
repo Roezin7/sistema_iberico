@@ -16,6 +16,11 @@ function sumarDias(fechaIso: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+function esDiaOperativo(fecha: string) {
+  const weekday = new Date(`${fecha}T12:00:00Z`).getUTCDay();
+  return weekday === 0 || weekday === 5 || weekday === 6;
+}
+
 export default function Finanzas() {
   const [ref, setRef] = useState<Referencias | null>(null);
   const [saldosFijados, setSaldosFijados] = useState<boolean | null>(null);
@@ -182,10 +187,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
 
 function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; dias: DiaFila[]; conciliaciones: ConciliacionDiaria[]; onChange: () => void }) {
   const abierta = semana.estado === 'abierta';
-  const operativos = dias.filter((d) => {
-    const weekday = new Date(`${d.fecha}T12:00:00`).getDay();
-    return weekday === 0 || weekday === 5 || weekday === 6;
-  });
+  const operativos = dias.filter((d) => esDiaOperativo(d.fecha));
   const maxVenta = Math.max(1, ...operativos.map((d) => d.total_ventas));
   const totalSemana = operativos.reduce((a, d) => a + d.total_ventas, 0);
   const promedio = operativos.length ? totalSemana / operativos.length : 0;
@@ -212,14 +214,14 @@ function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; d
       </div>
 
       {operativos.length === 0 && <div className="empty-state"><strong>No hay días operativos en esta semana.</strong><p>Ibérico registra ventas regulares de viernes a domingo.</p></div>}
-      {operativos.map((d) => (
-        <DiaCard key={d.fecha} semana={semana} dia={d} abierta={abierta} conciliacion={conciliaciones.find((c) => c.fecha === d.fecha)} onSaved={onChange} />
+      {dias.map((d) => (
+        <DiaCard key={d.fecha} semana={semana} dia={d} abierta={abierta} operativo={esDiaOperativo(d.fecha)} conciliacion={conciliaciones.find((c) => c.fecha === d.fecha)} onSaved={onChange} />
       ))}
     </>
   );
 }
 
-function DiaCard({ semana, dia, abierta, conciliacion, onSaved }: { semana: Semana; dia: DiaFila; abierta: boolean; conciliacion?: ConciliacionDiaria; onSaved: () => void }) {
+function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { semana: Semana; dia: DiaFila; abierta: boolean; operativo: boolean; conciliacion?: ConciliacionDiaria; onSaved: () => void }) {
   const [efectivo, setEfectivo] = useState(String(dia.venta_efectivo || ''));
   const [tarjeta, setTarjeta] = useState(String(dia.venta_tarjeta || ''));
   const [propina, setPropina] = useState(String(dia.propina_tarjeta || ''));
@@ -320,28 +322,30 @@ function DiaCard({ semana, dia, abierta, conciliacion, onSaved }: { semana: Sema
     <div className="dia-card">
       <div className="dia-card__head">
         <strong>{dia.dia} <span className="muted">{dia.fecha.slice(5)}</span></strong>
-        <span className="muted">ventas {mxn(ventas)}{egresos ? ` · egresos ${mxn(egresos)}` : ''}</span>
+        <span className="muted">{operativo ? `ventas ${mxn(ventas)}` : 'captura administrativa'}{egresos ? ` · egresos ${mxn(egresos)}` : ''}</span>
       </div>
-      <div className="dia-section muted">Ventas <span className={conciliacion ? 'badge-ok' : 'badge-neutral'}>{conciliacion ? 'Corte confirmado' : 'Pendiente de corte'}</span></div>
-      <div className="dia-inputs">
-        {campo('💵', 'Efectivo', efectivo, setEfectivo)}
-        {campo('💳', 'Tarjeta', tarjeta, setTarjeta)}
-        {campo('🎁', 'Propina', propina, setPropina)}
-      </div>
-      {abierta && (
-        <div style={{ marginTop: '0.6rem' }}>
-          <button className="pill" onClick={consultarEpos} disabled={consultandoEpos}>
-            {consultandoEpos ? 'Importando Epos…' : 'Importar y revisar Epos'}
-          </button>
-          {eposNota && <small className="muted" style={{ display: 'block', marginTop: '0.4rem' }}>{eposNota}</small>}
-          {eposCorte && <>
-            <label className="inline-field">Cuentas abiertas al cierre
-              <input type="number" min="0" step="1" value={cuentasAbiertas} onChange={(e) => setCuentasAbiertas(e.target.value)} />
-            </label>
-            <button className="btn-primary" style={{ marginTop: '0.55rem' }} onClick={() => void confirmarCorte()}>Confirmar corte y guardar</button>
-          </>}
+      {operativo && <>
+        <div className="dia-section muted">Ventas <span className={conciliacion ? 'badge-ok' : 'badge-neutral'}>{conciliacion ? 'Corte confirmado' : 'Pendiente de corte'}</span></div>
+        <div className="dia-inputs">
+          {campo('💵', 'Efectivo', efectivo, setEfectivo)}
+          {campo('💳', 'Tarjeta', tarjeta, setTarjeta)}
+          {campo('🎁', 'Propina', propina, setPropina)}
         </div>
-      )}
+        {abierta && (
+          <div style={{ marginTop: '0.6rem' }}>
+            <button className="pill" onClick={consultarEpos} disabled={consultandoEpos}>
+              {consultandoEpos ? 'Importando Epos…' : 'Importar y revisar Epos'}
+            </button>
+            {eposNota && <small className="muted" style={{ display: 'block', marginTop: '0.4rem' }}>{eposNota}</small>}
+            {eposCorte && <>
+              <label className="inline-field">Cuentas abiertas al cierre
+                <input type="number" min="0" step="1" value={cuentasAbiertas} onChange={(e) => setCuentasAbiertas(e.target.value)} />
+              </label>
+              <button className="btn-primary" style={{ marginTop: '0.55rem' }} onClick={() => void confirmarCorte()}>Confirmar corte y guardar</button>
+            </>}
+          </div>
+        )}
+      </>}
       <div className="dia-section muted">Egresos del día</div>
       {(dia.gasto_itemizado > 0 || dia.compra_inventario > 0) && (
         <div className="info-box info-box--compact">

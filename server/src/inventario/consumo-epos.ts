@@ -83,6 +83,7 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
       for (const consumo of plan.consumos) {
         const actualizado = await client.inventory_lots.updateMany({ where: { id: consumo.loteId, negocio_id: input.negocioId, cantidad_restante: { gte: consumo.cantidad } }, data: { cantidad_restante: { decrement: consumo.cantidad } } });
         if (actualizado.count !== 1) throw new HttpError(409, 'El lote FIFO cambió mientras se procesaba; reintenta la venta');
+        await client.inventory_lots.updateMany({ where: { id: consumo.loteId, negocio_id: input.negocioId, cantidad_restante: { lte: 0 } }, data: { estado: 'agotado' } });
         await client.inventory_consumptions.create({ data: { negocio_id: input.negocioId, product_id: consumo.productId, lote_id: consumo.loteId, epos_venta_id: venta.id, fecha: venta.fecha, cantidad: consumo.cantidad, costo_unitario: consumo.costoUnitario, costo_total: consumo.costoTotal, fuente: 'venta_receta' } });
       }
       await client.epos_ventas.update({ where: { id: venta.id }, data: { costo_fifo: plan.costoTotal, costeo_estado: 'costeada', costeo_error: null, costeado_at: new Date() } });

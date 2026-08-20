@@ -62,9 +62,12 @@ export async function crearBorradorCompra(negocioId: bigint, usuarioId: bigint, 
   await validarOrigen(negocioId, input.origen_pago_id);
 
   return prisma.$transaction(async (tx) => {
-    if (ticket) {
-      const repetida = await tx.purchases.findFirst({ where: { negocio_id: negocioId, ticket_ref: ticket }, select: { id: true, estado: true } });
-      if (repetida) throw new HttpError(409, `El ticket ${ticket} ya existe (${repetida.estado})`);
+    if (ticket || foto?.hash) {
+      const repetida = await tx.purchases.findFirst({
+        where: { negocio_id: negocioId, ...(ticket ? { ticket_ref: ticket } : { foto_hash: foto!.hash, fecha_recepcion: fecha }) },
+        select: { id: true, estado: true },
+      });
+      if (repetida) throw new HttpError(409, `El ticket${ticket ? ` ${ticket}` : ''} ya existe (${repetida.estado})`);
     }
     const compra = await tx.purchases.create({
       data: {
@@ -131,9 +134,17 @@ export async function obtenerFotoCompra(negocioId: bigint, purchaseId: bigint) {
 
 export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigint, purchaseId: bigint) {
   return prisma.$transaction(async (tx) => {
-    const compra = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId }, include: { capture_lines: true } });
-    if (!compra) throw new HttpError(404, 'Compra no encontrada');
-    if (!['revision', 'borrador'].includes(compra.estado)) throw new HttpError(409, `La compra ya está ${compra.estado}`);
+    const claim = await tx.purchases.updateMany({
+      where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } },
+      data: { estado: 'confirmando' },
+    });
+    if (claim.count !== 1) {
+      const actual = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId }, select: { estado: true } });
+      if (!actual) throw new HttpError(404, 'Compra no encontrada');
+      throw new HttpError(409, `La compra ya está ${actual.estado}`);
+    }
+    const compra = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId, estado: 'confirmando' }, include: { capture_lines: true } });
+    if (!compra) throw new HttpError(409, 'No se pudo reservar la compra para confirmación');
     if (!compra.origen_pago_id) throw new HttpError(400, 'Selecciona de dónde salió el pago antes de confirmar');
     if (compra.capture_lines.some((l) => l.tipo_linea === 'pendiente' || (l.tipo_linea === 'inventario' && (!l.product_id || !l.cantidad_base || Number(l.cantidad_base) <= 0 || l.costo_unitario == null)))) {
       throw new HttpError(400, 'Todas las líneas deben clasificarse y las de inventario deben tener producto, cantidad y costo');
