@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { reconcilePreview } from './client.js';
-import { importarVentasEpos, listarImportacionesEpos, listarVentasEpos } from './imports.js';
+import { importarVentasEpos, listarImportacionesEpos, listarVentasEpos, listarExcepcionesEpos } from './imports.js';
 import { confirmarConciliacionDiaria, listarConciliacionesDiarias } from './reconciliation.js';
 import { env } from '../env.js';
 
@@ -73,6 +73,12 @@ eposRouter.get('/sales', asyncHandler(async (req, res) => {
   const to = req.query.to === undefined ? undefined : z.string().datetime({ offset: true }).parse(req.query.to);
   const limite = req.query.limit === undefined ? 5000 : z.coerce.number().int().positive().parse(req.query.limit);
   res.json(await listarVentasEpos({ negocioId: req.auth!.negocioId, from, to, limite }));
+}));
+
+eposRouter.get('/exceptions', asyncHandler(async (req, res) => {
+  const from = req.query.from === undefined ? undefined : z.string().datetime({ offset: true }).parse(req.query.from);
+  const to = req.query.to === undefined ? undefined : z.string().datetime({ offset: true }).parse(req.query.to);
+  res.json(await listarExcepcionesEpos({ negocioId: req.auth!.negocioId, from, to }));
 }));
 
 const dailySchema = z.object({

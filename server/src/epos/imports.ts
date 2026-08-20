@@ -145,5 +145,29 @@ export async function listarVentasEpos(input: { negocioId: bigint; from?: string
     cantidad: Number(row.cantidad), venta_bruta: Number(row.venta_bruta),
     venta_neta: row.venta_neta == null ? null : Number(row.venta_neta),
     descuento: Number(row.descuento), metodo_pago: row.metodo_pago,
+    costo_fifo: row.costo_fifo == null ? null : Number(row.costo_fifo),
+    costeo_estado: row.costeo_estado,
+    costeo_error: row.costeo_error,
+  }));
+}
+
+export async function listarExcepcionesEpos(input: { negocioId: bigint; from?: string; to?: string }) {
+  const from = input.from ? new Date(input.from) : undefined;
+  const to = input.to ? new Date(input.to) : undefined;
+  const rows = await prisma.epos_ventas.findMany({
+    where: {
+      negocio_id: input.negocioId,
+      costeo_estado: 'excepcion',
+      ...(from || to ? { fecha: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {}),
+    },
+    orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
+    take: 1000,
+  });
+  return rows.map((row) => ({
+    venta_id: Number(row.id),
+    fecha: row.fecha.toISOString(),
+    producto: row.producto_nombre,
+    cantidad: Number(row.cantidad),
+    error: row.costeo_error ?? 'Revisión pendiente',
   }));
 }
