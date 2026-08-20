@@ -5,6 +5,7 @@ import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { inventarioActual, listaCompras, crearConteo } from './service.js';
 import { borradorConteo, draftDisponible } from './draft.js';
 import { listarLotes, registrarCompra } from './compras.js';
+import { consumirVentasEpos } from './consumo-epos.js';
 
 export const inventarioRouter = Router();
 
@@ -87,6 +88,20 @@ inventarioRouter.post(
       lineas: body.lineas.map((linea) => ({ ...linea, product_id: BigInt(linea.product_id) })),
     });
     res.status(201).json(resultado);
+  }),
+);
+
+/** POST /inventario/consumo-epos — vista previa o aplicación del consumo FIFO. */
+inventarioRouter.post(
+  '/consumo-epos',
+  soloAdmin,
+  asyncHandler(async (req, res) => {
+    const body = z.object({
+      from: z.string().datetime({ offset: true }),
+      to: z.string().datetime({ offset: true }),
+      confirmar: z.boolean().default(false),
+    }).parse(req.body);
+    res.json(await consumirVentasEpos({ negocioId: req.auth!.negocioId, ...body }));
   }),
 );
 
