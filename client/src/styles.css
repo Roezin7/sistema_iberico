@@ -363,6 +363,15 @@ table th {
   flex-direction: column;
   gap: 0.15rem;
 }
+.nav-section-label {
+  margin: 1rem 0 0.25rem;
+  padding: 0 0.75rem;
+  color: var(--ink-3);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
 .nav-link {
   position: relative;
   display: flex;
@@ -519,6 +528,73 @@ table th {
   font-size: 0.85rem;
   margin: 0.15rem 0 0;
 }
+.eyebrow {
+  display: block;
+  color: var(--brand);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  margin: 1.6rem 0 0.75rem;
+}
+.section-heading h2 {
+  margin-top: 0.2rem;
+}
+.operating-brief {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 1.2rem 1.3rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border-strong);
+  border-radius: var(--r-card);
+  box-shadow: var(--sh-sm);
+}
+.operating-brief--on {
+  border-left-color: var(--brand);
+}
+.operating-brief h2 {
+  margin-top: 0.2rem;
+}
+.operating-brief p {
+  margin: 0.35rem 0 0;
+  max-width: 60ch;
+}
+.operating-brief__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.55rem;
+  flex: 0 0 auto;
+}
+.empty-state {
+  padding: 1.25rem;
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-card);
+  color: var(--ink-2);
+}
+.empty-state strong { color: var(--ink); }
+.empty-state p { margin: 0.35rem 0 0.8rem; }
+.empty-state--error { border-color: var(--danger); background: var(--danger-bg); }
+.aviso--info { background: var(--info-bg); color: var(--info); border-color: transparent; }
+.tab-hint { opacity: 0.7; font-weight: 500; }
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-top: 0.7rem;
+  color: var(--ink-2);
+  font-size: 0.8rem;
+}
+.inline-field input { width: 7rem; }
 
 /* ---------- 6. TABS / SEGMENTOS ---------- */
 .tabs {
@@ -1522,7 +1598,7 @@ select:disabled {
     left: 0;
     right: 0;
     z-index: 50;
-    justify-content: space-around;
+    justify-content: stretch;
     background: var(--surface);
     border-top: 1px solid var(--border);
     padding: 0.3rem 0.25rem calc(0.3rem + env(safe-area-inset-bottom));
@@ -1539,9 +1615,31 @@ select:disabled {
     color: var(--ink-3);
     text-decoration: none;
     font-family: var(--font-ui);
-    font-size: 0.65rem;
+    font-size: 0.7rem;
     font-weight: 600;
     min-height: 48px;
+  }
+  .operating-brief {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .operating-brief__meta {
+    align-items: stretch;
+  }
+  .operating-brief__meta .btn-primary {
+    width: 100%;
+  }
+  .semana-bar {
+    flex-wrap: wrap;
+  }
+  .semana-bar select,
+  .semana-bar input,
+  .semana-bar .pill {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+  .dia-chart {
+    min-width: 0;
   }
   .bottom-link--on {
     color: var(--brand);

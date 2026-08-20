@@ -110,6 +110,11 @@ export async function eliminarItem(negocioId: bigint, itemId: bigint) {
 /** Para una fecha, devuelve cada checklist activo con su instancia y el estado de cada ítem. */
 export async function diaDeTareas(negocioId: bigint, fechaStr: string) {
   const fecha = new Date(fechaStr + 'T00:00:00Z');
+  // Ibérico opera regularmente viernes, sábado y domingo. No crear instancias
+  // artificiales para lunes–jueves: esos días no deben parecer tareas vencidas.
+  if (![0, 5, 6].includes(fecha.getUTCDay())) {
+    return { fecha: iso(fecha), checklists: [] };
+  }
   const checklists = await prisma.checklists.findMany({
     where: { negocio_id: negocioId, activo: true },
     include: { items: { orderBy: { orden: 'asc' } } },

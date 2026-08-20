@@ -79,9 +79,9 @@ export default function Inventario() {
       </header>
       <nav className="tabs">
         <button className={tab === 'conteo' ? 'tab tab--on' : 'tab'} onClick={() => setTab('conteo')}>Conteo</button>
-        {iaDisponible && <button className={tab === 'borrador' ? 'tab tab--on' : 'tab'} onClick={() => setTab('borrador')}>Borrador IA</button>}
-        <button className={tab === 'actual' ? 'tab tab--on' : 'tab'} onClick={() => setTab('actual')}>Actual</button>
-        <button className={tab === 'compras' ? 'tab tab--on' : 'tab'} onClick={() => setTab('compras')}>Compras</button>
+        {iaDisponible && <button className={tab === 'borrador' ? 'tab tab--on' : 'tab'} onClick={() => setTab('borrador')}>Borrador IA <small className="tab-hint">experimental</small></button>}
+        <button className={tab === 'actual' ? 'tab tab--on' : 'tab'} onClick={() => setTab('actual')}>Existencia actual</button>
+        <button className={tab === 'compras' ? 'tab tab--on' : 'tab'} onClick={() => setTab('compras')}>Lista de compras</button>
       </nav>
       <div className="tab-body">
         {tab === 'conteo' && <Conteo onGuardado={() => setTab('actual')} />}

@@ -52,6 +52,23 @@ export interface DiaFila {
 }
 export interface ResumenDiario { estado: string; dias: DiaFila[] }
 
+export interface EposCorteDiario {
+  periodo: { from: string; to: string };
+  daily_sales: { ventas: number; descuentos: number; devoluciones: number };
+  bookkeeping: { ventas: number; metodos_pago: { metodo: string; total: number }[] };
+  diferencias: { ventas: number; unidades: number | null; transacciones: number | null };
+  filas_persistidas: number;
+  filas_duplicadas: number;
+  importacion_id?: number;
+}
+
+export interface ConciliacionDiaria {
+  id: number; fecha: string; estado: string;
+  epos: { ventas: number; efectivo: number; tarjeta: number; otros: number };
+  confirmado: { ventas: number; efectivo: number; tarjeta: number; otros: number };
+  cuentas_abiertas: number; excepciones: unknown[]; notas: string | null; confirmado_at: string | null;
+}
+
 export const finanzas = {
   referencias: () => api<Referencias>('/finanzas/referencias'),
   getSaldosIniciales: () => api<{ ubicacion_id: number; monto: number }[]>('/finanzas/saldos-iniciales'),
@@ -71,6 +88,17 @@ export const finanzas = {
   crearArqueo: (body: Record<string, unknown>) => api('/finanzas/arqueos', { method: 'POST', body }),
   cerrar: (id: number) => api<Resumen>(`/finanzas/semanas/${id}/cerrar`, { method: 'POST', body: {} }),
   reabrir: (id: number) => api<Semana>(`/finanzas/semanas/${id}/reabrir`, { method: 'POST', body: {} }),
+};
+
+export const epos = {
+  syncDaily: (fecha: string) => api<EposCorteDiario>('/epos/sync-daily', { method: 'POST', body: { fecha } }),
+  conciliaciones: (semanaId: number) => api<ConciliacionDiaria[]>(`/epos/conciliaciones-diarias?semana_id=${semanaId}`),
+  confirmarConciliacion: (body: {
+    semana_id: number; fecha: string;
+    epos: { ventas: number; efectivo: number; tarjeta: number; otros: number };
+    confirmado: { ventas: number; efectivo: number; tarjeta: number; otros: number };
+    cuentas_abiertas: number; excepciones: Record<string, unknown>[]; notas?: string;
+  }) => api<ConciliacionDiaria>('/epos/conciliaciones-diarias', { method: 'POST', body }),
 };
 
 export const TIPOS: { tipo: TipoMov; label: string }[] = [

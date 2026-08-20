@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../auth';
 import { Icono } from '../icons';
+import { api } from '../api';
 
 interface Modulo {
   clave: string;
@@ -14,7 +16,7 @@ interface Modulo {
 const MODULOS: Modulo[] = [
   { clave: 'inventario', titulo: 'Inventario', icono: 'package', desc: 'Conteos y lista de compras', ruta: '/inventario' },
   { clave: 'tareas', titulo: 'Tareas', icono: 'checks', desc: 'Checklists de apertura y cierre', ruta: '/tareas' },
-  { clave: 'finanzas', titulo: 'Finanzas', icono: 'wallet', desc: 'Semanas, movimientos, cuadre', ruta: '/finanzas', soloAdmin: true },
+  { clave: 'finanzas', titulo: 'Cierre y caja', icono: 'wallet', desc: 'Cortes diarios, pagos y cuadre', ruta: '/finanzas', soloAdmin: true },
   { clave: 'patrimonio', titulo: 'Patrimonio', icono: 'trending', desc: 'Tendencia y snapshots', ruta: '/patrimonio', soloAdmin: true },
   { clave: 'ajustes', titulo: 'Catálogo y ajustes', icono: 'settings', desc: 'Productos, mínimos, saldos', ruta: '/configuracion', soloAdmin: true },
 ];
@@ -28,18 +30,59 @@ function saludo() {
 
 export default function Home() {
   const { usuario } = useAuth();
+  const [semana, setSemana] = useState<{ etiqueta: string; estado: string } | null>(null);
+  useEffect(() => {
+    if (!usuario || usuario.rol !== 'admin') return;
+    api<{ etiqueta: string; estado: string }>('/finanzas/semanas/actual')
+      .then(setSemana)
+      .catch(() => setSemana(null));
+  }, [usuario]);
+
   if (!usuario) return null;
 
   const visibles = MODULOS.filter((m) => !m.soloAdmin || usuario.rol === 'admin');
+  const hoy = new Date();
+  const dia = hoy.getDay();
+  const operativo = dia === 0 || dia === 5 || dia === 6;
+  const estadoHoy = operativo ? 'Día operativo' : 'Sin operación del bar';
 
   return (
     <div className="page">
       <header className="page-head">
         <div>
           <h1>{saludo()}, {usuario.nombre}</h1>
-          <p className="page-sub">¿Qué quieres revisar hoy?</p>
+          <p className="page-sub">Centro de operación de Ibérico</p>
         </div>
       </header>
+
+      <section className={`operating-brief ${operativo ? 'operating-brief--on' : ''}`}>
+        <div>
+          <span className="eyebrow">Hoy</span>
+          <h2>{estadoHoy}</h2>
+          <p className="muted">
+            {operativo
+              ? 'Importa el corte de Epos, revisa las excepciones y confirma antes de cerrar el día.'
+              : 'No se crean cortes ni tareas de venta. Usa este tiempo para compras, recetas o administración.'}
+          </p>
+        </div>
+        {usuario.rol === 'admin' && (
+          <div className="operating-brief__meta">
+            <span className={semana?.estado === 'cerrada' ? 'badge-ok' : 'badge-neutral'}>
+              {semana ? `${semana.etiqueta} · ${semana.estado}` : 'Semana actual'}
+            </span>
+            <Link className="btn-primary" to={operativo ? '/finanzas' : '/inventario'}>
+              {operativo ? 'Abrir cierre de hoy' : 'Revisar inventario'}
+            </Link>
+          </div>
+        )}
+      </section>
+
+      <div className="section-heading">
+        <div>
+          <span className="eyebrow">Flujo principal</span>
+          <h2>Qué puedes hacer ahora</h2>
+        </div>
+      </div>
 
       <div className="module-grid">
         {visibles.map((m) =>

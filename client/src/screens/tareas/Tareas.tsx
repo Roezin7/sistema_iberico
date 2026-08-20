@@ -44,10 +44,30 @@ export default function Tareas() {
 function Hoy() {
   const [fecha, setFecha] = useState(hoyMx());
   const [dia, setDia] = useState<Dia | null>(null);
-  const cargar = (f: string) => api<Dia>(`/tareas/dia?fecha=${f}`).then(setDia);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState('');
+  const esDiaOperativo = (f: string) => {
+    const weekday = new Date(`${f}T12:00:00`).getDay();
+    return weekday === 0 || weekday === 5 || weekday === 6;
+  };
+  const cargar = async (f: string) => {
+    setCargando(true); setError('');
+    if (!esDiaOperativo(f)) {
+      setDia({ fecha: f, checklists: [] });
+      setCargando(false);
+      return;
+    }
+    try {
+      setDia(await api<Dia>(`/tareas/dia?fecha=${f}`));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudieron cargar las tareas');
+      setDia(null);
+    } finally { setCargando(false); }
+  };
   useEffect(() => { void cargar(fecha); }, [fecha]);
 
   async function toggle(instancia_id: number, item: ItemDia) {
+    setError('');
     // Optimista
     setDia((d) => d && {
       ...d,
@@ -58,14 +78,30 @@ function Hoy() {
           progreso: { ...c.progreso, hechos: c.progreso.hechos + (item.completado ? -1 : 1) },
         }),
     });
-    await api('/tareas/resultados', { method: 'PATCH', body: { instancia_id, item_id: item.id, completado: !item.completado } });
+    try {
+      await api('/tareas/resultados', { method: 'PATCH', body: { instancia_id, item_id: item.id, completado: !item.completado } });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo guardar la tarea');
+      void cargar(fecha);
+    }
   }
 
-  if (!dia) return <Cargando />;
+  if (cargando && !dia) return <Cargando etiqueta="Cargando tareas…" />;
+  if (error && !dia) return (
+    <div className="empty-state empty-state--error">
+      <strong>No se pudieron cargar las tareas</strong>
+      <p>{error}</p>
+      <button className="pill" onClick={() => void cargar(fecha)}>Reintentar</button>
+    </div>
+  );
+  if (!dia) return null;
+  const esOperativo = esDiaOperativo(fecha);
   return (
     <>
       <input className="buscador" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
-      {dia.checklists.length === 0 && <p className="muted">No hay checklists activos. Pídele a un admin que los configure.</p>}
+      {error && <div className="empty-state empty-state--error" style={{ marginTop: '0.75rem' }}><strong>No se pudo guardar el último cambio</strong><p>{error}</p><button className="pill" onClick={() => void cargar(fecha)}>Reintentar</button></div>}
+      {!esOperativo && <div className="aviso aviso--info">No hay operación del bar este día. Las tareas de apertura y cierre se muestran de viernes a domingo.</div>}
+      {dia.checklists.length === 0 && <p className="muted">{esOperativo ? 'No hay checklists activos. Pídele a un admin que los configure.' : 'No hay tareas operativas para este día.'}</p>}
       {dia.checklists.map((c) => {
         const completo = c.progreso.hechos === c.progreso.total && c.progreso.total > 0;
         return (

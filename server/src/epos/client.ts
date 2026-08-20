@@ -10,6 +10,7 @@ export interface EposReportRow {
   Quantity?: number | null;
   TotalSales?: number | null;
   NetSales?: number | null;
+  Discount?: number | null;
   Tender?: string | null;
   TransactionID?: number | null;
   TransactionItemID?: number | null;
@@ -145,13 +146,20 @@ export function summarizeDailySales(rows: EposDailySalesRow[]) {
   };
 }
 
-export async function reconcilePreview(from: string, to: string, locationId?: number) {
+export async function fetchReconcileData(from: string, to: string, locationId?: number) {
   const [daily, bookkeeping] = await Promise.all([
     dailySales(from, to, locationId),
     bookkeepingReport(from, to, locationId),
   ]);
-  const dailySummary = summarizeDailySales(daily);
-  const bookkeepingSummary = summarizeBookkeeping(bookkeeping);
+  return { daily, bookkeeping };
+}
+
+export function buildReconcilePreview(
+  from: string,
+  to: string,
+  dailySummary: ReturnType<typeof summarizeDailySales>,
+  bookkeepingSummary: ReturnType<typeof summarizeBookkeeping>,
+) {
   return {
     periodo: { from, to },
     fuente: 'Epos Now',
@@ -164,4 +172,11 @@ export async function reconcilePreview(from: string, to: string, locationId?: nu
       transacciones: dailySummary.transacciones == null ? null : dailySummary.transacciones - bookkeepingSummary.transacciones,
     },
   };
+}
+
+export async function reconcilePreview(from: string, to: string, locationId?: number) {
+  const { daily, bookkeeping } = await fetchReconcileData(from, to, locationId);
+  const dailySummary = summarizeDailySales(daily);
+  const bookkeepingSummary = summarizeBookkeeping(bookkeeping);
+  return buildReconcilePreview(from, to, dailySummary, bookkeepingSummary);
 }

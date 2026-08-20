@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
-  finanzas, mxn, TIPOS, type Referencias, type Semana, type Resumen, type FilaCuadre,
-  type Movimiento, type TipoMov, type DiaFila,
+  finanzas, epos, mxn, TIPOS, type Referencias, type Semana, type Resumen, type FilaCuadre,
+  type Movimiento, type TipoMov, type DiaFila, type ConciliacionDiaria,
 } from './api';
 import { Icono } from '../../icons';
 import { descargarCSV } from '../../csv';
@@ -75,7 +75,7 @@ function Marco({ children }: { children: React.ReactNode }) {
       <header className="page-head">
         <div className="page-title">
           <Icono name="wallet" size={24} className="ttl-icon" />
-          <h1>Finanzas</h1>
+        <h1>Cierre y caja</h1>
         </div>
       </header>
       <div className="tab-body">{children}</div>
@@ -115,14 +115,16 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
   const [movs, setMovs] = useState<Movimiento[]>([]);
   const [cuadre, setCuadre] = useState<FilaCuadre[]>([]);
   const [dias, setDias] = useState<DiaFila[]>([]);
+  const [conciliaciones, setConciliaciones] = useState<ConciliacionDiaria[]>([]);
   const confirmar = useConfirm();
   const { error } = useToast();
 
   async function cargar() {
-    const [r, m, c, d] = await Promise.all([
+    const [r, m, c, d, conciliacionesData] = await Promise.all([
       finanzas.resumen(semana.id), finanzas.movimientos(semana.id), finanzas.cuadre(semana.id), finanzas.dias(semana.id),
+      epos.conciliaciones(semana.id).catch(() => []),
     ]);
-    setResumen(r); setMovs(m); setCuadre(c.ubicaciones); setDias(d.dias);
+    setResumen(r); setMovs(m); setCuadre(c.ubicaciones); setDias(d.dias); setConciliaciones(conciliacionesData);
   }
   useEffect(() => { void cargar(); }, [semana.id]);
 
@@ -148,13 +150,13 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
         </span>
       </div>
       <nav className="tabs">
-        <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Por día</button>
+        <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Cortes diarios</button>
         <button className={tab === 'resumen' ? 'tab tab--on' : 'tab'} onClick={() => setTab('resumen')}>Resumen</button>
-        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Otros mov.</button>
+        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Movimientos</button>
         <button className={tab === 'cuadre' ? 'tab tab--on' : 'tab'} onClick={() => setTab('cuadre')}>Cuadre</button>
       </nav>
 
-      {tab === 'dia' && <DiaView semana={semana} dias={dias} onChange={cargar} />}
+      {tab === 'dia' && <DiaView semana={semana} dias={dias} conciliaciones={conciliaciones} onChange={cargar} />}
       {tab === 'resumen' && resumen && <ResumenView r={resumen} />}
       {tab === 'movs' && (
         <MovimientosView ref_={ref_} semana={semana} movs={movs} onChange={cargar} />
@@ -177,11 +179,15 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
   );
 }
 
-function DiaView({ semana, dias, onChange }: { semana: Semana; dias: DiaFila[]; onChange: () => void }) {
+function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; dias: DiaFila[]; conciliaciones: ConciliacionDiaria[]; onChange: () => void }) {
   const abierta = semana.estado === 'abierta';
-  const maxVenta = Math.max(1, ...dias.map((d) => d.total_ventas));
-  const totalSemana = dias.reduce((a, d) => a + d.total_ventas, 0);
-  const promedio = dias.length ? totalSemana / dias.length : 0;
+  const operativos = dias.filter((d) => {
+    const weekday = new Date(`${d.fecha}T12:00:00`).getDay();
+    return weekday === 0 || weekday === 5 || weekday === 6;
+  });
+  const maxVenta = Math.max(1, ...operativos.map((d) => d.total_ventas));
+  const totalSemana = operativos.reduce((a, d) => a + d.total_ventas, 0);
+  const promedio = operativos.length ? totalSemana / operativos.length : 0;
 
   return (
     <>
@@ -193,7 +199,7 @@ function DiaView({ semana, dias, onChange }: { semana: Semana; dias: DiaFila[]; 
       {/* Mini-gráfica de barras por día — misma paleta de datos que Patrimonio:
           vino resalta el día tope, olivo los que superan el promedio de la semana. */}
       <div className="dia-chart chart-frame">
-        {dias.map((d) => {
+        {operativos.map((d) => {
           const claseBarra = d.total_ventas >= maxVenta ? 'dia-bar--max' : d.total_ventas > promedio ? 'dia-bar--alto' : '';
           return (
             <div key={d.fecha} className="dia-bar-wrap" title={`${d.dia} ${mxn(d.total_ventas)}`}>
@@ -204,14 +210,15 @@ function DiaView({ semana, dias, onChange }: { semana: Semana; dias: DiaFila[]; 
         })}
       </div>
 
-      {dias.map((d) => (
-        <DiaCard key={d.fecha} semana={semana} dia={d} abierta={abierta} onSaved={onChange} />
+      {operativos.length === 0 && <div className="empty-state"><strong>No hay días operativos en esta semana.</strong><p>Ibérico registra ventas regulares de viernes a domingo.</p></div>}
+      {operativos.map((d) => (
+        <DiaCard key={d.fecha} semana={semana} dia={d} abierta={abierta} conciliacion={conciliaciones.find((c) => c.fecha === d.fecha)} onSaved={onChange} />
       ))}
     </>
   );
 }
 
-function DiaCard({ semana, dia, abierta, onSaved }: { semana: Semana; dia: DiaFila; abierta: boolean; onSaved: () => void }) {
+function DiaCard({ semana, dia, abierta, conciliacion, onSaved }: { semana: Semana; dia: DiaFila; abierta: boolean; conciliacion?: ConciliacionDiaria; onSaved: () => void }) {
   const [efectivo, setEfectivo] = useState(String(dia.venta_efectivo || ''));
   const [tarjeta, setTarjeta] = useState(String(dia.venta_tarjeta || ''));
   const [propina, setPropina] = useState(String(dia.propina_tarjeta || ''));
@@ -219,6 +226,15 @@ function DiaCard({ semana, dia, abierta, onSaved }: { semana: Semana; dia: DiaFi
   const [sueldos, setSueldos] = useState(String(dia.sueldos || ''));
   const [guardando, setGuardando] = useState(false);
   const [ok, setOk] = useState(false);
+  const [consultandoEpos, setConsultandoEpos] = useState(false);
+  const [eposNota, setEposNota] = useState('');
+  const [eposCorte, setEposCorte] = useState<Awaited<ReturnType<typeof epos.syncDaily>> | null>(null);
+  const [cuentasAbiertas, setCuentasAbiertas] = useState(String(conciliacion?.cuentas_abiertas ?? 0));
+  const { error } = useToast();
+
+  useEffect(() => {
+    setCuentasAbiertas(String(conciliacion?.cuentas_abiertas ?? 0));
+  }, [conciliacion?.cuentas_abiertas]);
 
   // Resincroniza si cambian los datos del servidor.
   useEffect(() => {
@@ -245,6 +261,56 @@ function DiaCard({ semana, dia, abierta, onSaved }: { semana: Semana; dia: DiaFi
     } finally { setGuardando(false); }
   }
 
+  async function consultarEpos() {
+    setConsultandoEpos(true); setEposNota('');
+    try {
+    const corte = await epos.syncDaily(dia.fecha);
+      setEposCorte(corte);
+      const metodo = (nombre: string) => corte.bookkeeping.metodos_pago.find((item) => item.metodo.toLowerCase() === nombre.toLowerCase())?.total ?? 0;
+      const otros = corte.bookkeeping.metodos_pago
+        .filter((item) => !['cash', 'card'].includes(item.metodo.toLowerCase()))
+        .reduce((total, item) => total + item.total, 0);
+      setEfectivo(String(metodo('Cash')));
+      setTarjeta(String(metodo('Card')));
+      setEposNota(otros ? `Importado: ${mxn(corte.bookkeeping.ventas)} · otros métodos ${mxn(otros)} · revisa y confirma` : `Importado: ${mxn(corte.bookkeeping.ventas)} · revisa y confirma`);
+    } catch (e) {
+      error(e instanceof Error ? e.message : 'No se pudo consultar Epos');
+    } finally { setConsultandoEpos(false); }
+  }
+
+  async function confirmarCorte() {
+    if (!eposCorte) return;
+    try {
+      // La confirmación es el punto único que convierte la revisión del corte
+      // en el registro diario financiero. El botón manual sigue disponible
+      // cuando no se consultó Epos.
+      await finanzas.guardarDia(semana.id, {
+        fecha: dia.fecha, venta_efectivo: n(efectivo), venta_tarjeta: n(tarjeta),
+        propina_tarjeta: n(propina), gasto_efectivo: n(gasto), sueldos: n(sueldos),
+      });
+      const otrosEpos = eposCorte.bookkeeping.metodos_pago
+        .filter((m) => !['cash', 'card'].includes(m.metodo.toLowerCase()))
+        .reduce((a, m) => a + m.total, 0);
+      await epos.confirmarConciliacion({
+        semana_id: semana.id,
+        fecha: dia.fecha,
+        epos: {
+          ventas: eposCorte.bookkeeping.ventas,
+          efectivo: eposCorte.bookkeeping.metodos_pago.find((m) => m.metodo.toLowerCase() === 'cash')?.total ?? 0,
+          tarjeta: eposCorte.bookkeeping.metodos_pago.find((m) => m.metodo.toLowerCase() === 'card')?.total ?? 0,
+          otros: eposCorte.bookkeeping.metodos_pago.filter((m) => !['cash', 'card'].includes(m.metodo.toLowerCase())).reduce((a, m) => a + m.total, 0),
+        },
+        confirmado: { ventas: n(efectivo) + n(tarjeta) + n(propina) + otrosEpos, efectivo: n(efectivo), tarjeta: n(tarjeta), otros: otrosEpos },
+        cuentas_abiertas: n(cuentasAbiertas),
+        excepciones: [],
+        notas: eposNota || undefined,
+      });
+      setEposNota('Corte confirmado y guardado como evidencia.');
+      setEposCorte(null);
+      onSaved();
+    } catch (e) { error(e instanceof Error ? e.message : 'No se pudo confirmar el corte'); }
+  }
+
   const campo = (emoji: string, label: string, val: string, set: (v: string) => void) => (
     <label>{emoji} {label}<input type="number" inputMode="decimal" value={val} disabled={!abierta} onChange={(e) => set(e.target.value)} placeholder="0" /></label>
   );
@@ -255,12 +321,26 @@ function DiaCard({ semana, dia, abierta, onSaved }: { semana: Semana; dia: DiaFi
         <strong>{dia.dia} <span className="muted">{dia.fecha.slice(5)}</span></strong>
         <span className="muted">ventas {mxn(ventas)}{egresos ? ` · egresos ${mxn(egresos)}` : ''}</span>
       </div>
-      <div className="dia-section muted">Ventas</div>
+      <div className="dia-section muted">Ventas <span className={conciliacion ? 'badge-ok' : 'badge-neutral'}>{conciliacion ? 'Corte confirmado' : 'Pendiente de corte'}</span></div>
       <div className="dia-inputs">
         {campo('💵', 'Efectivo', efectivo, setEfectivo)}
         {campo('💳', 'Tarjeta', tarjeta, setTarjeta)}
         {campo('🎁', 'Propina', propina, setPropina)}
       </div>
+      {abierta && (
+        <div style={{ marginTop: '0.6rem' }}>
+          <button className="pill" onClick={consultarEpos} disabled={consultandoEpos}>
+            {consultandoEpos ? 'Importando Epos…' : 'Importar y revisar Epos'}
+          </button>
+          {eposNota && <small className="muted" style={{ display: 'block', marginTop: '0.4rem' }}>{eposNota}</small>}
+          {eposCorte && <>
+            <label className="inline-field">Cuentas abiertas al cierre
+              <input type="number" min="0" step="1" value={cuentasAbiertas} onChange={(e) => setCuentasAbiertas(e.target.value)} />
+            </label>
+            <button className="btn-primary" style={{ marginTop: '0.55rem' }} onClick={() => void confirmarCorte()}>Confirmar corte y guardar</button>
+          </>}
+        </div>
+      )}
       <div className="dia-section muted">Egresos (efectivo)</div>
       <div className="dia-inputs dia-inputs--2">
         {campo('🧾', 'Gastos', gasto, setGasto)}

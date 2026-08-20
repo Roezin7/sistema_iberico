@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth, type Rol } from './auth';
 import Login from './screens/Login';
 import Home from './screens/Home';
@@ -25,6 +25,7 @@ function SoloAdmin({ children, rol }: { children: JSX.Element; rol: Rol }) {
 
 function AppBody() {
   const { usuario, cargando } = useAuth();
+  const location = useLocation();
 
   if (cargando) {
     return (
@@ -48,7 +49,7 @@ function AppBody() {
         <Route path="/marketing" element={<SoloAdmin rol="admin"><Marketing /></SoloAdmin>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <SilviaBubble />
+      {!['/finanzas', '/inventario', '/tareas'].includes(location.pathname) && <SilviaBubble />}
     </Shell>
   );
 }

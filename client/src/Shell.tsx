@@ -17,10 +17,13 @@ const ITEMS: Item[] = [
   { ruta: '/', label: 'Inicio', icono: 'home' },
   { ruta: '/inventario', label: 'Inventario', icono: 'package' },
   { ruta: '/tareas', label: 'Tareas', icono: 'checks' },
-  { ruta: '/finanzas', label: 'Finanzas', icono: 'wallet', soloAdmin: true },
+  { ruta: '/finanzas', label: 'Cierre y caja', icono: 'wallet', soloAdmin: true },
+];
+
+const ADMIN_ITEMS: Item[] = [
   { ruta: '/patrimonio', label: 'Patrimonio', icono: 'trending', soloAdmin: true },
   { ruta: '/configuracion', label: 'Configuración', icono: 'settings', soloAdmin: true },
-  { ruta: '/marketing', label: 'Marketing', icono: 'sparkles', soloAdmin: true },
+  { ruta: '/marketing', label: 'Laboratorio', icono: 'sparkles', soloAdmin: true },
 ];
 
 export default function Shell({ children }: { children: ReactNode }) {
@@ -64,6 +67,21 @@ export default function Shell({ children }: { children: ReactNode }) {
               <span>{i.label}</span>
             </NavLink>
           ))}
+          {usuario?.rol === 'admin' && (
+            <>
+              <div className="nav-section-label">Administración</div>
+              {ADMIN_ITEMS.map((i) => (
+                <NavLink
+                  key={i.ruta}
+                  to={i.ruta}
+                  className={({ isActive }) => (isActive ? 'nav-link nav-link--on' : 'nav-link')}
+                >
+                  <Icono name={i.icono} size={20} />
+                  <span>{i.label}</span>
+                </NavLink>
+              ))}
+            </>
+          )}
         </nav>
         <div className="nav-foot">
           <button className="nav-link" onClick={alternar}>
