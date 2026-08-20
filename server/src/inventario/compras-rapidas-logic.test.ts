@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resumirCompra } from './compras-rapidas-logic.js';
+import { resumirCompra, validarDiscrepanciasCompra } from './compras-rapidas-logic.js';
 
 describe('resumen de tickets de compra', () => {
   it('cuadra una compra sólo de inventario', () => {
@@ -25,5 +25,38 @@ describe('resumen de tickets de compra', () => {
     expect(resumirCompra(100, [{ tipo_linea: 'inventario', importe: 90 }])).toMatchObject({
       inventario: 90, gasto: 0, pendiente: 0, cuadra: false,
     });
+  });
+});
+
+describe('reglas de discrepancias en tickets', () => {
+  const productos = [
+    { id: 27, name: 'Agua Mineral', unidad_base: 'ml', contenido_compra: 1000, unidad_compra: 'botella', aliases: [] },
+    { id: 33, name: 'Tonica', unidad_base: 'ml', contenido_compra: 296, unidad_compra: 'botella', aliases: ['agua tonica'] },
+    { id: 47, name: 'Pan', unidad_base: 'g', contenido_compra: 600, unidad_compra: 'paquete', aliases: ['pan de cebolla'] },
+  ];
+
+  it('reconoce Schweppes como Tónica y no genera falso positivo', () => {
+    const resultado = validarDiscrepanciasCompra(112, [{
+      tipo_linea: 'inventario', importe: 112, product_id: 33, descripcion_fuente: 'AGUA SCHWEPPES 296 ML',
+      cantidad_base: 1776, unidad_compra: 'botella', contenido_compra: 296, costo_unitario: 112 / 1776,
+    }], productos);
+    expect(resultado.valida).toBe(true);
+    expect(resultado.advertencias.some((d) => d.codigo === 'DESCRIPCION_PRODUCTO_NO_COINCIDE')).toBe(false);
+  });
+
+  it('detecta un paquete mal convertido, como pan de cebolla', () => {
+    const resultado = validarDiscrepanciasCompra(82.5, [{
+      tipo_linea: 'inventario', importe: 82.5, product_id: 47, descripcion_fuente: 'PAN DE CEBOLLA',
+      cantidad_base: 200, unidad_compra: 'paquete', contenido_compra: 600,
+    }], productos);
+    expect(resultado.advertencias.map((d) => d.codigo)).toContain('PRESENTACION_NO_MULTIPLO');
+  });
+
+  it('bloquea tickets cuyo desglose no coincide con el total', () => {
+    const resultado = validarDiscrepanciasCompra(100, [{
+      tipo_linea: 'gasto', importe: 99, descripcion_fuente: 'Diferencia de ticket',
+    }]);
+    expect(resultado.valida).toBe(false);
+    expect(resultado.errores.map((d) => d.codigo)).toContain('TOTAL_NO_CUADRA');
   });
 });

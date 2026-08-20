@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { resumirCompra } from './compras-rapidas-logic.js';
+import { notasDeValidacion, resumirCompra, validarDiscrepanciasCompra, type ProductoReglaCompra } from './compras-rapidas-logic.js';
 
 export type CapturaCompraLinea = {
   product_id?: bigint | null;
@@ -100,7 +100,7 @@ export async function listarBorradoresCompra(negocioId: bigint) {
   });
   return filas.map((f) => ({
     id: Number(f.id), fecha_recepcion: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor,
-    ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), estado: f.estado, foto: !!f.foto_data,
+    ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), estado: f.estado, foto: !!f.foto_data, notas: f.notas,
     origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null,
     lineas: f.capture_lines.map((l) => ({ id: Number(l.id), product_id: l.product_id ? Number(l.product_id) : null,
       producto: l.products?.name ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente,
@@ -165,13 +165,36 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     const gastoTotal = resumen.gasto;
 
     const productIds = [...new Set(inventory.map((l) => l.product_id!.toString()))].map(BigInt);
-    const productosValidos = await tx.products.findMany({
+    const productosValidos = productIds.length ? await tx.products.findMany({
       where: { negocio_id: negocioId, id: { in: productIds }, active: true },
-      select: { id: true },
-    });
+      select: { id: true, name: true, unidad_base: true, contenido_compra: true, unidad_compra: true, product_aliases: { select: { alias: true } } },
+    }) : [];
     const validos = new Set(productosValidos.map((p) => p.id.toString()));
     const faltantes = productIds.filter((id) => !validos.has(id.toString()));
     if (faltantes.length) throw new HttpError(400, `Producto de inventario no válido para este negocio: ${faltantes.map(String).join(', ')}`);
+
+    const reglasProductos: ProductoReglaCompra[] = productosValidos.map((p) => ({
+      id: p.id,
+      name: p.name,
+      unidad_base: p.unidad_base,
+      contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra),
+      unidad_compra: p.unidad_compra,
+      aliases: p.product_aliases.map((a) => a.alias),
+    }));
+    const validacion = validarDiscrepanciasCompra(total, compra.capture_lines.map((l) => ({
+      tipo_linea: l.tipo_linea as 'inventario' | 'gasto' | 'pendiente',
+      importe: Number(l.importe),
+      product_id: l.product_id,
+      descripcion_fuente: l.descripcion_fuente,
+      cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base),
+      unidad_compra: l.unidad_compra,
+      contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra),
+      costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario),
+    })), reglasProductos);
+    if (validacion.errores.length) {
+      throw new HttpError(400, `La compra tiene discrepancias que deben corregirse: ${validacion.errores.map((d) => `[${d.codigo}] ${d.mensaje}`).join(' ')}`);
+    }
+    const notasCompra = notasDeValidacion(compra.notas, validacion);
 
     const productos = new Map<string, { qty: number; importe: number; costo: number; unidad: string | null; contenido: number | null }>();
     for (const l of inventory) {
@@ -185,7 +208,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     for (const [productId, line] of productos) {
       const costo = line.costo;
       const purchaseLine = await tx.purchase_lines.create({ data: { purchase_id: compra.id, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
-      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: purchaseLine.product_id, purchase_id: compra.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: compra.moneda, fuente: 'ticket_movil', ticket_ref: compra.ticket_ref, notas: compra.notas } });
+      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: purchaseLine.product_id, purchase_id: compra.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: compra.moneda, fuente: 'ticket_movil', ticket_ref: compra.ticket_ref, notas: notasCompra } });
     }
     const categoria = gastoTotal > 0 ? await tx.categorias_gasto.findFirst({ where: { negocio_id: negocioId, nombre: 'Otros', activo: true } }) : null;
     const facturado = origen.tipo === 'banco';
@@ -195,8 +218,8 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     if (gastoTotal > 0) {
       await tx.movimientos.create({ data: { negocio_id: negocioId, semana_id: semana.id, fecha: compra.fecha_recepcion, tipo: 'gasto', monto: gastoTotal, ubicacion_origen_id: origen.id, categoria_id: categoria?.id ?? null, facturado, descripcion: `Compra ticket ${compra.ticket_ref ?? compra.id}${gastos.length ? ' · gasto operativo' : ' · diferencia no itemizada'}`, usuario_id: usuarioId, compra_id: compra.id } });
     }
-    await tx.purchases.update({ where: { id: compra.id }, data: { estado: 'confirmada', confirmada_por: usuarioId, confirmada_at: new Date() } });
-    return { purchase_id: Number(compra.id), estado: 'confirmada', inventario: inventarioTotal, gasto: gastoTotal, movimientos: (inventarioTotal > 0 ? 1 : 0) + (gastoTotal > 0 ? 1 : 0) };
+    await tx.purchases.update({ where: { id: compra.id }, data: { estado: 'confirmada', notas: notasCompra, confirmada_por: usuarioId, confirmada_at: new Date() } });
+    return { purchase_id: Number(compra.id), estado: 'confirmada', inventario: inventarioTotal, gasto: gastoTotal, movimientos: (inventarioTotal > 0 ? 1 : 0) + (gastoTotal > 0 ? 1 : 0), discrepancias: validacion.advertencias };
   });
 }
 
