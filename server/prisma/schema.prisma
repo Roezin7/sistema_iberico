@@ -64,6 +64,8 @@ model usuarios {
   arqueos     arqueos[]
   checklist_item_resultados checklist_item_resultados[]
   conciliaciones_diarias conciliaciones_diarias[]
+  compras_capturadas purchases[] @relation("CompraCapturadaPor")
+  compras_confirmadas purchases[] @relation("CompraConfirmadaPor")
 
   @@index([negocio_id])
 }
@@ -195,6 +197,7 @@ model products {
   negocios        negocios          @relation(fields: [negocio_id], references: [id])
   categorias_inventario categorias_inventario? @relation(fields: [categoria_id], references: [id])
   purchase_lines  purchase_lines[]
+  purchase_capture_lines purchase_capture_lines[]
   inventory_lots  inventory_lots[]
   inventory_consumptions inventory_consumptions[]
   product_zone_units product_zone_units[]
@@ -242,12 +245,50 @@ model purchases {
   moneda         String           @default("MXN")
   fuente         String           @default("manual")
   notas          String?
+  estado         String           @default("confirmada")
+  foto_data      String?          @db.Text
+  foto_mime      String?
+  foto_hash      String?
+  ocr_json       String?          @db.Text
+  origen_pago_id BigInt?
+  capturada_por  BigInt?
+  confirmada_por BigInt?
+  confirmada_at  DateTime?        @db.Timestamptz(6)
   created_at     DateTime         @default(now()) @db.Timestamptz(6)
   purchase_lines purchase_lines[]
+  capture_lines  purchase_capture_lines[]
+  movimientos    movimientos[]
   inventory_lots inventory_lots[]
   negocios       negocios         @relation(fields: [negocio_id], references: [id])
+  origen_pago    ubicaciones_fondos? @relation(fields: [origen_pago_id], references: [id], onDelete: SetNull)
+  capturada_por_usuario usuarios? @relation("CompraCapturadaPor", fields: [capturada_por], references: [id], onDelete: SetNull)
+  confirmada_por_usuario usuarios? @relation("CompraConfirmadaPor", fields: [confirmada_por], references: [id], onDelete: SetNull)
 
   @@index([negocio_id])
+  @@index([negocio_id, estado, fecha_recepcion])
+  @@index([origen_pago_id])
+}
+
+/// Líneas capturadas desde un ticket. Se revisan antes de convertirse en
+/// líneas FIFO o gastos operativos.
+model purchase_capture_lines {
+  id                 BigInt    @id @default(autoincrement())
+  purchase_id        BigInt
+  product_id         BigInt?
+  tipo_linea         String    @default("pendiente")
+  descripcion_fuente String
+  cantidad_base      Decimal?  @db.Decimal(14, 4)
+  unidad_compra      String?
+  contenido_compra   Decimal?  @db.Decimal(14, 4)
+  costo_unitario     Decimal?  @db.Decimal(14, 6)
+  importe            Decimal   @db.Decimal(14, 4)
+  confianza          Decimal?  @db.Decimal(5, 4)
+  notas              String?
+  purchases          purchases @relation(fields: [purchase_id], references: [id], onDelete: Cascade)
+  products           products? @relation(fields: [product_id], references: [id], onDelete: SetNull)
+
+  @@index([purchase_id])
+  @@index([product_id])
 }
 
 enum EstadoLoteInventario {
@@ -417,6 +458,7 @@ model ubicaciones_fondos {
   arqueos          arqueos[]
   saldos_iniciales saldos_iniciales[]
   cierres_semana   cierres_semana[]
+  compras_pago     purchases[]
 
   @@index([negocio_id])
 }
@@ -581,6 +623,7 @@ model movimientos {
   facturado            Boolean             @default(false)
   descripcion          String?
   usuario_id           BigInt
+  compra_id            BigInt?
   creado_at            DateTime            @default(now()) @db.Timestamptz(6)
   negocios             negocios            @relation(fields: [negocio_id], references: [id])
   semanas              semanas             @relation(fields: [semana_id], references: [id])
@@ -589,9 +632,11 @@ model movimientos {
   categorias_gasto     categorias_gasto?   @relation(fields: [categoria_id], references: [id])
   socios               socios?             @relation(fields: [socio_id], references: [id])
   usuarios             usuarios            @relation(fields: [usuario_id], references: [id])
+  compra               purchases?          @relation(fields: [compra_id], references: [id], onDelete: SetNull)
 
   @@index([negocio_id])
   @@index([semana_id])
+  @@index([compra_id])
 }
 
 model arqueos {

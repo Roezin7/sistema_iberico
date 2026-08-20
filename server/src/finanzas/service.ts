@@ -348,14 +348,16 @@ export async function resumenDiario(negocioId: bigint, semanaId: bigint) {
     const propina_tarjeta = suma('propina_tarjeta');
     // Solo lo capturado como "del día" es editable aquí (lo itemizado vive en Otros mov.).
     const gasto_efectivo = suma('gasto', MARCA_GASTO);
+    const gasto_itemizado = redondear(delDia.filter((m) => m.tipo === 'gasto' && m.compra_id != null).reduce((a, m) => a + num0(m.monto), 0));
+    const compra_inventario = suma('compra_inventario');
     const sueldos = suma('sueldo', MARCA_SUELDO);
     const dow = new Date(fecha + 'T00:00:00Z').getUTCDay();
     return {
       fecha,
       dia: DIA_SEMANA[dow]!,
-      venta_efectivo, venta_tarjeta, propina_tarjeta, gasto_efectivo, sueldos,
+      venta_efectivo, venta_tarjeta, propina_tarjeta, gasto_efectivo, gasto_itemizado, compra_inventario, sueldos,
       total_ventas: redondear(venta_efectivo + venta_tarjeta + propina_tarjeta),
-      total_egresos: redondear(gasto_efectivo + sueldos),
+      total_egresos: redondear(gasto_efectivo + gasto_itemizado + compra_inventario + sueldos),
     };
   });
   return { semana_id: Number(semanaId), estado: semana.estado, dias: filas };

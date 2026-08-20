@@ -17,11 +17,11 @@ const ITEMS: Item[] = [
   { ruta: '/', label: 'Inicio', icono: 'home' },
   { ruta: '/inventario', label: 'Inventario', icono: 'package' },
   { ruta: '/tareas', label: 'Tareas', icono: 'checks' },
+  { ruta: '/compras', label: 'Compras', icono: 'package' },
   { ruta: '/finanzas', label: 'Cierre y caja', icono: 'wallet', soloAdmin: true },
 ];
 
 const ADMIN_ITEMS: Item[] = [
-  { ruta: '/compras', label: 'Compras FIFO', icono: 'package', soloAdmin: true },
   { ruta: '/patrimonio', label: 'Patrimonio', icono: 'trending', soloAdmin: true },
   { ruta: '/configuracion', label: 'Configuración', icono: 'settings', soloAdmin: true },
   { ruta: '/marketing', label: 'Laboratorio', icono: 'sparkles', soloAdmin: true },

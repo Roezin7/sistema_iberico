@@ -47,7 +47,7 @@ export interface Movimiento {
 export interface DiaFila {
   fecha: string; dia: string;
   venta_efectivo: number; venta_tarjeta: number; propina_tarjeta: number;
-  gasto_efectivo: number; sueldos: number;
+  gasto_efectivo: number; gasto_itemizado: number; compra_inventario: number; sueldos: number;
   total_ventas: number; total_egresos: number;
 }
 export interface ResumenDiario { estado: string; dias: DiaFila[] }

@@ -48,7 +48,7 @@ function AppBody() {
         <Route path="/patrimonio" element={<SoloAdmin rol="admin"><Patrimonio /></SoloAdmin>} />
         <Route path="/configuracion" element={<SoloAdmin rol="admin"><Configuracion /></SoloAdmin>} />
         <Route path="/marketing" element={<SoloAdmin rol="admin"><Marketing /></SoloAdmin>} />
-        <Route path="/compras" element={<SoloAdmin rol="admin"><Compras /></SoloAdmin>} />
+        <Route path="/compras" element={<Compras />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       {!['/finanzas', '/inventario', '/tareas'].includes(location.pathname) && <SilviaBubble />}

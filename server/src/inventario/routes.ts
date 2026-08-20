@@ -3,9 +3,10 @@ import { z } from 'zod';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { inventarioActual, listaCompras, crearConteo } from './service.js';
-import { borradorConteo, draftDisponible } from './draft.js';
+import { borradorCompraTicket, borradorConteo, draftDisponible } from './draft.js';
 import { listarLotes, registrarCompra } from './compras.js';
 import { consumirVentasEpos } from './consumo-epos.js';
+import { actualizarBorradorLineas, confirmarBorradorCompra, crearBorradorCompra, listarBorradoresCompra, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra } from './compras-rapidas.js';
 
 export const inventarioRouter = Router();
 
@@ -50,6 +51,15 @@ inventarioRouter.post(
   }),
 );
 
+inventarioRouter.get('/compras/referencias', asyncHandler(async (req, res) => {
+  res.json(await referenciasCompra(req.auth!.negocioId));
+}));
+
+inventarioRouter.post('/compras/rapidas/ocr', asyncHandler(async (req, res) => {
+  const body = z.object({ imagen_base64: z.string().min(100), imagen_tipo: z.string().regex(/^image\//) }).parse(req.body);
+  res.json(await borradorCompraTicket(req.auth!.negocioId, body));
+}));
+
 /** GET /inventario/lotes — libro FIFO para revisión; no modifica existencias. */
 inventarioRouter.get(
   '/lotes',
@@ -90,6 +100,73 @@ inventarioRouter.post(
     res.status(201).json(resultado);
   }),
 );
+
+/** Captura rápida desde celular. Empleados pueden dejarla en revisión; no crea FIFO todavía. */
+inventarioRouter.post('/compras/rapidas', asyncHandler(async (req, res) => {
+  const body = z.object({
+    fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    proveedor: z.string().trim().max(160).optional().nullable(),
+    ticket_ref: z.string().trim().max(120).optional().nullable(),
+    total: z.coerce.number().nonnegative(),
+    moneda: z.string().trim().min(1).max(8).default('MXN'),
+    notas: z.string().trim().max(1000).optional().nullable(),
+    origen_pago_id: z.coerce.number().int().positive().optional().nullable(),
+    foto_data: z.string().optional().nullable(),
+    foto_mime: z.string().optional().nullable(),
+    lineas: z.array(z.object({
+      product_id: z.coerce.number().int().positive().optional().nullable(),
+      tipo_linea: z.enum(['inventario', 'gasto', 'pendiente']).default('pendiente'),
+      descripcion_fuente: z.string().trim().min(1).max(240),
+      cantidad_base: z.coerce.number().positive().optional().nullable(),
+      unidad_compra: z.string().trim().max(30).optional().nullable(),
+      contenido_compra: z.coerce.number().positive().optional().nullable(),
+      costo_unitario: z.coerce.number().nonnegative().optional().nullable(),
+      importe: z.coerce.number().nonnegative(),
+      confianza: z.coerce.number().min(0).max(1).optional().nullable(),
+      notas: z.string().trim().max(500).optional().nullable(),
+    })).min(1),
+  }).parse(req.body);
+  const result = await crearBorradorCompra(req.auth!.negocioId, req.auth!.usuarioId, {
+    ...body,
+    origen_pago_id: body.origen_pago_id == null ? null : BigInt(body.origen_pago_id),
+    lineas: body.lineas.map((l) => ({ ...l, product_id: l.product_id == null ? null : BigInt(l.product_id) })),
+  });
+  res.status(201).json(result);
+}));
+
+inventarioRouter.get('/compras/pendientes', asyncHandler(async (req, res) => {
+  res.json(await listarBorradoresCompra(req.auth!.negocioId));
+}));
+
+inventarioRouter.get('/compras/:id/foto', asyncHandler(async (req, res) => {
+  const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  const foto = await obtenerFotoCompra(req.auth!.negocioId, id);
+  res.json(foto);
+}));
+
+inventarioRouter.post('/compras/:id/confirmar', soloAdmin, asyncHandler(async (req, res) => {
+  const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  res.json(await confirmarBorradorCompra(req.auth!.negocioId, req.auth!.usuarioId, id));
+}));
+
+inventarioRouter.put('/compras/:id/lineas', soloAdmin, asyncHandler(async (req, res) => {
+  const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  const body = z.object({ lineas: z.array(z.object({
+    product_id: z.coerce.number().int().positive().optional().nullable(),
+    tipo_linea: z.enum(['inventario', 'gasto', 'pendiente']),
+    descripcion_fuente: z.string().trim().min(1).max(240),
+    cantidad_base: z.coerce.number().positive().optional().nullable(), unidad_compra: z.string().trim().max(30).optional().nullable(),
+    contenido_compra: z.coerce.number().positive().optional().nullable(), costo_unitario: z.coerce.number().nonnegative().optional().nullable(),
+    importe: z.coerce.number().nonnegative(), confianza: z.coerce.number().min(0).max(1).optional().nullable(), notas: z.string().trim().max(500).optional().nullable(),
+  })).min(1) }).parse(req.body);
+  res.json(await actualizarBorradorLineas(req.auth!.negocioId, id, body.lineas.map((l) => ({ ...l, product_id: l.product_id == null ? null : BigInt(l.product_id) }))));
+}));
+
+inventarioRouter.post('/compras/:id/rechazar', soloAdmin, asyncHandler(async (req, res) => {
+  const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  const body = z.object({ nota: z.string().trim().max(1000).optional() }).parse(req.body);
+  res.json(await rechazarBorradorCompra(req.auth!.negocioId, id, body.nota));
+}));
 
 /** POST /inventario/consumo-epos — vista previa o aplicación del consumo FIFO. */
 inventarioRouter.post(

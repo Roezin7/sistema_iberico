@@ -1904,3 +1904,31 @@ select:disabled {
   align-items: baseline;
   gap: 0.45rem;
 }
+
+/* Compras rápidas: el mismo flujo funciona en teléfono y escritorio. */
+.quick-purchase { border-color: rgba(139, 199, 99, 0.45); }
+.quick-purchase__actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: .8rem; }
+.file-button { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
+.file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.ticket-preview { display: block; max-width: min(100%, 360px); max-height: 420px; object-fit: contain; border-radius: var(--r-input); border: 1px solid var(--border); margin: .65rem 0; }
+.quick-lines { display: grid; gap: .7rem; margin-top: .8rem; }
+.quick-line { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(150px, .9fr) minmax(0, 1.2fr) minmax(180px, 1fr) auto; gap: .5rem; align-items: center; padding: .65rem; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); }
+.quick-line__head { grid-column: 1 / -1; display: flex; justify-content: space-between; }
+.quick-line__numbers { display: flex; gap: .4rem; }
+.quick-line__numbers input { min-width: 0; width: 50%; }
+.quick-pending { display: grid; gap: 1rem; }
+.quick-pending__card { border-color: rgba(220, 167, 69, .45); }
+.inline-link { display: inline-block; margin-left: .8rem; color: var(--accent); }
+.dia-actions { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+.info-box--compact { padding: .6rem .8rem; margin: .5rem 0; }
+
+@media (max-width: 700px) {
+  .quick-purchase { padding: .85rem; }
+  .quick-purchase__actions > * { flex: 1 1 45%; justify-content: center; }
+  .quick-line { grid-template-columns: 1fr; }
+  .quick-line__numbers { width: 100%; }
+  .quick-line__numbers input { width: 50%; }
+  .quick-line .btn-ghost { justify-self: start; }
+  .sticky-action { position: sticky; bottom: .4rem; z-index: 3; padding: .6rem; margin-top: .7rem; background: color-mix(in srgb, var(--surface) 92%, transparent); border-radius: var(--r-input); }
+  .sticky-action button { min-height: 44px; }
+}

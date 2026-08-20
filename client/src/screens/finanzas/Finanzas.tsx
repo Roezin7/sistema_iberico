@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   finanzas, epos, mxn, TIPOS, type Referencias, type Semana, type Resumen, type FilaCuadre,
   type Movimiento, type TipoMov, type DiaFila, type ConciliacionDiaria,
@@ -341,15 +342,24 @@ function DiaCard({ semana, dia, abierta, conciliacion, onSaved }: { semana: Sema
           </>}
         </div>
       )}
-      <div className="dia-section muted">Egresos (efectivo)</div>
+      <div className="dia-section muted">Egresos del día</div>
+      {(dia.gasto_itemizado > 0 || dia.compra_inventario > 0) && (
+        <div className="info-box info-box--compact">
+          <strong>Compras capturadas:</strong>{dia.compra_inventario ? ` FIFO ${mxn(dia.compra_inventario)}` : ''}{dia.compra_inventario && dia.gasto_itemizado ? ' ·' : ''}{dia.gasto_itemizado ? ` gastos ${mxn(dia.gasto_itemizado)}` : ''}
+          <Link to={`/compras?fecha=${dia.fecha}`} className="inline-link">Ver compras del día</Link>
+        </div>
+      )}
       <div className="dia-inputs dia-inputs--2">
-        {campo('🧾', 'Gastos', gasto, setGasto)}
+        {campo('🧾', 'Otros gastos no registrados', gasto, setGasto)}
         {campo('👷', 'Sueldos', sueldos, setSueldos)}
       </div>
       {abierta && (
-        <button className="btn-primary dia-save" onClick={guardar} disabled={guardando}>
-          {guardando ? 'Guardando…' : ok ? '✓ Guardado' : 'Guardar día'}
-        </button>
+        <div className="dia-actions">
+          <Link className="btn-secondary" to={`/compras?fecha=${dia.fecha}`}>Agregar compra</Link>
+          <button className="btn-primary dia-save" onClick={guardar} disabled={guardando}>
+            {guardando ? 'Guardando…' : ok ? '✓ Guardado' : 'Guardar día'}
+          </button>
+        </div>
       )}
     </div>
   );
