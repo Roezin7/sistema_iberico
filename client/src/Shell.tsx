@@ -21,6 +21,7 @@ const ITEMS: Item[] = [
 ];
 
 const ADMIN_ITEMS: Item[] = [
+  { ruta: '/compras', label: 'Compras FIFO', icono: 'package', soloAdmin: true },
   { ruta: '/patrimonio', label: 'Patrimonio', icono: 'trending', soloAdmin: true },
   { ruta: '/configuracion', label: 'Configuración', icono: 'settings', soloAdmin: true },
   { ruta: '/marketing', label: 'Laboratorio', icono: 'sparkles', soloAdmin: true },
