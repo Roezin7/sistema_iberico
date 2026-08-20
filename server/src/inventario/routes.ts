@@ -1,9 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/error.js';
-import { requireAuth } from '../auth/middleware.js';
+import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { inventarioActual, listaCompras, crearConteo } from './service.js';
 import { borradorConteo, draftDisponible } from './draft.js';
+import { listarLotes, registrarCompra } from './compras.js';
 
 export const inventarioRouter = Router();
 
@@ -45,6 +46,47 @@ inventarioRouter.post(
     const { lineas } = conteoSchema.parse(req.body);
     const r = await crearConteo(req.auth!.negocioId, lineas);
     res.status(201).json(r);
+  }),
+);
+
+/** GET /inventario/lotes — libro FIFO para revisión; no modifica existencias. */
+inventarioRouter.get(
+  '/lotes',
+  soloAdmin,
+  asyncHandler(async (req, res) => {
+    const productId = req.query.product_id ? BigInt(z.coerce.number().int().positive().parse(req.query.product_id)) : undefined;
+    res.json(await listarLotes(req.auth!.negocioId, productId));
+  }),
+);
+
+/** POST /inventario/compras — registra compra revisada y crea lotes FIFO. */
+inventarioRouter.post(
+  '/compras',
+  soloAdmin,
+  asyncHandler(async (req, res) => {
+    const body = z.object({
+      confirmada: z.literal(true),
+      fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      proveedor: z.string().trim().min(1).optional().nullable(),
+      ticket_ref: z.string().trim().min(1).optional().nullable(),
+      total: z.coerce.number().nonnegative().optional().nullable(),
+      moneda: z.string().trim().min(1).max(8).default('MXN'),
+      fuente: z.string().trim().min(1).max(40).default('manual'),
+      notas: z.string().trim().max(1000).optional().nullable(),
+      lineas: z.array(z.object({
+        product_id: z.coerce.number().int().positive(),
+        cantidad_base: z.coerce.number().positive(),
+        unidad_compra: z.string().trim().min(1).max(30).optional().nullable(),
+        contenido_compra: z.coerce.number().positive().optional().nullable(),
+        costo_unitario_base: z.coerce.number().nonnegative(),
+        importe: z.coerce.number().nonnegative().optional().nullable(),
+      })).min(1),
+    }).parse(req.body);
+    const resultado = await registrarCompra(req.auth!.negocioId, {
+      ...body,
+      lineas: body.lineas.map((linea) => ({ ...linea, product_id: BigInt(linea.product_id) })),
+    });
+    res.status(201).json(resultado);
   }),
 );
 

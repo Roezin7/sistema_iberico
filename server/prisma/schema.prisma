@@ -221,7 +221,11 @@ model categorias_inventario {
 model purchase_lines {
   purchase_id BigInt
   product_id  BigInt
-  qty         Decimal   @default(0) @db.Decimal(12, 2)
+  qty         Decimal   @default(0) @db.Decimal(14, 4)
+  unidad_compra String?
+  contenido_compra Decimal? @db.Decimal(14, 4)
+  costo_unitario Decimal @db.Decimal(14, 6)
+  importe       Decimal? @db.Decimal(14, 4)
   products    products  @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   purchases   purchases @relation(fields: [purchase_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
@@ -231,6 +235,13 @@ model purchase_lines {
 model purchases {
   id             BigInt           @id @default(autoincrement())
   negocio_id     BigInt
+  fecha_recepcion DateTime        @db.Date
+  proveedor      String?
+  ticket_ref     String?
+  total          Decimal?         @db.Decimal(14, 4)
+  moneda         String           @default("MXN")
+  fuente         String           @default("manual")
+  notas          String?
   created_at     DateTime         @default(now()) @db.Timestamptz(6)
   purchase_lines purchase_lines[]
   inventory_lots inventory_lots[]
