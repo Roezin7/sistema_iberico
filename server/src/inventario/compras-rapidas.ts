@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { resumirCompra } from './compras-rapidas-logic.js';
 
 export type CapturaCompraLinea = {
   product_id?: bigint | null;
@@ -146,8 +147,8 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     const compra = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId, estado: 'confirmando' }, include: { capture_lines: true } });
     if (!compra) throw new HttpError(409, 'No se pudo reservar la compra para confirmación');
     if (!compra.origen_pago_id) throw new HttpError(400, 'Selecciona de dónde salió el pago antes de confirmar');
-    if (compra.capture_lines.some((l) => l.tipo_linea === 'pendiente' || (l.tipo_linea === 'inventario' && (!l.product_id || !l.cantidad_base || Number(l.cantidad_base) <= 0 || l.costo_unitario == null)))) {
-      throw new HttpError(400, 'Todas las líneas deben clasificarse y las de inventario deben tener producto, cantidad y costo');
+    if (compra.capture_lines.some((l) => l.tipo_linea === 'pendiente' || (l.tipo_linea === 'inventario' && (!l.product_id || !l.cantidad_base || Number(l.cantidad_base) <= 0)))) {
+      throw new HttpError(400, 'Todas las líneas deben clasificarse y las de inventario deben tener producto y cantidad');
     }
     const origen = await tx.ubicaciones_fondos.findFirst({ where: { id: compra.origen_pago_id, negocio_id: negocioId, activo: true } });
     if (!origen) throw new HttpError(400, 'La ubicación de pago no es válida');
@@ -156,12 +157,22 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana del ticket está cerrada');
 
     const total = Number(compra.total ?? 0);
-    const sumaLineas = compra.capture_lines.reduce((a, l) => a + Number(l.importe), 0);
-    if (sumaLineas > total + 0.01) throw new HttpError(400, 'Las líneas superan el total del ticket');
     const inventory = compra.capture_lines.filter((l) => l.tipo_linea === 'inventario');
     const gastos = compra.capture_lines.filter((l) => l.tipo_linea === 'gasto');
-    const inventarioTotal = inventory.reduce((a, l) => a + Number(l.importe), 0);
-    const gastoTotal = Math.max(0, total - inventarioTotal);
+    const resumen = resumirCompra(total, compra.capture_lines.map((l) => ({ tipo_linea: l.tipo_linea as 'inventario' | 'gasto' | 'pendiente', importe: Number(l.importe) })));
+    if (!resumen.cuadra) throw new HttpError(400, 'Las líneas deben cuadrar exactamente con el total del ticket; agrega la diferencia como gasto o inventario');
+    const inventarioTotal = resumen.inventario;
+    const gastoTotal = resumen.gasto;
+
+    const productIds = [...new Set(inventory.map((l) => l.product_id!.toString()))].map(BigInt);
+    const productosValidos = await tx.products.findMany({
+      where: { negocio_id: negocioId, id: { in: productIds }, active: true },
+      select: { id: true },
+    });
+    const validos = new Set(productosValidos.map((p) => p.id.toString()));
+    const faltantes = productIds.filter((id) => !validos.has(id.toString()));
+    if (faltantes.length) throw new HttpError(400, `Producto de inventario no válido para este negocio: ${faltantes.map(String).join(', ')}`);
+
     const productos = new Map<string, { qty: number; importe: number; costo: number; unidad: string | null; contenido: number | null }>();
     for (const l of inventory) {
       const key = l.product_id!.toString();
