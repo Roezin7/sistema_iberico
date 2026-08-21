@@ -1933,6 +1933,28 @@ select:disabled {
 .inline-link { display: inline-block; margin-left: .8rem; color: var(--accent); }
 .dia-actions { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .info-box--compact { padding: .6rem .8rem; margin: .5rem 0; }
+.tickets-summary { display: flex; justify-content: space-between; gap: 1rem; align-items: center; padding: .7rem .8rem; margin: .8rem 0; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); }
+.ticket-list { display: grid; gap: .9rem; }
+.ticket-day { display: grid; gap: .45rem; }
+.ticket-day__head { display: flex; justify-content: space-between; gap: 1rem; padding: .25rem 0; color: var(--ink-2); text-transform: capitalize; }
+.ticket-day__head span { color: var(--ink-3); font-size: .85rem; }
+.ticket-card { border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); overflow: hidden; }
+.ticket-card summary, .fifo-panel summary { display: flex; justify-content: space-between; align-items: center; gap: 1rem; cursor: pointer; list-style: none; padding: .8rem .9rem; }
+.ticket-card summary::-webkit-details-marker, .fifo-panel summary::-webkit-details-marker { display: none; }
+.ticket-card summary > span, .fifo-panel summary > span { display: grid; gap: .2rem; }
+.ticket-card summary > span:last-child { text-align: right; }
+.ticket-card summary small, .fifo-panel summary small { color: var(--ink-3); font-size: .78rem; }
+.ticket-lines { border-top: 1px solid var(--border); padding: .2rem .9rem .55rem; }
+.ticket-line { display: flex; justify-content: space-between; gap: 1rem; padding: .5rem 0; border-bottom: 1px solid var(--border); }
+.ticket-line:last-child { border-bottom: 0; }
+.ticket-line span { display: grid; gap: .1rem; }
+.ticket-line small { color: var(--ink-3); font-size: .7rem; text-transform: uppercase; }
+.tickets-more { margin-top: 1rem; }
+.fifo-panel { padding: 0; overflow: hidden; }
+.fifo-panel summary { min-height: 4.1rem; }
+.fifo-panel__count { color: var(--ink-2); font-size: .85rem; white-space: nowrap; }
+.fifo-panel__body { border-top: 1px solid var(--border); padding: .75rem; }
+.fifo-panel__footer { display: flex; justify-content: space-between; align-items: center; gap: .75rem; flex-wrap: wrap; padding-top: .75rem; }
 
 @media (max-width: 700px) {
   .page-head { align-items: flex-start; flex-direction: column; gap: .35rem; }
@@ -1948,6 +1970,10 @@ select:disabled {
   .quick-day__row { align-items: flex-start; }
   .quick-day__row > strong { flex: 0 0 auto; white-space: nowrap; }
   .quick-day__edit select { flex: 1 1 100%; min-width: 0; }
+  .tickets-summary, .ticket-day__head { align-items: flex-start; flex-direction: column; gap: .2rem; }
+  .ticket-card summary { align-items: flex-start; }
+  .ticket-card summary > span:last-child { text-align: left; }
+  .fifo-panel summary { align-items: flex-start; }
   .sticky-action { position: sticky; bottom: .4rem; z-index: 3; padding: .6rem; margin-top: .7rem; background: color-mix(in srgb, var(--surface) 92%, transparent); border-radius: var(--r-input); }
   .sticky-action button { min-height: 44px; }
 }

@@ -12,7 +12,7 @@ interface RefCompra { productos: Producto[]; ubicaciones: { id: number; nombre: 
 interface LineaRapida { product_id: number | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_base: string; unidad_compra: string; contenido_compra: string; costo_unitario: string; importe: string; confianza: number | null }
 interface Pendiente { id: number; fecha_recepcion: string; proveedor: string | null; ticket_ref: string | null; total: number; estado: string; foto: boolean; origen_pago_id: number | null; notas?: string | null; lineas: Array<{ id: number; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null; costo_unitario: number | null; importe: number; confianza: number | null; notas: string | null }> }
 interface ValidacionCompra { valida: boolean; errores: Array<{ codigo: string; mensaje: string; linea?: number; producto?: string }>; advertencias: Array<{ codigo: string; mensaje: string; linea?: number; producto?: string }> }
-interface CompraDia { id: number; fecha: string; proveedor: string | null; ticket_ref: string | null; total: number; estado: string; origen_pago_id: number | null; lineas: { tipo: string; producto: string; importe: number }[] }
+interface CompraDia { id: number; fecha: string; proveedor: string | null; ticket_ref: string | null; total: number; estado: string; origen_pago_id: number | null; origen_pago?: string | null; lineas: { tipo: string; producto: string; importe: number }[] }
 
 const mxn = (n: number) => n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 const hoy = new Date().toISOString().slice(0, 10);
@@ -27,7 +27,7 @@ export default function Compras() {
   const { usuario } = useAuth();
   const esAdmin = usuario?.rol === 'admin';
   const fechaInicial = new URLSearchParams(window.location.search).get('fecha') || hoy;
-  const [tab, setTab] = useState<'lotes' | 'epos' | 'pendientes'>('lotes');
+  const [tab, setTab] = useState<'tickets' | 'lotes' | 'epos' | 'pendientes'>('tickets');
   const [productos, setProductos] = useState<Producto[]>([]);
   const [lotes, setLotes] = useState<Lote[]>([]);
   const [mensaje, setMensaje] = useState('');
@@ -36,16 +36,26 @@ export default function Compras() {
   const [preview, setPreview] = useState<ConsumoResult | null>(null);
   const [consultando, setConsultando] = useState(false);
   const [pendientes, setPendientes] = useState<Pendiente[]>([]);
+  const [compras, setCompras] = useState<CompraDia[]>([]);
+  const [cargandoCompras, setCargandoCompras] = useState(true);
 
   const productosOrdenados = useMemo(() => [...productos].sort((a, b) => a.nombre.localeCompare(b.nombre)), [productos]);
   useEffect(() => { if (esAdmin) void cargar(); }, [esAdmin]);
 
   async function cargar() {
+    setCargandoCompras(true);
     try {
-      const [p, l, pend] = await Promise.all([api<Producto[]>('/catalogo/products'), api<Lote[]>('/inventario/lotes'), api<Pendiente[]>('/inventario/compras/pendientes')]);
-      setProductos(p); setLotes(l);
-      setPendientes(pend);
+      const [p, l, pend, tickets] = await Promise.all([api<Producto[]>('/catalogo/products'), api<Lote[]>('/inventario/lotes'), api<Pendiente[]>('/inventario/compras/pendientes'), api<CompraDia[]>('/inventario/compras')]);
+      setProductos(p); setLotes(l); setPendientes(pend); setCompras(tickets);
     } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo cargar el inventario.'); }
+    finally { setCargandoCompras(false); }
+  }
+
+  async function cargarTickets() {
+    setCargandoCompras(true);
+    try { setCompras(await api<CompraDia[]>('/inventario/compras')); }
+    catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudieron cargar las compras.'); }
+    finally { setCargandoCompras(false); }
   }
 
   async function consultarEpos(confirmar = false) {
@@ -64,11 +74,13 @@ export default function Compras() {
     <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Compras</h1></div><p className="muted">Captura tickets, confirma líneas y revisa los lotes FIFO.</p></header>
     <CapturaRapida fechaInicial={fechaInicial} onSaved={() => { if (esAdmin) void cargar(); }} />
     {esAdmin && <nav className="tabs">
+      <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('tickets'); void cargarTickets(); }}>Tickets</button>
       <button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('lotes'); void cargar(); }}>Lotes FIFO</button>
       <button className={tab === 'epos' ? 'tab tab--on' : 'tab'} onClick={() => setTab('epos')}>Ventas Epos</button>
       <button className={tab === 'pendientes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('pendientes'); void cargar(); }}>Revisión {pendientes.length ? `(${pendientes.length})` : ''}</button>
     </nav>}
     {mensaje && <div className="info-box" role="status">{mensaje}</div>}
+    {esAdmin && tab === 'tickets' && <Tickets compras={compras} cargando={cargandoCompras} />}
     {esAdmin && tab === 'lotes' && <Lotes lotes={lotes} />}
     {esAdmin && tab === 'epos' && <EposPanel from={from} setFrom={setFrom} to={to} setTo={setTo} preview={preview} consultando={consultando} consultar={consultarEpos} />}
     {esAdmin && tab === 'pendientes' && <Pendientes filas={pendientes} productos={productosOrdenados} onChange={() => void cargar()} />}
@@ -149,7 +161,7 @@ function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string; onSave
     <div className="quick-purchase__section-label">Datos del ticket</div><div className="form-grid form-grid--three"><label>Fecha<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></label><label>Proveedor<input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej. Costco" /></label><label>Ticket / folio<input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="Opcional" /></label><label>Total<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value)} disabled={cargandoRefs}><option value="">{cargandoRefs ? 'Cargando…' : 'Seleccionar…'}</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
     <div className="quick-lines">{lineas.map((l, i) => <div className="quick-line" key={i}><div className="quick-line__head"><strong>Línea {i + 1}</strong>{l.confianza != null && <span className="muted">sugerencia {Math.round(l.confianza * 100)}%</span>}</div><input placeholder="Descripción del ticket" value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} /><select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value as LineaRapida['tipo_linea'])}><option value="pendiente">Pendiente de clasificar</option><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option></select>{l.tipo_linea === 'inventario' && <select value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Producto…</option>{refs?.productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {p.unidad_base ?? 'sin unidad'}</option>)}</select>}<div className="quick-line__numbers"><input type="number" min="0" step="any" placeholder="Cantidad base" value={l.cantidad_base} onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /><input type="number" min="0" step="0.01" placeholder="Importe" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></div>{lineas.length > 1 && <button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))}>Quitar</button>}</div>)}</div>
     <div className="sticky-action"><button className="btn-secondary" onClick={() => setLineas((v) => [...v, { product_id: null, tipo_linea: 'pendiente', descripcion_fuente: '', cantidad_base: '', unidad_compra: '', contenido_compra: '', costo_unitario: '', importe: '', confianza: null }])}>Agregar línea</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Enviando…' : 'Enviar a revisión'}</button></div>
-    <div className="quick-day"><div className="section-heading"><div><h3>Registradas hoy</h3><p className="muted">Las confirmadas también aparecen en Cierre.</p></div></div>{cargandoDia ? <Cargando etiqueta="Cargando compras del día…" /> : comprasDia.length === 0 ? <p className="muted">No hay compras registradas para esta fecha.</p> : comprasDia.map((c) => <div className="quick-day__row" key={c.id}><span><strong>{c.proveedor || 'Sin proveedor'}</strong><small className="muted">{c.ticket_ref || 'sin folio'} · {c.estado}</small>{pagoEditando === c.id ? <span className="quick-day__edit"><select value={pagoNuevo} onChange={(e) => setPagoNuevo(e.target.value)}><option value="">Pago…</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select><button className="btn-ghost" disabled={guardandoPago} onClick={async () => { if (!pagoNuevo) return; setGuardandoPago(true); try { await api(`/inventario/compras/${c.id}/pago`, { method: 'PATCH', body: { origen_pago_id: Number(pagoNuevo) } }); setPagoEditando(null); await cargarDia(); } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo cambiar el origen de pago.'); } finally { setGuardandoPago(false); } }}>Guardar</button><button className="btn-ghost" onClick={() => setPagoEditando(null)}>Cancelar</button></span> : <span className="muted">Pago: {refs?.ubicaciones.find((u) => u.id === c.origen_pago_id)?.nombre ?? '—'} {c.estado === 'confirmada' && <button className="link-btn" onClick={() => { setPagoEditando(c.id); setPagoNuevo(String(c.origen_pago_id ?? '')); }}>Cambiar</button>}</span>}</span><strong>{mxn(c.total)}</strong></div>)}</div>
+    <div className="quick-day"><div className="section-heading"><div><h3>Registradas hoy</h3><p className="muted">Las confirmadas también aparecen en Cierre.</p></div></div>{cargandoDia ? <Cargando etiqueta="Cargando compras del día…" /> : comprasDia.length === 0 ? <p className="muted">No hay compras registradas para esta fecha.</p> : comprasDia.map((c) => <div className="quick-day__row" key={c.id}><span><strong>{c.proveedor || 'Sin proveedor'}</strong><small className="muted">{c.ticket_ref || 'sin folio'} · {c.estado}</small>{pagoEditando === c.id ? <span className="quick-day__edit"><select value={pagoNuevo} onChange={(e) => setPagoNuevo(e.target.value)}><option value="">Pago…</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select><button className="btn-ghost" disabled={guardandoPago} onClick={async () => { if (!pagoNuevo) return; setGuardandoPago(true); try { await api(`/inventario/compras/${c.id}/pago`, { method: 'PATCH', body: { origen_pago_id: Number(pagoNuevo) } }); setPagoEditando(null); await cargarDia(); } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo cambiar el origen de pago.'); } finally { setGuardandoPago(false); } }}>Guardar</button><button className="btn-ghost" onClick={() => setPagoEditando(null)}>Cancelar</button></span> : <span className="muted">Pago: {c.origen_pago ?? refs?.ubicaciones.find((u) => u.id === c.origen_pago_id)?.nombre ?? '—'} {c.estado === 'confirmada' && <button className="link-btn" onClick={() => { setPagoEditando(c.id); setPagoNuevo(String(c.origen_pago_id ?? '')); }}>Cambiar</button>}</span>}</span><strong>{mxn(c.total)}</strong></div>)}</div>
   </section>;
 }
 
@@ -174,9 +186,40 @@ function PendienteCard({ fila, productos, onChange }: { fila: Pendiente; product
   return <article className="card quick-pending__card"><div className="section-heading"><div><h2>{fila.proveedor || 'Compra sin proveedor'}</h2><p className="muted">{fila.fecha_recepcion} · {fila.ticket_ref || 'sin folio'} · {mxn(fila.total)}</p></div>{fila.foto && <button className="btn-secondary" onClick={() => void verFoto()}>Ver ticket</button>}</div>{fila.notas && <div className="info-box">{fila.notas}</div>}{foto && <img className="ticket-preview" src={foto} alt="Ticket original" />}<div className="quick-lines">{lineas.map((l, i) => <div className="quick-line" key={l.id}><strong>{l.descripcion_fuente}</strong><select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value)}><option value="pendiente">Pendiente</option><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option></select>{l.tipo_linea === 'inventario' && <select value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Producto…</option>{productos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select>}<div className="quick-line__numbers"><input type="number" min="0" step="any" value={l.cantidad_base ?? ''} placeholder="Cantidad base" onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /><input type="number" min="0" step="0.01" value={l.importe} placeholder="Importe" onChange={(e) => editar(i, 'importe', e.target.value)} /></div></div>)}</div>{validacion && <div className="info-box">{validacion.errores.length > 0 && <div><strong>Errores</strong>{validacion.errores.map((d) => <div key={`${d.codigo}-${d.linea ?? ''}`}>[{d.codigo}] {d.mensaje}</div>)}</div>}{validacion.advertencias.length > 0 && <div><strong>Advertencias</strong>{validacion.advertencias.map((d) => <div key={`${d.codigo}-${d.linea ?? ''}`}>[{d.codigo}] {d.mensaje}</div>)}</div>}</div>}{mensaje && <div className="info-box">{mensaje}</div>}<div className="sticky-action"><button className="btn-secondary" disabled={validando} onClick={() => void validar()}>{validando ? 'Validando…' : 'Validar discrepancias'}</button><button className="btn-secondary" onClick={() => void rechazar()}>Rechazar</button><button className="btn-primary" onClick={() => void confirmar()}>Guardar y confirmar</button></div></article>;
 }
 
+function fechaCompra(fecha: string) {
+  return new Date(`${fecha}T12:00:00`).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function Tickets({ compras, cargando }: { compras: CompraDia[]; cargando: boolean }) {
+  const [limite, setLimite] = useState(20);
+  const visibles = compras.slice(0, limite);
+  const totalVisible = visibles.reduce((s, c) => s + c.total, 0);
+  const porDia = new Map<string, CompraDia[]>();
+  visibles.forEach((compra) => porDia.set(compra.fecha, [...(porDia.get(compra.fecha) ?? []), compra]));
+  if (cargando) return <section className="card"><Cargando etiqueta="Cargando tickets…" /></section>;
+  if (!compras.length) return <div className="empty-state"><strong>No hay tickets capturados</strong><p>Las compras ingresadas aparecerán aquí, agrupadas por fecha y proveedor.</p></div>;
+  return <section className="card tickets-panel">
+    <div className="section-heading"><div><h2>Compras por ticket</h2><p className="muted">Registro de compras capturadas, ordenado del más reciente al más antiguo. Abre un ticket para ver sus líneas.</p></div></div>
+    <div className="tickets-summary"><strong>{compras.length} tickets registrados</strong><span>{mxn(totalVisible)} en la vista</span></div>
+    <div className="ticket-list">{Array.from(porDia.entries()).map(([fecha, filas]) => <section className="ticket-day" key={fecha}>
+      <div className="ticket-day__head"><strong>{fechaCompra(fecha)}</strong><span>{filas.length} {filas.length === 1 ? 'ticket' : 'tickets'}</span></div>
+      {filas.map((c) => <details className="ticket-card" key={c.id}>
+        <summary><span><strong>{c.proveedor || 'Compra sin proveedor'}</strong><small>{c.ticket_ref || 'Sin folio'} · {c.estado}</small></span><span><strong>{mxn(c.total)}</strong><small>{c.origen_pago || 'Pago no registrado'}</small></span></summary>
+        <div className="ticket-lines">{c.lineas.length ? c.lineas.map((linea, i) => <div className="ticket-line" key={`${c.id}-${i}`}><span><small>{linea.tipo === 'gasto' ? 'Gasto' : 'Inventario'}</small>{linea.producto}</span><strong>{mxn(linea.importe)}</strong></div>) : <p className="muted">Este ticket no tiene líneas detalladas.</p>}</div>
+      </details>)}
+    </section>)}</div>
+    {compras.length > limite && <button className="btn-secondary tickets-more" onClick={() => setLimite((n) => Math.min(n + 20, compras.length))}>Mostrar más ({compras.length - limite} restantes)</button>}
+  </section>;
+}
+
 function Lotes({ lotes }: { lotes: Lote[] }) {
+  const [limite, setLimite] = useState(50);
   if (!lotes.length) return <div className="empty-state"><strong>No hay lotes FIFO registrados</strong><p>Confirma una compra para crear el primer lote.</p></div>;
-  return <section className="card"><div className="section-heading"><div><h2>Libro de lotes</h2><p className="muted">Ordenados por fecha de recepción; el más antiguo sale primero.</p></div></div><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Producto</th><th>Ticket</th><th>Inicial</th><th>Restante</th><th>Costo base</th><th>Estado</th></tr></thead><tbody>{lotes.map((l) => <tr key={l.id}><td>{l.recibido_at}</td><td><strong>{l.producto}</strong><small className="muted">{l.unidad_base ?? 'sin unidad'}</small></td><td>{l.ticket_ref ?? '—'}</td><td>{l.cantidad_inicial}</td><td>{l.cantidad_restante}</td><td>{mxn(l.costo_unitario)}</td><td><span className={`status status--${l.estado === 'abierto' ? 'ok' : 'cargando'}`}>{l.estado}</span></td></tr>)}</tbody></table></div></section>;
+  const visibles = lotes.slice(0, limite);
+  return <section className="card fifo-panel"><details>
+    <summary><span><strong>Libro de lotes FIFO</strong><small>Ordenado por recepción; el más antiguo sale primero.</small></span><span className="fifo-panel__count">{lotes.length} lotes</span></summary>
+    <div className="fifo-panel__body"><div className="table-wrap"><table><thead><tr><th>Fecha</th><th>Producto</th><th>Ticket</th><th>Inicial</th><th>Restante</th><th>Costo base</th><th>Estado</th></tr></thead><tbody>{visibles.map((l) => <tr key={l.id}><td>{l.recibido_at}</td><td><strong>{l.producto}</strong><small className="muted">{l.unidad_base ?? 'sin unidad'}</small></td><td>{l.ticket_ref ?? '—'}</td><td>{l.cantidad_inicial}</td><td>{l.cantidad_restante}</td><td>{mxn(l.costo_unitario)}</td><td><span className={`status status--${l.estado === 'abierto' ? 'ok' : 'cargando'}`}>{l.estado}</span></td></tr>)}</tbody></table></div><div className="fifo-panel__footer"><span className="muted">Mostrando {visibles.length} de {lotes.length} lotes.</span>{lotes.length > limite && <button className="btn-secondary" onClick={() => setLimite((n) => Math.min(n + 50, lotes.length))}>Mostrar 50 más</button>}{limite > 50 && <button className="btn-ghost" onClick={() => setLimite(50)}>Ver sólo los primeros 50</button>}</div></div>
+  </details></section>;
 }
 
 function EposPanel(props: { from: string; setFrom: (v: string) => void; to: string; setTo: (v: string) => void; preview: ConsumoResult | null; consultando: boolean; consultar: (confirmar?: boolean) => void }) {
