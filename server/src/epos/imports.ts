@@ -6,6 +6,8 @@ import {
   fetchReconcileData,
   summarizeBookkeeping,
   summarizeDailySales,
+  eposDiscount,
+  eposProductId,
   type EposReportRow,
 } from './client.js';
 
@@ -24,7 +26,7 @@ function numero(value: unknown) {
 function claveFila(row: EposReportRow, fallback: string, occurrence: number) {
   const identity = [
     row.TransactionID ?? '', row.TransactionItemID ?? '', row.DateTime ?? fallback,
-    row.ProductID ?? row.Product ?? 'SIN_PRODUCTO', row.Quantity ?? '',
+    eposProductId(row) ?? row.Product ?? 'SIN_PRODUCTO', row.Quantity ?? '',
     row.TotalSales ?? row.NetSales ?? '', row.Tender ?? 'SIN_METODO', occurrence,
   ].join('|');
   return `row:${createHash('sha256').update(identity).digest('hex')}`;
@@ -52,7 +54,8 @@ export async function importarVentasEpos(input: {
   const occurrence = new Map<string, number>();
   const filasPreparadas = bookkeeping.map((row) => {
     const productName = String(row.Product ?? 'SIN_PRODUCTO').trim() || 'SIN_PRODUCTO';
-    const occurrenceKey = [row.TransactionID ?? '', row.TransactionItemID ?? '', row.DateTime ?? '', row.ProductID ?? productName, row.Quantity ?? '', row.TotalSales ?? row.NetSales ?? '', row.Tender ?? 'SIN_METODO'].join('|');
+    const productId = eposProductId(row);
+    const occurrenceKey = [row.TransactionID ?? '', row.TransactionItemID ?? '', row.DateTime ?? '', productId ?? productName, row.Quantity ?? '', row.TotalSales ?? row.NetSales ?? '', row.Tender ?? 'SIN_METODO'].join('|');
     const count = occurrence.get(occurrenceKey) ?? 0;
     occurrence.set(occurrenceKey, count + 1);
     return {
@@ -60,12 +63,12 @@ export async function importarVentasEpos(input: {
       epos_transaction_id: Number.isFinite(row.TransactionID) ? row.TransactionID : null,
       epos_item_id: Number.isFinite(row.TransactionItemID) ? row.TransactionItemID : null,
       fecha: fechaDeFila(row, input.from),
-      epos_product_id: Number.isFinite(row.ProductID) ? row.ProductID : null,
+      epos_product_id: productId,
       producto_nombre: productName,
       cantidad: numero(row.Quantity),
       venta_bruta: numero(row.TotalSales ?? row.NetSales),
       venta_neta: row.NetSales == null ? null : numero(row.NetSales),
-      descuento: numero(row.Discount),
+      descuento: eposDiscount(row),
       metodo_pago: String(row.Tender ?? 'SIN_METODO'),
       raw_json: JSON.stringify(row),
     };

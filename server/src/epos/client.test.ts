@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildReconcilePreview, summarizeBookkeeping, summarizeDailySales } from './client.js';
+import { buildReconcilePreview, eposDiscount, eposProductId, summarizeBookkeeping, summarizeDailySales } from './client.js';
 
 describe('puente Epos', () => {
   it('resume ventas por producto, método y día', () => {
@@ -20,6 +20,15 @@ describe('puente Epos', () => {
     expect(daily.descuentos).toBe(5);
     expect(daily.unidades).toBeNull();
     expect(daily.transacciones).toBeNull();
+  });
+
+  it('acepta las variantes ProductId y DiscountValue que devuelve Epos', () => {
+    const result = summarizeBookkeeping([
+      { Product: 'Mojito', ProductId: 2539003, Quantity: 1, TotalSales: 75, DiscountValue: 5, Tender: 'Cash' },
+    ]);
+    expect(result.productos).toEqual([{ nombre: 'Mojito', product_id: 2539003, cantidad: 1, ventas: 75 }]);
+    expect(eposProductId({ ProductId: 2539003 })).toBe(2539003);
+    expect(eposDiscount({ DiscountValue: 5 })).toBe(5);
   });
 
   it('calcula diferencias sólo en los campos comparables', () => {

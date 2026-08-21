@@ -6,15 +6,27 @@ type JsonRecord = Record<string, unknown>;
 export interface EposReportRow {
   Product?: string | null;
   ProductID?: number | null;
+  ProductId?: number | null;
   DateTime?: string | null;
   Quantity?: number | null;
   TotalSales?: number | null;
   NetSales?: number | null;
   Discount?: number | null;
+  DiscountValue?: number | null;
   Tender?: string | null;
   TransactionID?: number | null;
   TransactionItemID?: number | null;
   [key: string]: unknown;
+}
+
+/** Epos ha usado ambas variantes de capitalización en sus reportes. */
+export function eposProductId(row: Pick<EposReportRow, 'ProductID' | 'ProductId'>) {
+  const value = row.ProductID ?? row.ProductId;
+  return Number.isFinite(value) ? Number(value) : null;
+}
+
+export function eposDiscount(row: Pick<EposReportRow, 'Discount' | 'DiscountValue'>) {
+  return numberOrZero(row.Discount ?? row.DiscountValue);
 }
 
 export interface EposDailySalesRow {
@@ -93,12 +105,14 @@ export async function bookkeepingReport(from: string, to: string, locationId?: n
 
 export function summarizeBookkeeping(rows: EposReportRow[]) {
   const transactions = new Set(rows.map((r) => r.TransactionID).filter((id): id is number => Number.isFinite(id)));
-  const products = new Map<string, { product_id: number | null; cantidad: number; ventas: number }>();
+  const products = new Map<string, { nombre: string; product_id: number | null; cantidad: number; ventas: number }>();
   const tenders = new Map<string, number>();
   const daily = new Map<string, { fecha: string; transacciones: Set<number>; unidades: number; ventas: number; metodos: Map<string, number> }>();
   for (const row of rows) {
-    const key = String(row.ProductID ?? row.Product ?? 'SIN_PRODUCTO');
-    const current = products.get(key) ?? { product_id: row.ProductID ?? null, cantidad: 0, ventas: 0 };
+    const productId = eposProductId(row);
+    const productName = String(row.Product ?? 'SIN_PRODUCTO');
+    const key = `${productId ?? 'nombre'}:${productName}`;
+    const current = products.get(key) ?? { nombre: productName, product_id: productId, cantidad: 0, ventas: 0 };
     current.cantidad += numberOrZero(row.Quantity);
     current.ventas += numberOrZero(row.TotalSales ?? row.NetSales);
     products.set(key, current);
@@ -117,7 +131,7 @@ export function summarizeBookkeeping(rows: EposReportRow[]) {
     transacciones: transactions.size,
     unidades: rows.reduce((sum, row) => sum + numberOrZero(row.Quantity), 0),
     ventas: rows.reduce((sum, row) => sum + numberOrZero(row.TotalSales ?? row.NetSales), 0),
-    productos: [...products.entries()].map(([nombre, value]) => ({ nombre, ...value })),
+    productos: [...products.values()],
     metodos_pago: [...tenders.entries()].map(([metodo, total]) => ({ metodo, total })),
     dias: [...daily.values()].sort((a, b) => a.fecha.localeCompare(b.fecha)).map((day) => ({
       fecha: day.fecha,
@@ -141,7 +155,7 @@ export function summarizeDailySales(rows: EposDailySalesRow[]) {
     transacciones: tieneTransacciones ? rows.reduce((sum, row) => sum + numberOrZero(row.NoOfTrans), 0) : null,
     unidades: tieneUnidades ? rows.reduce((sum, row) => sum + numberOrZero(row.ItemQty), 0) : null,
     ventas: rows.reduce((sum, row) => sum + numberOrZero(row.ValueIncVAT ?? row.Value), 0),
-    descuentos: rows.reduce((sum, row) => sum + numberOrZero(row.Discount), 0),
+    descuentos: rows.reduce((sum, row) => sum + eposDiscount(row), 0),
     devoluciones: rows.reduce((sum, row) => sum + numberOrZero(row.RefundValue), 0),
   };
 }
