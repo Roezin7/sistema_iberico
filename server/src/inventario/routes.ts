@@ -6,7 +6,7 @@ import { inventarioActual, listaCompras, crearConteo } from './service.js';
 import { borradorCompraTicket, borradorConteo, draftDisponible } from './draft.js';
 import { listarLotes, registrarCompra } from './compras.js';
 import { consumirVentasEpos } from './consumo-epos.js';
-import { actualizarBorradorLineas, confirmarBorradorCompra, crearBorradorCompra, listarBorradoresCompra, listarCompras, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra } from './compras-rapidas.js';
+import { actualizarBorradorLineas, confirmarBorradorCompra, crearBorradorCompra, listarBorradoresCompra, listarCompras, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra, validarCapturaCompra } from './compras-rapidas.js';
 
 export const inventarioRouter = Router();
 
@@ -141,6 +141,23 @@ inventarioRouter.post('/compras/rapidas', asyncHandler(async (req, res) => {
 
 inventarioRouter.get('/compras/pendientes', asyncHandler(async (req, res) => {
   res.json(await listarBorradoresCompra(req.auth!.negocioId));
+}));
+
+inventarioRouter.post('/compras/validar', asyncHandler(async (req, res) => {
+  const body = z.object({
+    total: z.coerce.number().nonnegative(),
+    lineas: z.array(z.object({
+      product_id: z.coerce.number().int().positive().optional().nullable(),
+      tipo_linea: z.enum(['inventario', 'gasto', 'pendiente']),
+      descripcion_fuente: z.string().trim().min(1).max(240),
+      cantidad_base: z.coerce.number().positive().optional().nullable(),
+      unidad_compra: z.string().trim().max(30).optional().nullable(),
+      contenido_compra: z.coerce.number().positive().optional().nullable(),
+      costo_unitario: z.coerce.number().nonnegative().optional().nullable(),
+      importe: z.coerce.number().nonnegative(),
+    })).min(1),
+  }).parse(req.body);
+  res.json(await validarCapturaCompra(req.auth!.negocioId, body.total, body.lineas.map((l) => ({ ...l, product_id: l.product_id == null ? null : BigInt(l.product_id) }))));
 }));
 
 inventarioRouter.get('/compras/:id/foto', asyncHandler(async (req, res) => {

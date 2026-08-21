@@ -30,6 +30,31 @@ export type CapturaCompraInput = {
   lineas: CapturaCompraLinea[];
 };
 
+export async function validarCapturaCompra(negocioId: bigint, total: number, lineas: CapturaCompraLinea[]) {
+  const productIds = [...new Set(lineas.filter((l) => l.tipo_linea === 'inventario' && l.product_id != null).map((l) => l.product_id!.toString()))].map(BigInt);
+  const productos = productIds.length ? await prisma.products.findMany({
+    where: { negocio_id: negocioId, id: { in: productIds }, active: true },
+    select: { id: true, name: true, unidad_base: true, contenido_compra: true, unidad_compra: true, product_aliases: { select: { alias: true } } },
+  }) : [];
+  return validarDiscrepanciasCompra(total, lineas.map((l) => ({
+    tipo_linea: l.tipo_linea,
+    importe: Number(l.importe),
+    product_id: l.product_id,
+    descripcion_fuente: l.descripcion_fuente,
+    cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base),
+    unidad_compra: l.unidad_compra,
+    contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra),
+    costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario),
+  })), productos.map((p) => ({
+    id: p.id,
+    name: p.name,
+    unidad_base: p.unidad_base,
+    contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra),
+    unidad_compra: p.unidad_compra,
+    aliases: p.product_aliases.map((a) => a.alias),
+  })));
+}
+
 function fechaUTC(fecha: string): Date {
   const value = new Date(`${fecha}T00:00:00.000Z`);
   if (Number.isNaN(value.getTime())) throw new HttpError(400, 'Fecha de compra inválida');
