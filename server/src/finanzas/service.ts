@@ -305,6 +305,7 @@ export async function listarMovimientos(negocioId: bigint, semanaId: bigint) {
     socio_id: m.socio_id ? Number(m.socio_id) : null,
     facturado: m.facturado,
     descripcion: m.descripcion,
+    compra_id: m.compra_id ? Number(m.compra_id) : null,
   }));
 }
 
@@ -312,12 +313,13 @@ export interface EditarMovimientoInput {
   monto?: number;
   fecha?: string;
   ubicacion_origen_id?: number | null;
+  ubicacion_destino_id?: number | null;
   categoria_id?: number | null;
   descripcion?: string | null;
   facturado?: boolean;
 }
 
-/** Edita un gasto/sueldo manual de una semana abierta. Los movimientos creados
+/** Edita un movimiento manual de una semana abierta. Los movimientos creados
  * por una compra se corrigen desde el ticket para mantener compra y movimiento
  * sincronizados. */
 export async function editarMovimiento(negocioId: bigint, movimientoId: bigint, input: EditarMovimientoInput) {
@@ -327,7 +329,7 @@ export async function editarMovimiento(negocioId: bigint, movimientoId: bigint, 
       include: { semanas: { select: { estado: true, fecha_inicio: true, fecha_fin: true } } },
     });
     if (!actual) throw new HttpError(404, 'Movimiento no encontrado');
-    if (!['gasto', 'sueldo'].includes(actual.tipo)) throw new HttpError(400, 'Sólo se pueden editar gastos y sueldos manuales');
+    if (actual.tipo === 'comision_terminal') throw new HttpError(400, 'La comisión de terminal se recalcula al cerrar');
     if (actual.compra_id != null) throw new HttpError(409, 'Este gasto pertenece a una compra; corrígelo desde el ticket');
     if (actual.semanas.estado !== 'abierta') throw new HttpError(409, 'La semana está cerrada; reábrela antes de editar');
 
@@ -341,24 +343,31 @@ export async function editarMovimiento(negocioId: bigint, movimientoId: bigint, 
     const origenId = input.ubicacion_origen_id === undefined
       ? actual.ubicacion_origen_id
       : input.ubicacion_origen_id == null ? null : BigInt(input.ubicacion_origen_id);
-    if (!origenId) throw new HttpError(400, 'El gasto requiere ubicación de origen');
-    const origen = await tx.ubicaciones_fondos.findFirst({ where: { id: origenId, negocio_id: negocioId, activo: true }, select: { id: true, tipo: true } });
-    if (!origen) throw new HttpError(400, 'La ubicación de origen no es válida');
+    const destinoId = input.ubicacion_destino_id === undefined
+      ? actual.ubicacion_destino_id
+      : input.ubicacion_destino_id == null ? null : BigInt(input.ubicacion_destino_id);
+    const idsUbicacion = [origenId, destinoId].filter((v): v is bigint => v != null);
+    const ubicaciones = await tx.ubicaciones_fondos.findMany({ where: { id: { in: idsUbicacion }, negocio_id: negocioId, activo: true }, select: { id: true, tipo: true } });
+    if (ubicaciones.length !== idsUbicacion.length) throw new HttpError(400, 'La ubicación de origen o destino no es válida');
+    const origen = ubicaciones.find((u) => u.id === origenId);
 
     const categoriaId = input.categoria_id === undefined
       ? actual.categoria_id
       : input.categoria_id == null ? null : BigInt(input.categoria_id);
-    if (actual.tipo === 'gasto' && !categoriaId) throw new HttpError(400, 'El gasto requiere categoría');
+    const regla = REGLAS_MOVIMIENTO[actual.tipo];
+    if (regla.requiereOrigen && !origenId) throw new HttpError(400, `${actual.tipo} requiere ubicación de origen`);
+    if (regla.requiereDestino && !destinoId) throw new HttpError(400, `${actual.tipo} requiere ubicación de destino`);
+    if (regla.requiereCategoria && !categoriaId) throw new HttpError(400, `${actual.tipo} requiere categoría`);
     if (categoriaId) {
       const categoria = await tx.categorias_gasto.findFirst({ where: { id: categoriaId, negocio_id: negocioId, activo: true }, select: { id: true } });
       if (!categoria) throw new HttpError(400, 'La categoría no es válida');
     }
 
-    const facturado = input.facturado ?? (actual.tipo === 'gasto' && origen.tipo === 'banco');
+    const facturado = input.facturado ?? ((actual.tipo === 'gasto' || actual.tipo === 'compra_inventario') && origen?.tipo === 'banco');
     const actualizado = await tx.movimientos.update({
       where: { id: actual.id },
       data: {
-        monto, fecha, ubicacion_origen_id: origen.id, categoria_id: categoriaId,
+        monto, fecha, ubicacion_origen_id: origenId, ubicacion_destino_id: destinoId, categoria_id: categoriaId,
         facturado, descripcion: input.descripcion === undefined ? actual.descripcion : input.descripcion?.trim() || null,
       },
     });
@@ -829,6 +838,7 @@ export async function borrarMovimiento(negocioId: bigint, id: bigint) {
   if (!semana || semana.estado !== 'abierta') {
     throw new HttpError(409, 'No se pueden borrar movimientos de una semana cerrada');
   }
+  if (mov.compra_id != null) throw new HttpError(409, 'Este movimiento pertenece a una compra; edita o elimina el ticket completo');
   await prisma.movimientos.delete({ where: { id } });
   return { ok: true };
 }

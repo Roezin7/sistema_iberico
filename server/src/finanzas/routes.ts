@@ -112,6 +112,7 @@ finanzasRouter.patch('/movimientos/:id', asyncHandler(async (req, res) => {
     monto: z.coerce.number().positive().optional(),
     fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     ubicacion_origen_id: id.nullable().optional(),
+    ubicacion_destino_id: id.nullable().optional(),
     categoria_id: id.nullable().optional(),
     descripcion: z.string().max(500).nullable().optional(),
     facturado: z.boolean().optional(),

@@ -7,7 +7,7 @@ import { borradorCompraTicket, borradorConteo, draftDisponible } from './draft.j
 import { listarLotes, registrarCompra } from './compras.js';
 import { prepararAperturaFifo } from './apertura-fifo.js';
 import { consumirVentasEpos } from './consumo-epos.js';
-import { actualizarBorradorLineas, cambiarOrigenPagoCompra, confirmarBorradorCompra, crearBorradorCompra, listarBorradoresCompra, listarCompras, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra, validarCapturaCompra } from './compras-rapidas.js';
+import { actualizarBorradorLineas, cambiarOrigenPagoCompra, confirmarBorradorCompra, crearBorradorCompra, editarCompraConfirmada, listarBorradoresCompra, listarCompras, obtenerCompraConfirmada, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra, validarCapturaCompra } from './compras-rapidas.js';
 
 export const inventarioRouter = Router();
 
@@ -173,6 +173,11 @@ inventarioRouter.get('/compras/:id/foto', asyncHandler(async (req, res) => {
   res.json(foto);
 }));
 
+inventarioRouter.get('/compras/:id', asyncHandler(async (req, res) => {
+  const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  res.json(await obtenerCompraConfirmada(req.auth!.negocioId, id));
+}));
+
 inventarioRouter.post('/compras/:id/confirmar', soloAdmin, asyncHandler(async (req, res) => {
   const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
   res.json(await confirmarBorradorCompra(req.auth!.negocioId, req.auth!.usuarioId, id));
@@ -183,6 +188,35 @@ inventarioRouter.patch('/compras/:id/pago', soloAdmin, asyncHandler(async (req, 
   const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
   const body = z.object({ origen_pago_id: z.coerce.number().int().positive() }).parse(req.body);
   res.json(await cambiarOrigenPagoCompra(req.auth!.negocioId, id, BigInt(body.origen_pago_id)));
+}));
+
+/** PATCH /inventario/compras/:id — edita ticket confirmado y sincroniza FIFO/movimientos. */
+inventarioRouter.patch('/compras/:id', soloAdmin, asyncHandler(async (req, res) => {
+  const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  const body = z.object({
+    fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    proveedor: z.string().trim().max(160).nullable().optional(),
+    ticket_ref: z.string().trim().max(120).nullable().optional(),
+    total: z.coerce.number().nonnegative().optional(),
+    origen_pago_id: z.coerce.number().int().positive().nullable().optional(),
+    lineas: z.array(z.object({
+      product_id: z.coerce.number().int().positive().nullable().optional(),
+      tipo_linea: z.enum(['inventario', 'gasto', 'pendiente']),
+      descripcion_fuente: z.string().trim().min(1).max(240),
+      cantidad_base: z.coerce.number().positive().nullable().optional(),
+      unidad_compra: z.string().trim().max(30).nullable().optional(),
+      contenido_compra: z.coerce.number().positive().nullable().optional(),
+      costo_unitario: z.coerce.number().nonnegative().nullable().optional(),
+      importe: z.coerce.number().nonnegative(),
+      confianza: z.coerce.number().min(0).max(1).nullable().optional(),
+      notas: z.string().trim().max(500).nullable().optional(),
+    })).min(1),
+  }).parse(req.body);
+  res.json(await editarCompraConfirmada(req.auth!.negocioId, req.auth!.usuarioId, id, {
+    ...body,
+    origen_pago_id: body.origen_pago_id == null ? body.origen_pago_id : BigInt(body.origen_pago_id),
+    lineas: body.lineas.map((l) => ({ ...l, product_id: l.product_id == null ? null : BigInt(l.product_id), cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra ?? null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, confianza: l.confianza ?? null, notas: l.notas ?? null })),
+  }));
 }));
 
 inventarioRouter.put('/compras/:id/lineas', soloAdmin, asyncHandler(async (req, res) => {

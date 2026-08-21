@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   finanzas, epos, mxn, TIPOS, type Referencias, type Semana, type Resumen, type FilaCuadre,
-  type Movimiento, type TipoMov, type DiaFila, type ConciliacionDiaria,
+  type Movimiento, type TipoMov, type DiaFila, type ConciliacionDiaria, type CompraDetalle, type CompraDetalleLinea,
 } from './api';
 import { Icono } from '../../icons';
 import { descargarCSV } from '../../csv';
@@ -529,8 +529,11 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
   const [editando, setEditando] = useState<number | null>(null);
   const [montoEdit, setMontoEdit] = useState('');
   const [origenEdit, setOrigenEdit] = useState<number | ''>('');
+  const [destinoEdit, setDestinoEdit] = useState<number | ''>('');
+  const [categoriaEdit, setCategoriaEdit] = useState<number | ''>('');
   const [guardando, setGuardando] = useState(false);
   const [errorEdit, setErrorEdit] = useState('');
+  const [compraEditando, setCompraEditando] = useState<number | null>(null);
 
   function exportar() {
     descargarCSV(
@@ -561,11 +564,17 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
             {editando === m.id ? <div className="conteo-info" style={{ display: 'grid', gap: '0.4rem' }}>
               <strong>Editar {TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
               <input type="number" min="0.01" step="0.01" value={montoEdit} onChange={(e) => setMontoEdit(e.target.value)} aria-label="Monto del movimiento" />
-              <select value={origenEdit} onChange={(e) => setOrigenEdit(e.target.value ? Number(e.target.value) : '')} aria-label="Origen del gasto">
+              <select value={origenEdit} onChange={(e) => setOrigenEdit(e.target.value ? Number(e.target.value) : '')} aria-label="Origen del movimiento">
                 <option value="">Origen…</option>{ref_.ubicaciones.filter((u) => u.tipo === 'efectivo' || u.tipo === 'banco').map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}
               </select>
+              <select value={destinoEdit} onChange={(e) => setDestinoEdit(e.target.value ? Number(e.target.value) : '')} aria-label="Destino del movimiento">
+                <option value="">Destino…</option>{ref_.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}
+              </select>
+              {m.tipo === 'gasto' && <select value={categoriaEdit} onChange={(e) => setCategoriaEdit(e.target.value ? Number(e.target.value) : '')} aria-label="Categoría del gasto">
+                <option value="">Categoría…</option>{ref_.categorias.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+              </select>}
               {errorEdit && <small className="error-msg">{errorEdit}</small>}
-              <div style={{ display: 'flex', gap: '0.4rem' }}><button className="btn-primary" disabled={guardando} onClick={async () => { setGuardando(true); setErrorEdit(''); try { await finanzas.editarMovimiento(m.id, { monto: Number(montoEdit), ubicacion_origen_id: origenEdit || null }); setEditando(null); onChange(); } catch (e) { setErrorEdit(e instanceof Error ? e.message : 'No se pudo editar'); } finally { setGuardando(false); } }}>Guardar</button><button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button></div>
+              <div style={{ display: 'flex', gap: '0.4rem' }}><button className="btn-primary" disabled={guardando} onClick={async () => { setGuardando(true); setErrorEdit(''); try { await finanzas.editarMovimiento(m.id, { monto: Number(montoEdit), ubicacion_origen_id: origenEdit || null, ubicacion_destino_id: destinoEdit || null, categoria_id: categoriaEdit || null }); setEditando(null); onChange(); } catch (e) { setErrorEdit(e instanceof Error ? e.message : 'No se pudo editar'); } finally { setGuardando(false); } }}>Guardar</button><button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button></div>
             </div> : <><div className="conteo-info">
               <strong>{TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
               <small className="muted">
@@ -574,16 +583,36 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
               </small>
             </div><span>{mxn(m.monto)}</span></>}
             {semana.estado === 'abierta' && (
-              <>{(m.tipo === 'gasto' || m.tipo === 'sueldo') && editando !== m.id && <button className="btn-ghost" title="Editar gasto" onClick={() => { setEditando(m.id); setMontoEdit(String(m.monto)); setOrigenEdit(m.ubicacion_origen_id ?? ''); setErrorEdit(''); }}>Editar</button>}<button
+              <>{editando !== m.id && (m.compra_id != null ? <button className="btn-ghost" title="Editar ticket y movimientos vinculados" onClick={() => setCompraEditando(m.compra_id!)}>Editar ticket</button> : <button className="btn-ghost" title="Editar movimiento" onClick={() => { setEditando(m.id); setMontoEdit(String(m.monto)); setOrigenEdit(m.ubicacion_origen_id ?? ''); setDestinoEdit(m.ubicacion_destino_id ?? ''); setCategoriaEdit(m.categoria_id ?? ''); setErrorEdit(''); }}>Editar</button>)}{m.compra_id == null && <button
                 className="icon-btn" title="Borrar movimiento" aria-label="Borrar movimiento"
                 onClick={async () => { const ok = await confirmar({ message: '¿Borrar este movimiento? Afecta el cuadre de la semana.', tone: 'danger', confirmText: 'Borrar' }); if (!ok) return; try { await finanzas.borrarMovimiento(m.id); onChange(); } catch (e) { setErrorEdit(e instanceof Error ? e.message : 'No se pudo borrar'); } }}
-              >✕</button></>
+              >✕</button>}</>
             )}
           </li>
         ))}
       </ul>
+      {compraEditando != null && <CompraEditor compraId={compraEditando} ref_={ref_} onClose={() => setCompraEditando(null)} onSaved={() => { setCompraEditando(null); onChange(); }} />}
     </>
   );
+}
+
+function CompraEditor({ compraId, ref_, onClose, onSaved }: { compraId: number; ref_: Referencias; onClose: () => void; onSaved: () => void }) {
+  const [compra, setCompra] = useState<CompraDetalle | null>(null);
+  const [lineas, setLineas] = useState<CompraDetalleLinea[]>([]);
+  const [total, setTotal] = useState('');
+  const [origen, setOrigen] = useState<number | ''>('');
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => { finanzas.obtenerCompra(compraId).then((c) => { setCompra(c); setLineas(c.lineas); setTotal(String(c.total)); setOrigen(c.origen_pago_id ?? ''); }).catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar el ticket.')); }, [compraId]);
+  function editar(i: number, campo: keyof CompraDetalleLinea, valor: string) { setLineas((v) => v.map((l, idx) => idx === i ? { ...l, [campo]: campo === 'cantidad_base' || campo === 'importe' || campo === 'costo_unitario' ? (valor === '' ? null : Number(valor)) : valor } : l)); }
+  async function guardar() {
+    if (!compra || !origen || !lineas.length) return;
+    setGuardando(true); setError('');
+    try { await finanzas.editarCompra(compra.id, { total: Number(total), origen_pago_id: Number(origen), lineas: lineas.map((l) => ({ ...l, id: undefined, producto: undefined, product_id: l.product_id, cantidad_base: l.cantidad_base, importe: Number(l.importe), costo_unitario: l.costo_unitario })) }); onSaved(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar el ticket.'); }
+    finally { setGuardando(false); }
+  }
+  return <section className="card movement-purchase-editor" style={{ marginTop: '1rem' }}><div className="section-heading"><div><h3>Editar compra vinculada</h3><p className="muted">Las cantidades, importes y movimientos se actualizan juntos.</p></div><button className="icon-btn" onClick={onClose} aria-label="Cerrar editor">✕</button></div>{!compra && !error && <Cargando etiqueta="Cargando ticket…" />}{compra && <><div className="form-grid form-grid--three"><label>Total del ticket<input type="number" min="0" step="0.01" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value ? Number(e.target.value) : '')}>{ref_.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div><div className="quick-lines">{lineas.map((l, i) => <div className="quick-line" key={l.id ?? `${compra.id}-${i}`}><strong>{l.producto || l.descripcion_fuente}</strong><small className="muted">{l.tipo_linea === 'inventario' ? 'Inventario FIFO' : 'Gasto operativo'}</small><input value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} aria-label={`Descripción línea ${i + 1}`} /><div className="quick-line__numbers"><input type="number" min="0" step="any" value={l.cantidad_base ?? ''} onChange={(e) => editar(i, 'cantidad_base', e.target.value)} aria-label={`Cantidad línea ${i + 1}`} /><input type="number" min="0" step="0.01" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} aria-label={`Importe línea ${i + 1}`} /></div></div>)}</div>{error && <div className="error-msg">{error}</div>}<div className="sticky-action"><button className="btn-ghost" onClick={onClose}>Cancelar</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Guardar ticket y movimientos'}</button></div></>}</section>;
 }
 
 function FormMovimiento({ ref_, semana, onSaved }: { ref_: Referencias; semana: Semana; onSaved: () => void }) {

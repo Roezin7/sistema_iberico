@@ -149,7 +149,91 @@ export async function listarCompras(negocioId: bigint, fecha?: string) {
   const where: { negocio_id: bigint; fecha_recepcion?: Date } = { negocio_id: negocioId };
   if (fecha) where.fecha_recepcion = fechaUTC(fecha);
   const filas = await prisma.purchases.findMany({ where, include: { purchase_lines: { include: { products: { select: { name: true, unidad_base: true } } } }, capture_lines: true, movimientos: { select: { tipo: true, monto: true } }, origen_pago: { select: { nombre: true } } }, orderBy: [{ fecha_recepcion: 'desc' }, { id: 'desc' }] });
-  return filas.map((f) => ({ id: Number(f.id), fecha: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor, ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), estado: f.estado, origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null, origen_pago: f.origen_pago?.nombre ?? null, movimientos: f.movimientos.map((m) => ({ tipo: m.tipo, monto: Number(m.monto) })), lineas: [...f.purchase_lines.map((l) => ({ tipo: 'inventario', producto: l.products.name, importe: Number(l.importe ?? 0) })), ...f.capture_lines.filter((l) => l.tipo_linea === 'gasto').map((l) => ({ tipo: 'gasto', producto: l.descripcion_fuente, importe: Number(l.importe) }))] }));
+  return filas.map((f) => ({ id: Number(f.id), fecha: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor, ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), estado: f.estado, origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null, origen_pago: f.origen_pago?.nombre ?? null, movimientos: f.movimientos.map((m) => ({ tipo: m.tipo, monto: Number(m.monto) })), lineas: [...f.purchase_lines.map((l) => ({ id: `${f.id}-${l.product_id}`, tipo: 'inventario', producto: l.products.name, product_id: Number(l.product_id), cantidad_base: Number(l.qty), costo_unitario: Number(l.costo_unitario), importe: Number(l.importe ?? 0) })), ...f.capture_lines.filter((l) => l.tipo_linea === 'gasto').map((l) => ({ id: Number(l.id), tipo: 'gasto', producto: l.descripcion_fuente, product_id: l.product_id ? Number(l.product_id) : null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) }))] }));
+}
+
+export async function obtenerCompraConfirmada(negocioId: bigint, purchaseId: bigint) {
+  const compra = await prisma.purchases.findFirst({
+    where: { id: purchaseId, negocio_id: negocioId },
+    include: {
+      capture_lines: { include: { products: { select: { name: true, unidad_base: true } } }, orderBy: { id: 'asc' } },
+      purchase_lines: { include: { products: { select: { name: true, unidad_base: true } } } },
+      origen_pago: { select: { id: true, nombre: true, tipo: true } },
+    },
+  });
+  if (!compra) throw new HttpError(404, 'Compra no encontrada');
+  return {
+    id: Number(compra.id), fecha_recepcion: compra.fecha_recepcion.toISOString().slice(0, 10), proveedor: compra.proveedor,
+    ticket_ref: compra.ticket_ref, total: Number(compra.total ?? 0), estado: compra.estado,
+    origen_pago_id: compra.origen_pago_id ? Number(compra.origen_pago_id) : null,
+    origen_pago: compra.origen_pago?.nombre ?? null,
+    lineas: compra.capture_lines.length
+      ? compra.capture_lines.map((l) => ({ id: Number(l.id), product_id: l.product_id ? Number(l.product_id) : null, producto: l.products?.name ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe), confianza: l.confianza == null ? null : Number(l.confianza), notas: l.notas }))
+      : compra.purchase_lines.map((l) => ({ id: null, product_id: Number(l.product_id), producto: l.products.name, tipo_linea: 'inventario', descripcion_fuente: l.products.name, cantidad_base: Number(l.qty), unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: Number(l.costo_unitario), importe: Number(l.importe ?? 0), confianza: 1, notas: null })),
+  };
+}
+
+export type EditarCompraLinea = Omit<CapturaCompraLinea, 'product_id'> & { product_id?: bigint | null };
+
+/** Actualiza un ticket confirmado y sus efectos contables/FIFO en una sola transacción.
+ * Se bloquea si alguno de sus lotes ya fue consumido: así no se reescribe el historial
+ * de costo de ventas y se obliga a corregir mediante un ajuste explícito. */
+export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigint, purchaseId: bigint, input: {
+  fecha_recepcion?: string; proveedor?: string | null; ticket_ref?: string | null; total?: number;
+  origen_pago_id?: bigint | null; lineas: EditarCompraLinea[];
+}) {
+  if (!input.lineas.length) throw new HttpError(400, 'La compra debe conservar al menos una línea');
+  return prisma.$transaction(async (tx) => {
+    const actual = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId }, include: { inventory_lots: { include: { consumptions: { select: { id: true }, take: 1 } } }, capture_lines: true } });
+    if (!actual) throw new HttpError(404, 'Compra no encontrada');
+    if (actual.estado !== 'confirmada') throw new HttpError(409, 'Sólo se pueden editar compras confirmadas');
+    if (actual.inventory_lots.some((l) => l.consumptions.length > 0)) throw new HttpError(409, 'El ticket ya tiene consumo FIFO; no se puede reescribir. Registra un ajuste para conservar la trazabilidad.');
+    const fecha = input.fecha_recepcion ? fechaUTC(input.fecha_recepcion) : actual.fecha_recepcion;
+    const semanaAnterior = await tx.semanas.findFirst({ where: { negocio_id: negocioId, fecha_inicio: { lte: actual.fecha_recepcion }, fecha_fin: { gte: actual.fecha_recepcion } }, select: { id: true, estado: true } });
+    const semanaNueva = await tx.semanas.findFirst({ where: { negocio_id: negocioId, fecha_inicio: { lte: fecha }, fecha_fin: { gte: fecha } }, select: { id: true, estado: true } });
+    if (!semanaAnterior || !semanaNueva || semanaAnterior.estado !== 'abierta' || semanaNueva.estado !== 'abierta') throw new HttpError(409, 'La semana de la compra debe estar abierta');
+    if (input.origen_pago_id !== undefined && input.origen_pago_id !== null) await validarOrigen(negocioId, input.origen_pago_id);
+    const total = input.total ?? Number(actual.total ?? 0);
+    if (!Number.isFinite(total) || total < 0) throw new HttpError(400, 'Total de compra inválido');
+    if (input.lineas.some((l) => !l.descripcion_fuente.trim() || l.importe < 0)) throw new HttpError(400, 'Las líneas deben tener descripción e importe válidos');
+    const resumen = resumirCompra(total, input.lineas.map((l) => ({ tipo_linea: l.tipo_linea, importe: Number(l.importe) })));
+    if (!resumen.cuadra) throw new HttpError(400, 'Las líneas deben cuadrar exactamente con el total del ticket');
+    if (resumen.pendiente > 0) throw new HttpError(400, 'Una compra confirmada no puede conservar líneas pendientes; clasifica cada importe como inventario o gasto');
+    const inventory = input.lineas.filter((l) => l.tipo_linea === 'inventario');
+    if (inventory.some((l) => !l.product_id || !l.cantidad_base || l.cantidad_base <= 0)) throw new HttpError(400, 'Cada línea de inventario requiere producto y cantidad base');
+    const origenId = input.origen_pago_id === undefined ? actual.origen_pago_id : input.origen_pago_id;
+    const origen = origenId ? await tx.ubicaciones_fondos.findFirst({ where: { id: origenId, negocio_id: negocioId, activo: true }, select: { id: true, tipo: true } }) : null;
+    if (!origen) throw new HttpError(400, 'La compra requiere una ubicación de pago válida');
+    await tx.purchase_capture_lines.deleteMany({ where: { purchase_id: purchaseId } });
+    await tx.purchase_capture_lines.createMany({ data: input.lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
+    await tx.purchase_lines.deleteMany({ where: { purchase_id: purchaseId } });
+    await tx.inventory_lots.deleteMany({ where: { purchase_id: purchaseId } });
+    const porProducto = new Map<string, { qty: number; importe: number; unidad: string | null; contenido: number | null }>();
+    for (const l of inventory) {
+      const key = l.product_id!.toString(); const prev = porProducto.get(key); const qty = Number(l.cantidad_base); const importe = Number(l.importe);
+      porProducto.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, unidad: prev.unidad ?? l.unidad_compra ?? null, contenido: prev.contenido ?? l.contenido_compra ?? null } : { qty, importe, unidad: l.unidad_compra ?? null, contenido: l.contenido_compra ?? null });
+    }
+    for (const [productId, line] of porProducto) {
+      const costo = line.importe / line.qty;
+      await tx.purchase_lines.create({ data: { purchase_id: purchaseId, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
+      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: BigInt(productId), purchase_id: purchaseId, recibido_at: fecha, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: actual.moneda, fuente: actual.fuente, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref, notas: actual.notas } });
+    }
+    const dataCompra = { fecha_recepcion: fecha, proveedor: input.proveedor === undefined ? actual.proveedor : input.proveedor?.trim() || null, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref?.trim() || null, total, origen_pago_id: origen.id };
+    await tx.purchases.update({ where: { id: purchaseId }, data: dataCompra });
+    const invTotal = resumen.inventario; const gastoTotal = resumen.gasto; const descripcionBase = `Compra ticket ${dataCompra.ticket_ref ?? purchaseId}`;
+    const invMov = await tx.movimientos.findFirst({ where: { compra_id: purchaseId, tipo: 'compra_inventario' } });
+    if (invTotal > 0) {
+      if (invMov) await tx.movimientos.update({ where: { id: invMov.id }, data: { monto: invTotal, fecha, semana_id: semanaNueva.id, ubicacion_origen_id: origen.id, facturado: origen.tipo === 'banco', descripcion: descripcionBase, usuario_id: usuarioId } });
+      else await tx.movimientos.create({ data: { negocio_id: negocioId, semana_id: semanaNueva.id, fecha, tipo: 'compra_inventario', monto: invTotal, ubicacion_origen_id: origen.id, facturado: origen.tipo === 'banco', descripcion: descripcionBase, usuario_id: usuarioId, compra_id: purchaseId } });
+    } else if (invMov) await tx.movimientos.delete({ where: { id: invMov.id } });
+    const gastoMov = await tx.movimientos.findFirst({ where: { compra_id: purchaseId, tipo: 'gasto' } });
+    const categoria = gastoTotal > 0 ? await tx.categorias_gasto.findFirst({ where: { negocio_id: negocioId, nombre: 'Otros', activo: true }, select: { id: true } }) : null;
+    if (gastoTotal > 0) {
+      if (gastoMov) await tx.movimientos.update({ where: { id: gastoMov.id }, data: { monto: gastoTotal, fecha, semana_id: semanaNueva.id, ubicacion_origen_id: origen.id, categoria_id: categoria?.id ?? null, facturado: origen.tipo === 'banco', descripcion: `${descripcionBase} · gasto operativo`, usuario_id: usuarioId } });
+      else await tx.movimientos.create({ data: { negocio_id: negocioId, semana_id: semanaNueva.id, fecha, tipo: 'gasto', monto: gastoTotal, ubicacion_origen_id: origen.id, categoria_id: categoria?.id ?? null, facturado: origen.tipo === 'banco', descripcion: `${descripcionBase} · gasto operativo`, usuario_id: usuarioId, compra_id: purchaseId } });
+    } else if (gastoMov) await tx.movimientos.delete({ where: { id: gastoMov.id } });
+    return { purchase_id: Number(purchaseId), actualizado: true, inventario: invTotal, gasto: gastoTotal, total };
+  });
 }
 
 /** Corrige el origen de pago de una compra ya confirmada sin tocar sus lotes. */

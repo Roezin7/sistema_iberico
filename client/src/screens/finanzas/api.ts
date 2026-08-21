@@ -42,6 +42,7 @@ export interface Movimiento {
   id: number; fecha: string; tipo: TipoMov; monto: number;
   ubicacion_origen_id: number | null; ubicacion_destino_id: number | null;
   categoria_id: number | null; socio_id: number | null; facturado: boolean; descripcion: string | null;
+  compra_id: number | null;
 }
 
 export interface DiaFila {
@@ -85,11 +86,23 @@ export const finanzas = {
     api<ResumenDiario>(`/finanzas/semanas/${id}/dias`, { method: 'PUT', body }),
   crearMovimiento: (body: Record<string, unknown>) => api('/finanzas/movimientos', { method: 'POST', body }),
   editarMovimiento: (id: number, body: Record<string, unknown>) => api(`/finanzas/movimientos/${id}`, { method: 'PATCH', body }),
+  obtenerCompra: (id: number) => api<CompraDetalle>(`/inventario/compras/${id}`),
+  editarCompra: (id: number, body: Record<string, unknown>) => api(`/inventario/compras/${id}`, { method: 'PATCH', body }),
   borrarMovimiento: (id: number) => api(`/finanzas/movimientos/${id}`, { method: 'DELETE' }),
   crearArqueo: (body: Record<string, unknown>) => api('/finanzas/arqueos', { method: 'POST', body }),
   cerrar: (id: number) => api<Resumen>(`/finanzas/semanas/${id}/cerrar`, { method: 'POST', body: {} }),
   reabrir: (id: number) => api<Semana>(`/finanzas/semanas/${id}/reabrir`, { method: 'POST', body: {} }),
 };
+
+export interface CompraDetalleLinea {
+  id: number | null; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente';
+  descripcion_fuente: string; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null;
+  costo_unitario: number | null; importe: number; confianza: number | null; notas: string | null;
+}
+export interface CompraDetalle {
+  id: number; fecha_recepcion: string; proveedor: string | null; ticket_ref: string | null; total: number; estado: string;
+  origen_pago_id: number | null; origen_pago: string | null; lineas: CompraDetalleLinea[];
+}
 
 export const epos = {
   syncDaily: (fecha: string) => api<EposCorteDiario>('/epos/sync-daily', { method: 'POST', body: { fecha } }),
