@@ -1908,6 +1908,7 @@ select:disabled {
 /* Compras rápidas: el mismo flujo funciona en teléfono y escritorio. */
 .quick-purchase { border-color: rgba(139, 199, 99, 0.45); }
 .quick-purchase__actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: .8rem; }
+.quick-purchase__loading { min-height: 2.25rem; display: flex; align-items: center; color: var(--ink-2); }
 .file-button { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
 .file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .ticket-preview { display: block; max-width: min(100%, 360px); max-height: 420px; object-fit: contain; border-radius: var(--r-input); border: 1px solid var(--border); margin: .65rem 0; }
@@ -1921,17 +1922,24 @@ select:disabled {
 .quick-day { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .8rem; }
 .quick-day__row { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-bottom: 1px solid var(--border); }
 .quick-day__row span { display: grid; gap: .15rem; }
+.quick-day__edit { display: flex !important; align-items: center; flex-wrap: wrap; gap: .4rem; margin-top: .35rem; }
 .inline-link { display: inline-block; margin-left: .8rem; color: var(--accent); }
 .dia-actions { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .info-box--compact { padding: .6rem .8rem; margin: .5rem 0; }
 
 @media (max-width: 700px) {
+  .page-head { align-items: flex-start; flex-direction: column; gap: .35rem; }
+  .page-head .muted { margin: 0; }
   .quick-purchase { padding: .85rem; }
+  .quick-purchase .section-heading { align-items: flex-start; flex-direction: column; gap: .25rem; margin-top: .6rem; }
   .quick-purchase__actions > * { flex: 1 1 45%; justify-content: center; }
   .quick-line { grid-template-columns: 1fr; }
   .quick-line__numbers { width: 100%; }
   .quick-line__numbers input { width: 50%; }
   .quick-line .btn-ghost { justify-self: start; }
+  .quick-day__row { align-items: flex-start; }
+  .quick-day__row > strong { flex: 0 0 auto; white-space: nowrap; }
+  .quick-day__edit select { flex: 1 1 100%; min-width: 0; }
   .sticky-action { position: sticky; bottom: .4rem; z-index: 3; padding: .6rem; margin-top: .7rem; background: color-mix(in srgb, var(--surface) 92%, transparent); border-radius: var(--r-input); }
   .sticky-action button { min-height: 44px; }
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { useAuth } from '../../auth';
+import { Cargando } from '../../ui/Cargando';
 
 interface Producto { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null }
 interface Lote { id: number; producto: string; unidad_base: string | null; recibido_at: string; cantidad_inicial: number; cantidad_restante: number; costo_unitario: number; estado: string; ticket_ref: string | null }
@@ -88,12 +89,25 @@ function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string; onSave
   const [leyendo, setLeyendo] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [comprasDia, setComprasDia] = useState<CompraDia[]>([]);
+  const [cargandoRefs, setCargandoRefs] = useState(true);
+  const [cargandoDia, setCargandoDia] = useState(true);
   const [pagoEditando, setPagoEditando] = useState<number | null>(null);
   const [pagoNuevo, setPagoNuevo] = useState('');
   const [guardandoPago, setGuardandoPago] = useState(false);
 
-  useEffect(() => { api<RefCompra>('/inventario/compras/referencias').then((r) => { setRefs(r); const caja = r.ubicaciones.find((u) => u.tipo === 'efectivo'); if (caja) setOrigen(String(caja.id)); }).catch(() => setMensaje('No se pudieron cargar las referencias de compra.')); }, []);
-  async function cargarDia() { try { setComprasDia(await api<CompraDia[]>(`/inventario/compras?fecha=${encodeURIComponent(fecha)}`)); } catch { setComprasDia([]); } }
+  useEffect(() => {
+    setCargandoRefs(true);
+    api<RefCompra>('/inventario/compras/referencias')
+      .then((r) => { setRefs(r); const caja = r.ubicaciones.find((u) => u.tipo === 'efectivo'); if (caja) setOrigen(String(caja.id)); })
+      .catch(() => setMensaje('No se pudieron cargar las referencias de compra. Puedes revisar la conexión y volver a intentar.'))
+      .finally(() => setCargandoRefs(false));
+  }, []);
+  async function cargarDia() {
+    setCargandoDia(true);
+    try { setComprasDia(await api<CompraDia[]>(`/inventario/compras?fecha=${encodeURIComponent(fecha)}`)); }
+    catch { setComprasDia([]); setMensaje('No se pudieron cargar las compras del día.'); }
+    finally { setCargandoDia(false); }
+  }
   useEffect(() => { void cargarDia(); }, [fecha]);
 
   function fotoSeleccionada(file?: File) {
@@ -127,14 +141,15 @@ function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string; onSave
     finally { setGuardando(false); }
   }
 
-  return <section className="card quick-purchase"><div className="section-heading"><div><h2>Compra rápida</h2><p className="muted">Toma una foto, revisa las líneas y envíala a revisión. La confirmación crea FIFO y el movimiento del corte.</p></div></div>
+  return <section className="card quick-purchase" aria-labelledby="captura-compra-titulo"><div className="section-heading"><div><h2 id="captura-compra-titulo">Compra rápida</h2><p className="muted">Toma una foto, revisa las líneas y envíala a revisión. La confirmación crea FIFO y el movimiento del corte.</p></div></div>
     <div className="quick-purchase__actions"><label className="btn-primary file-button">📷 Tomar foto<input type="file" accept="image/jpeg,image/png,image/webp,image/heic" capture="environment" onChange={(e) => fotoSeleccionada(e.target.files?.[0])} /></label><button className="btn-secondary" onClick={() => void leerTicket()} disabled={!foto || leyendo}>{leyendo ? 'Leyendo…' : 'Leer ticket'}</button></div>
+    {(cargandoRefs || cargandoDia) && <div className="quick-purchase__loading"><Cargando etiqueta="Preparando captura de compras…" /></div>}
     {foto && <img className="ticket-preview" src={foto.data} alt="Vista previa del ticket" />}
     {mensaje && <div className="info-box" role="status">{mensaje}</div>}
-    <div className="form-grid form-grid--three"><label>Fecha<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></label><label>Proveedor<input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej. Costco" /></label><label>Ticket / folio<input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="Opcional, evita duplicados" /></label><label>Total del ticket<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value)}><option value="">Seleccionar…</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
+    <div className="form-grid form-grid--three"><label>Fecha<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></label><label>Proveedor<input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej. Costco" /></label><label>Ticket / folio<input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="Opcional, evita duplicados" /></label><label>Total del ticket<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value)} disabled={cargandoRefs}><option value="">{cargandoRefs ? 'Cargando…' : 'Seleccionar…'}</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
     <div className="quick-lines">{lineas.map((l, i) => <div className="quick-line" key={i}><div className="quick-line__head"><strong>Línea {i + 1}</strong>{l.confianza != null && <span className="muted">sugerencia {Math.round(l.confianza * 100)}%</span>}</div><input placeholder="Descripción del ticket" value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} /><select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value as LineaRapida['tipo_linea'])}><option value="pendiente">Pendiente de clasificar</option><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option></select>{l.tipo_linea === 'inventario' && <select value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Producto…</option>{refs?.productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {p.unidad_base ?? 'sin unidad'}</option>)}</select>}<div className="quick-line__numbers"><input type="number" min="0" step="any" placeholder="Cantidad base" value={l.cantidad_base} onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /><input type="number" min="0" step="0.01" placeholder="Importe" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></div>{lineas.length > 1 && <button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))}>Quitar</button>}</div>)}</div>
     <div className="sticky-action"><button className="btn-secondary" onClick={() => setLineas((v) => [...v, { product_id: null, tipo_linea: 'pendiente', descripcion_fuente: '', cantidad_base: '', unidad_compra: '', contenido_compra: '', costo_unitario: '', importe: '', confianza: null }])}>Agregar línea</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Enviando…' : 'Enviar a revisión'}</button></div>
-    <div className="quick-day"><div className="section-heading"><div><h3>Compras del día</h3><p className="muted">Una compra confirmada aparece aquí y en el cierre diario.</p></div></div>{comprasDia.length === 0 ? <p className="muted">No hay compras registradas para esta fecha.</p> : comprasDia.map((c) => <div className="quick-day__row" key={c.id}><span><strong>{c.proveedor || 'Sin proveedor'}</strong><small className="muted">{c.ticket_ref || 'sin folio'} · {c.estado}</small>{pagoEditando === c.id ? <span style={{ display: 'flex', gap: '0.4rem', marginTop: '0.35rem' }}><select value={pagoNuevo} onChange={(e) => setPagoNuevo(e.target.value)}><option value="">Pago…</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select><button className="btn-ghost" disabled={guardandoPago} onClick={async () => { if (!pagoNuevo) return; setGuardandoPago(true); try { await api(`/inventario/compras/${c.id}/pago`, { method: 'PATCH', body: { origen_pago_id: Number(pagoNuevo) } }); setPagoEditando(null); await cargarDia(); } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo cambiar el origen de pago.'); } finally { setGuardandoPago(false); } }}>Guardar</button><button className="btn-ghost" onClick={() => setPagoEditando(null)}>Cancelar</button></span> : <span className="muted">Pago: {refs?.ubicaciones.find((u) => u.id === c.origen_pago_id)?.nombre ?? '—'} {c.estado === 'confirmada' && <button className="link-btn" onClick={() => { setPagoEditando(c.id); setPagoNuevo(String(c.origen_pago_id ?? '')); }}>Cambiar</button>}</span>}</span><strong>{mxn(c.total)}</strong></div>)}</div>
+    <div className="quick-day"><div className="section-heading"><div><h3>Compras del día</h3><p className="muted">Una compra confirmada aparece aquí y en el cierre diario.</p></div></div>{cargandoDia ? <Cargando etiqueta="Cargando compras del día…" /> : comprasDia.length === 0 ? <p className="muted">No hay compras registradas para esta fecha.</p> : comprasDia.map((c) => <div className="quick-day__row" key={c.id}><span><strong>{c.proveedor || 'Sin proveedor'}</strong><small className="muted">{c.ticket_ref || 'sin folio'} · {c.estado}</small>{pagoEditando === c.id ? <span className="quick-day__edit"><select value={pagoNuevo} onChange={(e) => setPagoNuevo(e.target.value)}><option value="">Pago…</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select><button className="btn-ghost" disabled={guardandoPago} onClick={async () => { if (!pagoNuevo) return; setGuardandoPago(true); try { await api(`/inventario/compras/${c.id}/pago`, { method: 'PATCH', body: { origen_pago_id: Number(pagoNuevo) } }); setPagoEditando(null); await cargarDia(); } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo cambiar el origen de pago.'); } finally { setGuardandoPago(false); } }}>Guardar</button><button className="btn-ghost" onClick={() => setPagoEditando(null)}>Cancelar</button></span> : <span className="muted">Pago: {refs?.ubicaciones.find((u) => u.id === c.origen_pago_id)?.nombre ?? '—'} {c.estado === 'confirmada' && <button className="link-btn" onClick={() => { setPagoEditando(c.id); setPagoNuevo(String(c.origen_pago_id ?? '')); }}>Cambiar</button>}</span>}</span><strong>{mxn(c.total)}</strong></div>)}</div>
   </section>;
 }
 
