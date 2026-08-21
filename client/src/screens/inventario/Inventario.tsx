@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { Cargando } from '../../ui/Cargando';
@@ -61,14 +61,23 @@ interface ListaCompras { grupos: GrupoCompra[]; total: number }
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
-type Tab = 'conteo' | 'borrador' | 'actual' | 'compras';
+type Tab = 'conteo' | 'actual' | 'compras';
+
+/** Recorre la columna de captura sin alterar el valor del input numérico. */
+function moverConteoConFlecha(event: KeyboardEvent<HTMLInputElement>) {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+  event.preventDefault();
+  const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[data-conteo-input="true"]'));
+  const actual = inputs.indexOf(event.currentTarget);
+  if (actual < 0) return;
+  const siguiente = inputs[actual + (event.key === 'ArrowDown' ? 1 : -1)];
+  if (!siguiente) return;
+  siguiente.focus();
+  siguiente.select();
+}
 
 export default function Inventario() {
   const [tab, setTab] = useState<Tab>('conteo');
-  const [iaDisponible, setIaDisponible] = useState(false);
-  useEffect(() => {
-    api<{ disponible: boolean }>('/inventario/draft/estado').then((e) => setIaDisponible(e.disponible)).catch(() => setIaDisponible(false));
-  }, []);
   return (
     <div className="page">
       <header className="page-head">
@@ -79,13 +88,11 @@ export default function Inventario() {
       </header>
       <nav className="tabs">
         <button className={tab === 'conteo' ? 'tab tab--on' : 'tab'} onClick={() => setTab('conteo')}>Conteo</button>
-        {iaDisponible && <button className={tab === 'borrador' ? 'tab tab--on' : 'tab'} onClick={() => setTab('borrador')}>Borrador IA <small className="tab-hint">experimental</small></button>}
         <button className={tab === 'actual' ? 'tab tab--on' : 'tab'} onClick={() => setTab('actual')}>Existencia actual</button>
         <button className={tab === 'compras' ? 'tab tab--on' : 'tab'} onClick={() => setTab('compras')}>Lista de compras</button>
       </nav>
       <div className="tab-body">
         {tab === 'conteo' && <Conteo onGuardado={() => setTab('actual')} />}
-        {tab === 'borrador' && <BorradorIA onGuardado={() => setTab('actual')} />}
         {tab === 'actual' && <InventarioActual />}
         {tab === 'compras' && <ListaDeCompras />}
       </div>
@@ -202,6 +209,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                   ) : (
                     <input
                       className="conteo-input"
+                      data-conteo-input="true"
                       type="number"
                       inputMode="decimal"
                       step="any"
@@ -209,6 +217,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                       placeholder="0"
                       value={valores[key] ?? ''}
                       onChange={(e) => setVal(p.id, zonaActiva, e.target.value)}
+                      onKeyDown={moverConteoConFlecha}
                     />
                   )}
                 </li>
@@ -256,7 +265,8 @@ function leerImagenBase64(file: File): Promise<{ base64: string; tipo: string }>
   });
 }
 
-function BorradorIA({ onGuardado }: { onGuardado: () => void }) {
+// Retenido sólo para rollback; no se expone en la navegación de Inventario.
+export function BorradorIA({ onGuardado }: { onGuardado: () => void }) {
   const [zonas, setZonas] = useState<Zona[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [zonaId, setZonaId] = useState<number | null>(null);

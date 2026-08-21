@@ -8,7 +8,7 @@ import { Cargando } from '../../ui/Cargando';
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
-type Tab = 'general' | 'inventario' | 'recetas' | 'finanzas' | 'tareas';
+type Tab = 'general' | 'inventario' | 'recetas' | 'finanzas';
 
 export default function Configuracion() {
   const [tab, setTab] = useState<Tab>('general');
@@ -25,14 +25,12 @@ export default function Configuracion() {
         <button className={tab === 'inventario' ? 'tab tab--on' : 'tab'} onClick={() => setTab('inventario')}>Inventario</button>
         <button className={tab === 'recetas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('recetas')}>Recetas y costeo</button>
         <button className={tab === 'finanzas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('finanzas')}>Finanzas</button>
-        <button className={tab === 'tareas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('tareas')}>Tareas</button>
       </nav>
       <div className="tab-body">
         {tab === 'general' && <General />}
         {tab === 'inventario' && <InventarioCfg />}
         {tab === 'recetas' && <RecetasCfg />}
         {tab === 'finanzas' && <FinanzasCfg />}
-        {tab === 'tareas' && <TareasCfg />}
       </div>
     </div>
   );
@@ -700,77 +698,6 @@ function Ubicaciones({ cfg, onChange }: { cfg: AdminConfig; onChange: () => void
         await api('/finanzas/ubicaciones', { method: 'POST', body: { nombre: nombre.trim(), tipo, socio_id: socioId === '' ? null : socioId } });
         setNombre(''); setSocioId(''); onChange();
       }}>+ Agregar ubicación</button>
-    </div>
-  );
-}
-
-// ===========================================================================
-//  TAREAS: gestión de checklists de apertura/cierre
-// ===========================================================================
-interface ChkItem { id: number; texto: string; orden: number }
-interface Checklist { id: number; nombre: string; tipo: 'apertura' | 'cierre'; activo: boolean; items: ChkItem[] }
-
-function TareasCfg() {
-  const [cls, setCls] = useState<Checklist[]>([]);
-  const [nombre, setNombre] = useState('');
-  const [tipo, setTipo] = useState<'apertura' | 'cierre'>('apertura');
-  const cargar = () => api<Checklist[]>('/tareas/checklists').then(setCls);
-  useEffect(() => { void cargar(); }, []);
-
-  return (
-    <>
-      <div className="form-mov">
-        <strong>Nuevo checklist</strong>
-        <input placeholder="Nombre (ej. Apertura de barra)" value={nombre} onChange={(e) => setNombre(e.target.value)} />
-        <select value={tipo} onChange={(e) => setTipo(e.target.value as 'apertura' | 'cierre')}>
-          <option value="apertura">Apertura</option>
-          <option value="cierre">Cierre</option>
-        </select>
-        <button className="btn-primary" onClick={async () => {
-          if (!nombre.trim()) return;
-          await api('/tareas/checklists', { method: 'POST', body: { nombre: nombre.trim(), tipo } });
-          setNombre(''); cargar();
-        }}>Crear checklist</button>
-      </div>
-      {cls.length === 0 && <p className="muted">Aún no hay checklists.</p>}
-      {cls.map((c) => <ChecklistEditor key={c.id} c={c} onChange={cargar} />)}
-    </>
-  );
-}
-
-function ChecklistEditor({ c, onChange }: { c: Checklist; onChange: () => void }) {
-  const [nuevo, setNuevo] = useState('');
-  const confirmar = useConfirm();
-  return (
-    <div className={`resumen-card ${c.activo ? '' : 'is-inactive'}`} style={{ gap: '0.4rem' }}>
-      <div className="kv" style={{ borderBottom: 'none', gap: '0.4rem', flexWrap: 'wrap' }}>
-        <Icono name={c.tipo === 'apertura' ? 'sunrise' : 'moon'} size={18} className="ttl-icon" />
-        <input defaultValue={c.nombre} className="field-md" style={{ flex: 1, minWidth: 120 }}
-          onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== c.nombre) void api(`/tareas/checklists/${c.id}`, { method: 'PATCH', body: { nombre: v } }).then(onChange); }} />
-        <button className="pill" onClick={async () => { await api(`/tareas/checklists/${c.id}`, { method: 'PATCH', body: { activo: !c.activo } }); onChange(); }}>
-          {c.activo ? 'Desactivar' : 'Activar'}
-        </button>
-        <button className="link-btn" title="Eliminar checklist" aria-label={`Eliminar checklist ${c.nombre}`} onClick={async () => {
-          const ok = await confirmar({ message: `¿Eliminar el checklist "${c.nombre}" y todos sus ítems?`, tone: 'danger', confirmText: 'Eliminar' });
-          if (!ok) return;
-          await api(`/tareas/checklists/${c.id}`, { method: 'DELETE' }); onChange();
-        }}>✕</button>
-      </div>
-      {c.items.map((it) => (
-        <div key={it.id} className="conteo-row" style={{ padding: '0.35rem 0', gap: '0.4rem' }}>
-          <input defaultValue={it.texto} className="field-sm" style={{ flex: 1 }}
-            onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== it.texto) void api(`/tareas/items/${it.id}`, { method: 'PATCH', body: { texto: v } }).then(onChange); }} />
-          <button className="link-btn" title="Eliminar ítem" aria-label={`Eliminar ítem ${it.texto}`} onClick={async () => { await api(`/tareas/items/${it.id}`, { method: 'DELETE' }); onChange(); }}>✕</button>
-        </div>
-      ))}
-      <div className="row-actions" style={{ marginTop: '0.3rem' }}>
-        <input style={{ flex: 1 }} placeholder="Nuevo ítem…" value={nuevo} onChange={(e) => setNuevo(e.target.value)} />
-        <button className="btn-secondary" onClick={async () => {
-          if (!nuevo.trim()) return;
-          await api(`/tareas/checklists/${c.id}/items`, { method: 'POST', body: { texto: nuevo.trim(), orden: c.items.length + 1 } });
-          setNuevo(''); onChange();
-        }}>+ Ítem</button>
-      </div>
     </div>
   );
 }

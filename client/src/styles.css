@@ -1905,8 +1905,15 @@ select:disabled {
   gap: 0.45rem;
 }
 
-/* Compras rápidas: el mismo flujo funciona en teléfono y escritorio. */
+/* Compras: el flujo visible es captura → revisión → FIFO. */
+.compras-page .page-head { margin-bottom: .75rem; }
 .quick-purchase { border-color: rgba(139, 199, 99, 0.45); }
+.quick-purchase__intro { display: flex; align-items: center; gap: .65rem; margin-bottom: .85rem; }
+.quick-purchase__intro h2 { margin: 0; }
+.quick-purchase__intro p { margin: .15rem 0 0; }
+.quick-purchase__step { display: inline-grid; place-items: center; width: 1.8rem; height: 1.8rem; border-radius: 50%; background: var(--brand); color: #fff; font-weight: 700; flex: 0 0 auto; }
+.quick-purchase__section-label { margin-top: .9rem; color: var(--ink-2); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.compras-epos .quick-purchase__intro { margin-bottom: 1rem; }
 .quick-purchase__actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: .8rem; }
 .quick-purchase__loading { min-height: 2.25rem; display: flex; align-items: center; color: var(--ink-2); }
 .file-button { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
@@ -1932,6 +1939,7 @@ select:disabled {
   .page-head .muted { margin: 0; }
   .quick-purchase { padding: .85rem; }
   .quick-purchase .section-heading { align-items: flex-start; flex-direction: column; gap: .25rem; margin-top: .6rem; }
+  .quick-purchase__intro { align-items: flex-start; }
   .quick-purchase__actions > * { flex: 1 1 45%; justify-content: center; }
   .quick-line { grid-template-columns: 1fr; }
   .quick-line__numbers { width: 100%; }

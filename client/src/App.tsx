@@ -5,7 +5,6 @@ import Home from './screens/Home';
 import Inventario from './screens/inventario/Inventario';
 import Finanzas from './screens/finanzas/Finanzas';
 import Patrimonio from './screens/patrimonio/Patrimonio';
-import Tareas from './screens/tareas/Tareas';
 import Configuracion from './screens/config/Configuracion';
 import Marketing from './screens/marketing/Marketing';
 import Compras from './screens/compras/Compras';
@@ -43,7 +42,6 @@ function AppBody() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/inventario" element={<Inventario />} />
-        <Route path="/tareas" element={<Tareas />} />
         <Route path="/finanzas" element={<SoloAdmin rol="admin"><Finanzas /></SoloAdmin>} />
         <Route path="/patrimonio" element={<SoloAdmin rol="admin"><Patrimonio /></SoloAdmin>} />
         <Route path="/configuracion" element={<SoloAdmin rol="admin"><Configuracion /></SoloAdmin>} />
