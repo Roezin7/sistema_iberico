@@ -69,6 +69,63 @@ function serialize(p: any) {
   };
 }
 
+const ORDEN_MENU = [
+  'Montado Mediterraneo', 'Montado Castellano', 'Montado Ibérico', 'Montado Sevillano', 'Montado Ateca',
+  'Papas a la francesa', 'Papas Ibéricas', 'Tabla de Tapas', 'Tabla de Quesos y Embutidos',
+  'Pizza Margarita', 'Pizza Castellana', 'Pizza Ibérica', 'Pizza Madrileña', 'Pizza Catalana', 'Pizza Dos Carnes',
+  'Copa de la Casa', 'Piñada', 'Limonada', 'Limonada Ibérica', 'Cubanito Grande', 'Affogato',
+  'Gin Tonic Rojo', 'Gin Tonic Verde', 'Gin Tonic Rosa', 'Gin Tonic de Frutos Rojos', 'Gin Tonic de Pepino',
+  'Negroni Ibérico', 'Mezcal-tonic', 'Mezcal Mule', 'Mezcalita Piña', 'Mezcalita Mango', 'Mezcalita Tamarindo', 'Mezcalita Jamaica',
+  'Carajillo', 'Baileys', 'Ronchata', 'Mezcachata', 'Oro Blanco', 'Tinto de Verano', 'Sangría Española',
+  'Mimosa Clásica', 'Mimosa Ibérica', 'Mojito Clásico', 'Mojito Tinto', 'Perla Negra', 'Toro Negro',
+  'Margarita Clásica', 'Margarita de Fresa', 'Tequila Sunrise', 'Piña Colada',
+  'Paloma Chica', 'Paloma Grande', 'Vampiro Grande', 'Cuba/Shot Jagger', 'Cuba de hacienda de tepa',
+  'Michelada Chica', 'Michelada Grande', 'Modelo', 'Stella Artois', 'Michelob Ultra',
+];
+const normalizarMenu = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const ORDEN_NORMALIZADO = new Map(ORDEN_MENU.map((nombre, index) => [normalizarMenu(nombre), index]));
+
+function seccionMenu(nombre: string) {
+  const n = normalizarMenu(nombre);
+  if (n.startsWith('montado')) return 'Montados';
+  if (n.startsWith('papa') || n.startsWith('tabla')) return 'Para compartir';
+  if (n.startsWith('pizza')) return 'Pizzas';
+  if (['modelo', 'stella artois', 'michelob ultra'].some((x) => n === x)) return 'Cervezas';
+  if (n.includes('copa de la casa') || n.includes('gin tonic') || n.includes('negroni') || n.includes('mezcal') || n.includes('carajillo') || n.includes('baileys') || n.includes('ronchata') || n.includes('mezcachata') || n.includes('oro blanco') || n.includes('tinto') || n.includes('sangria') || n.includes('mimosa') || n.includes('mojito') || n.includes('perla') || n.includes('toro') || n.includes('margarita') || n.includes('tequila') || n.includes('paloma') || n.includes('vampiro') || n.includes('cuba')) return 'Bebidas con alcohol';
+  if (['pinada', 'limonada', 'affogato'].some((x) => n.startsWith(x))) return 'Sin alcohol';
+  return 'Otros';
+}
+
+/** Resumen ejecutivo de costos del menú, ordenado como la carta y listo para
+ * consulta: no muta datos ni sustituye el costeo FIFO histórico. */
+recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
+  const productos = await prisma.productos_menu.findMany({
+    where: { negocio_id: req.auth!.negocioId, activo: true },
+    include: {
+      recetas: {
+        orderBy: { version: 'desc' }, take: 1,
+        include: { lineas: { include: { products: { select: { name: true, unit_cost: true, unidad_base: true, contenido_compra: true, rendimiento_util: true } } } } },
+      },
+    },
+  });
+  const items = productos.map((p) => {
+    const receta = p.recetas[0];
+    const lineas = receta?.lineas.map((l) => {
+      const costeo = costoLinea(Number(l.cantidad), l.unidad, { unitCost: num(l.products.unit_cost), unidadBase: l.products.unidad_base, contenidoCompra: num(l.products.contenido_compra), rendimientoUtil: num(l.products.rendimiento_util) });
+      return { producto: l.products.name, cantidad: Number(l.cantidad), unidad: l.unidad, cantidad_base: costeo.cantidadBase, unidad_base: costeo.unidadBase, costo_unitario_base: costeo.costoUnitarioBase, costo: costeo.costoEstimado, falta_configuracion: costeo.faltaConfiguracion, nota: l.nota };
+    }) ?? [];
+    const costoCompleto = lineas.length > 0 && lineas.every((l) => l.costo != null && l.falta_configuracion.length === 0);
+    const costo = costoCompleto ? lineas.reduce((total, l) => total + (l.costo ?? 0), 0) : null;
+    const precio = num(p.precio_venta);
+    const margen = costo != null && precio != null ? precio - costo : null;
+    return { id: Number(p.id), nombre: p.nombre, seccion: seccionMenu(p.nombre), orden: ORDEN_NORMALIZADO.get(normalizarMenu(p.nombre)) ?? 9999, precio_venta: precio, costo_receta: costo, margen_unitario: margen, food_cost_pct: costo != null && precio && precio > 0 ? (costo / precio) * 100 : null, receta_id: receta ? Number(receta.id) : null, version: receta?.version ?? null, estado: receta?.estado ?? 'sin_receta', completa: !!receta && lineas.length > 0 && lineas.every((l) => l.falta_configuracion.length === 0), lineas };
+  }).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre, 'es'));
+  const costeados = items.filter((i) => i.costo_receta != null);
+  const priced = items.filter((i) => i.food_cost_pct != null);
+  const sections = [...new Set(items.map((i) => i.seccion))];
+  res.json({ fuente: 'Catálogo de insumos y receta vigente', moneda: 'MXN', generado_at: new Date().toISOString(), resumen: { productos: items.length, costeados: costeados.length, pendientes: items.length - costeados.length, food_cost_promedio: priced.length ? priced.reduce((s, i) => s + (i.food_cost_pct ?? 0), 0) / priced.length : null, margen_promedio: priced.length ? priced.reduce((s, i) => s + (i.margen_unitario ?? 0), 0) / priced.length : null }, secciones: sections, productos: items });
+}));
+
 /** GET /recetas — menú, versiones y líneas; solo datos del negocio autenticado. */
 recetasRouter.get('/', asyncHandler(async (req, res) => {
   const productos = await prisma.productos_menu.findMany({
