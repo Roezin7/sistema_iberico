@@ -2,7 +2,7 @@
 
 ## Estado
 
-- Semana operativa: `Semana 2026-08-10` (ID 63), abierta.
+- Semana operativa: `Semana 2026-08-10` (ID 63), cerrada al revisar el 21 de agosto.
 - Inventario inicial: snapshot 49, capturado el 10 de agosto.
 - Ventas Epos Now: $9,786.00, 126 unidades, 30 transacciones.
 - Conciliación Epos: confirmada para el 14, 15 y 16 de agosto.
@@ -21,14 +21,18 @@ Las propinas con tarjeta ($48.00 el 14 de agosto) permanecen como movimiento sep
 
 ## Compras
 
-Los cuatro tickets ya estaban registrados financieramente en la Semana 63. No se duplicaron. El total de compras de inventario que permanece en el sistema es **$7,925.70**:
+Los cuatro tickets ya estaban registrados financieramente en la Semana 63. No se duplicaron. El total que permanece en los movimientos de compras y gastos es **$7,925.70**:
 
 - Bodegas Alameda: $2,922.00.
 - Costco: $3,320.00.
 - La Comer 1: $1,546.50.
 - La Comer 2: $137.20.
 
-Además, quedaron persistidas cuatro compras detalladas con 25 líneas y 55 presentaciones para asociar productos, cantidades y costos históricos. Los costos observados del 11 de agosto se guardaron sin sobrescribir el costo actual del catálogo.
+La revisión de la base actual confirma que esos cuatro tickets no están persistidos como
+registros detallados de `purchases/purchase_lines`; sólo existen los movimientos
+financieros. Por tanto, los costos observados del 11 de agosto todavía no están
+aplicados como lotes FIFO de compra. Véase
+`docs/IBERICO_WEEK63_RECONCILIACION_TICKETS_2026-08-21.md`.
 
 ## Gastos y sueldos ya existentes
 
@@ -38,14 +42,19 @@ Además, quedaron persistidas cuatro compras detalladas con 25 líneas y 55 pres
 
 ## Incidencias abiertas
 
-1. **Resuelta:** las cuatro compras financieras se corrigieron al 11 de agosto, fecha de los tickets. Los importes y la asociación a la Semana 63 permanecen iguales.
-2. La compra de arúgula está registrada, pero la presentación exacta y su rendimiento útil siguen pendientes para consumirla correctamente en recetas.
-3. No existe un conteo físico final de la semana. La merma real no puede cerrarse hasta compararlo contra el inventario calculado.
-4. La tabla actual de compras no conserva por sí sola el importe por línea. Los costos históricos y las líneas detalladas se conservaron como puente para la implementación FIFO.
+1. **Resuelta:** las cuatro compras financieras están fechadas el 11 de agosto y asociadas a la Semana 63. Los importes permanecen iguales y no deben duplicarse.
+2. Falta reconstruir el detalle idempotente de esas compras y crear sus lotes FIFO históricos; todavía no se debe presentar el margen como FIFO real por compra.
+3. La compra de arúgula está identificada en el ticket, pero la presentación exacta y su rendimiento útil siguen pendientes para consumirla correctamente en recetas.
+4. No existe un conteo físico final de la semana. La merma real no puede cerrarse hasta compararlo contra el inventario calculado.
+5. La tabla actual de compras no conserva por sí sola el importe por línea; el detalle deberá reconstruirse desde los tickets ya documentados.
 
 ## FIFO del piloto
 
-Se creó el registro persistente del piloto con 130 lotes: 93 lotes derivados del inventario inicial, 24 lotes de compras del 11 de agosto y 13 lotes de ajuste inicial autorizados para representar existencias que ya estaban físicamente pero no habían sido contabilizadas. El consumo de las recetas de las 126 unidades vendidas produjo un costo FIFO provisional de **$3,509.24**.
+El registro persistente actual del piloto conserva la apertura histórica y los
+ajustes explícitos. La base revisada no contiene todavía lotes de las compras del
+11 de agosto. El costeo vigente es provisional: 55 ventas costeadas, 33
+excepciones y $1,861.4069 de costo FIFO. No debe confundirse con el resultado
+final por compra.
 
 El cálculo dejó 13 faltantes explícitos, no valores inventados:
 

@@ -1,6 +1,7 @@
 # Piloto FIFO histórico — semana 63
 
-Fecha de ejecución: 20 de agosto de 2026  
+Fecha de ejecución documentada: 20 de agosto de 2026  
+Revisión de base: 21 de agosto de 2026  
 Periodo de ventas: 10–16 de agosto de 2026  
 Negocio: Ibérico
 
@@ -24,18 +25,21 @@ restantes antes y después de la prueba.
 ## Resultado
 
 - Ventas Epos importadas: 104.
-- Ventas costeadas con existencia histórica: 64.
-- Costo FIFO aplicado: $2,101.4883 MXN.
-- Excepciones por inventario insuficiente: 40.
+- Ventas costeadas con existencia histórica: 55 (estado verificado el 21 de agosto).
+- Costo FIFO aplicado actualmente: $1,861.4069 MXN.
+- Excepciones por inventario insuficiente: 33 (estado verificado el 21 de agosto).
 - Consumos históricos registrados: 219 líneas.
 - Cantidad consumida de lotes históricos: 15,580.18 unidades base.
 - Valor inicial de lotes históricos: $35,897.00 MXN.
 
-Las excepciones se registraron sin consumir lotes de la semana 64. No existen
-compras registradas del 10–16 de agosto en producción; las compras actualmente
-registradas son del 20 de agosto. Por eso no se incorporaron facturas que no
-existen. Se conserva un ajuste histórico explícito de faltantes para la prueba,
-separado de compras reales.
+Las excepciones se registraron sin consumir lotes de la semana 64. Los tickets
+del 11 de agosto sí existen como movimientos financieros de la semana 63 por
+$7,925.70. Sin embargo, la base actual no conserva el detalle de esos tickets
+como `purchases/purchase_lines` ni como lotes FIFO asociados. Las compras
+detalladas que aparecen como registros de compra son las del 20 de agosto y
+pertenecen a la semana 64. Por eso el costo mostrado aquí todavía no puede
+considerarse FIFO real por compra: utiliza la apertura histórica y los ajustes
+explícitos, separados de los movimientos financieros.
 
 ## Criterio aplicado
 
@@ -46,7 +50,8 @@ inventario antes de usarse para un margen real.
 
 ## Siguiente acción
 
-Obtener los tickets reales del 10–16 de agosto y sustituir el ajuste histórico
-por compras confirmadas. Las 40 excepciones restantes corresponden sobre todo
-a limón, romero, mozzarella, hierbabuena, saborizante, fresas, lechera y
-Squirt. Sólo después de resolverlas debe cerrarse el margen de la semana.
+Reconstruir de forma idempotente el detalle de los cuatro tickets ya
+documentados, enlazándolos a los movimientos financieros existentes y creando
+sus lotes históricos. Después se reemplazarán únicamente los ajustes que queden
+cubiertos por compras reales y se repetirá el costeo. La semana 64 debe
+permanecer intacta.
