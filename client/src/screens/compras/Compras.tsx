@@ -13,6 +13,7 @@ interface LineaRapida { product_id: number | null; tipo_linea: 'inventario' | 'g
 interface Pendiente { id: number; fecha_recepcion: string; proveedor: string | null; ticket_ref: string | null; total: number; estado: string; foto: boolean; origen_pago_id: number | null; notas?: string | null; lineas: Array<{ id: number; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null; costo_unitario: number | null; importe: number; confianza: number | null; notas: string | null }> }
 interface ValidacionCompra { valida: boolean; errores: Array<{ codigo: string; mensaje: string; linea?: number; producto?: string }>; advertencias: Array<{ codigo: string; mensaje: string; linea?: number; producto?: string }> }
 interface CompraDia { id: number; fecha: string; proveedor: string | null; ticket_ref: string | null; total: number; estado: string; origen_pago_id: number | null; origen_pago?: string | null; lineas: { tipo: string; producto: string; importe: number }[] }
+interface Semana { id: number; etiqueta: string; fecha_inicio: string; fecha_fin: string; estado: 'abierta' | 'cerrada' }
 
 const mxn = (n: number) => n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 const hoy = new Date().toISOString().slice(0, 10);
@@ -38,9 +39,23 @@ export default function Compras() {
   const [pendientes, setPendientes] = useState<Pendiente[]>([]);
   const [compras, setCompras] = useState<CompraDia[]>([]);
   const [cargandoCompras, setCargandoCompras] = useState(true);
+  const [semanas, setSemanas] = useState<Semana[]>([]);
+  const [semanaId, setSemanaId] = useState<number | null>(null);
+  const [cargandoSemanas, setCargandoSemanas] = useState(true);
 
   const productosOrdenados = useMemo(() => [...productos].sort((a, b) => a.nombre.localeCompare(b.nombre)), [productos]);
+  const semana = semanas.find((s) => s.id === semanaId) ?? null;
+  const comprasSemana = useMemo(() => semana ? compras.filter((c) => c.fecha >= semana.fecha_inicio && c.fecha <= semana.fecha_fin) : compras, [compras, semana]);
+  const lotesSemana = useMemo(() => semana ? lotes.filter((l) => l.recibido_at >= semana.fecha_inicio && l.recibido_at <= semana.fecha_fin) : lotes, [lotes, semana]);
   useEffect(() => { if (esAdmin) void cargar(); }, [esAdmin]);
+  useEffect(() => {
+    if (!esAdmin) return;
+    setCargandoSemanas(true);
+    api<Semana[]>('/finanzas/semanas')
+      .then((filas) => { setSemanas(filas); setSemanaId((prev) => prev ?? filas.find((s) => s.estado === 'abierta')?.id ?? filas[0]?.id ?? null); })
+      .catch((e) => setMensaje(e instanceof Error ? e.message : 'No se pudieron cargar las semanas.'))
+      .finally(() => setCargandoSemanas(false));
+  }, [esAdmin]);
 
   async function cargar() {
     setCargandoCompras(true);
@@ -72,6 +87,7 @@ export default function Compras() {
 
   return <div className="page compras-page">
     <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Compras</h1></div><p className="muted">Captura tickets, confirma líneas y revisa los lotes FIFO.</p></header>
+    {esAdmin && <div className="compras-weekbar"><label>Semana de consulta<select value={semanaId ?? ''} onChange={(e) => setSemanaId(Number(e.target.value))} disabled={cargandoSemanas || !semanas.length}><option value="">{cargandoSemanas ? 'Cargando semanas…' : 'Seleccionar semana'}</option>{semanas.map((s) => <option key={s.id} value={s.id}>{s.etiqueta} · {s.fecha_inicio} → {s.fecha_fin}{s.estado === 'cerrada' ? ' · cerrada' : ' · abierta'}</option>)}</select></label>{semana && <span className={`status status--${semana.estado === 'abierta' ? 'ok' : 'cargando'}`}>{semana.estado === 'abierta' ? 'Semana abierta' : 'Semana cerrada'}</span>}</div>}
     <CapturaRapida fechaInicial={fechaInicial} onSaved={() => { if (esAdmin) void cargar(); }} />
     {esAdmin && <nav className="tabs">
       <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('tickets'); void cargarTickets(); }}>Tickets</button>
@@ -80,8 +96,9 @@ export default function Compras() {
       <button className={tab === 'pendientes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('pendientes'); void cargar(); }}>Revisión {pendientes.length ? `(${pendientes.length})` : ''}</button>
     </nav>}
     {mensaje && <div className="info-box" role="status">{mensaje}</div>}
-    {esAdmin && tab === 'tickets' && <Tickets compras={compras} cargando={cargandoCompras} />}
-    {esAdmin && tab === 'lotes' && <Lotes lotes={lotes} />}
+    {esAdmin && semana && <ResumenSemana semana={semana} compras={comprasSemana} lotes={lotesSemana} />}
+    {esAdmin && tab === 'tickets' && <Tickets compras={comprasSemana} cargando={cargandoCompras} />}
+    {esAdmin && tab === 'lotes' && <Lotes lotes={lotesSemana} />}
     {esAdmin && tab === 'epos' && <EposPanel from={from} setFrom={setFrom} to={to} setTo={setTo} preview={preview} consultando={consultando} consultar={consultarEpos} />}
     {esAdmin && tab === 'pendientes' && <Pendientes filas={pendientes} productos={productosOrdenados} onChange={() => void cargar()} />}
   </div>;
@@ -190,8 +207,16 @@ function fechaCompra(fecha: string) {
   return new Date(`${fecha}T12:00:00`).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+function ResumenSemana({ semana, compras, lotes }: { semana: Semana; compras: CompraDia[]; lotes: Lote[] }) {
+  const totalCompras = compras.reduce((s, c) => s + c.total, 0);
+  const totalFifo = lotes.reduce((s, l) => s + l.cantidad_inicial * l.costo_unitario, 0);
+  const confirmadas = compras.filter((c) => c.estado === 'confirmada').length;
+  return <section className="card compras-week-summary"><div className="section-heading"><div><h2>{semana.etiqueta}</h2><p className="muted">{semana.fecha_inicio} → {semana.fecha_fin} · {semana.estado === 'abierta' ? 'En operación' : 'Cierre histórico'}</p></div><span className="muted">Vista semanal</span></div><div className="summary-grid"><div><small>Tickets</small><strong>{compras.length}</strong><span>{confirmadas} confirmadas</span></div><div><small>Compras registradas</small><strong>{mxn(totalCompras)}</strong><span>Según tickets de la semana</span></div><div><small>Lotes FIFO recibidos</small><strong>{lotes.length}</strong><span>Ordenados por recepción</span></div><div><small>Valor recibido FIFO</small><strong>{mxn(totalFifo)}</strong><span>Valor inicial de los lotes</span></div></div></section>;
+}
+
 function Tickets({ compras, cargando }: { compras: CompraDia[]; cargando: boolean }) {
   const [limite, setLimite] = useState(20);
+  useEffect(() => setLimite(20), [compras]);
   const visibles = compras.slice(0, limite);
   const totalVisible = visibles.reduce((s, c) => s + c.total, 0);
   const porDia = new Map<string, CompraDia[]>();
@@ -214,6 +239,7 @@ function Tickets({ compras, cargando }: { compras: CompraDia[]; cargando: boolea
 
 function Lotes({ lotes }: { lotes: Lote[] }) {
   const [limite, setLimite] = useState(50);
+  useEffect(() => setLimite(50), [lotes]);
   if (!lotes.length) return <div className="empty-state"><strong>No hay lotes FIFO registrados</strong><p>Confirma una compra para crear el primer lote.</p></div>;
   const visibles = lotes.slice(0, limite);
   return <section className="card fifo-panel"><details>

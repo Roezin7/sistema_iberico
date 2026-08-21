@@ -1907,6 +1907,14 @@ select:disabled {
 
 /* Compras: el flujo visible es captura → revisión → FIFO. */
 .compras-page .page-head { margin-bottom: .75rem; }
+.compras-weekbar { display: flex; align-items: end; justify-content: space-between; gap: 1rem; padding: .85rem 1rem; margin-bottom: .9rem; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-card); }
+.compras-weekbar label { display: grid; gap: .35rem; min-width: min(100%, 32rem); color: var(--ink-2); font-size: .8rem; font-weight: 700; }
+.compras-weekbar select { width: 100%; }
+.compras-week-summary { border-color: rgba(139, 199, 99, .35); }
+.compras-week-summary .section-heading { margin-top: 0; }
+.compras-week-summary .summary-grid { margin-top: .7rem; }
+.compras-week-summary .summary-grid div { display: grid; gap: .15rem; }
+.compras-week-summary .summary-grid span { color: var(--ink-3); font-size: .78rem; }
 .quick-purchase { border-color: rgba(139, 199, 99, 0.45); }
 .quick-purchase__intro { display: flex; align-items: center; gap: .65rem; margin-bottom: .85rem; }
 .quick-purchase__intro h2 { margin: 0; }
@@ -1959,6 +1967,8 @@ select:disabled {
 @media (max-width: 700px) {
   .page-head { align-items: flex-start; flex-direction: column; gap: .35rem; }
   .page-head .muted { margin: 0; }
+  .compras-weekbar { align-items: stretch; flex-direction: column; }
+  .compras-weekbar label { min-width: 0; }
   .quick-purchase { padding: .85rem; }
   .quick-purchase .section-heading { align-items: flex-start; flex-direction: column; gap: .25rem; margin-top: .6rem; }
   .quick-purchase__intro { align-items: flex-start; }
