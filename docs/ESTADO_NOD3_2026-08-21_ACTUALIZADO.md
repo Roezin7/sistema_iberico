@@ -172,3 +172,19 @@ El resto permanece como documentación, no como backlog de software.
 Durante esta etapa, NOD3 no se optimiza para tener más módulos. Se optimiza para que
 BPM e Ibérico produzcan evidencia empresarial comparable, decisiones mejores y patrones
 que realmente merezcan convertirse en software.
+
+## Corrección de datos de Compras — 21 de agosto de 2026
+
+Se eliminaron de producción cuatro registros históricos incorrectamente fechados en la
+semana 64. Eran los IDs 1–4, con fecha 20 de agosto, sin proveedor, sin folio, sin total,
+fuente manual, costo cero y sin líneas de captura, lotes FIFO ni movimientos financieros.
+
+La eliminación fue transaccional y validó todas esas condiciones antes de ejecutarse.
+Los cuatro tickets reales de la semana permanecen intactos:
+
+- Bodegas Alianza — `PILOTO-2026-08-20-BOD-01` — $952.99;
+- La Comer — `PILOTO-2026-08-20-LC-02` — $32.10;
+- La Comer — `PILOTO-2026-08-20-LC-01` — $1,282.10;
+- Compra local — `PILOTO-2026-08-20-LOCAL-01` — $28.60.
+
+No se modificaron lotes ni movimientos financieros asociados a los tickets reales.
