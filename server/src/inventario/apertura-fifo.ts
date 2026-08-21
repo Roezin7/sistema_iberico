@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 
 type CriterioCosto = 'catalogo';
+type ModoApertura = 'normal' | 'historico_prueba';
 
 function round(value: number, digits = 6) {
   const factor = 10 ** digits;
@@ -20,8 +21,10 @@ export async function prepararAperturaFifo(input: {
   negocioId: bigint;
   semanaId: bigint;
   criterio?: CriterioCosto;
+  modo?: ModoApertura;
 }) {
   const criterio = input.criterio ?? 'catalogo';
+  const modo = input.modo ?? 'normal';
   if (criterio !== 'catalogo') throw new HttpError(400, 'Criterio de costo de apertura no soportado');
 
   return prisma.$transaction(async (tx) => {
@@ -34,9 +37,12 @@ export async function prepararAperturaFifo(input: {
       throw new HttpError(409, 'La semana no tiene snapshot de inventario de apertura');
     }
 
-    const referencia = `APERTURA-FIFO-${semana.id}`;
+    const referencia = modo === 'historico_prueba'
+      ? `APERTURA-FIFO-HISTORICO-${semana.id}`
+      : `APERTURA-FIFO-${semana.id}`;
+    const fuente = modo === 'historico_prueba' ? 'historico_prueba' : 'inventario_inicial';
     const existentes = await tx.inventory_lots.findMany({
-      where: { negocio_id: input.negocioId, fuente: 'inventario_inicial', ticket_ref: referencia },
+      where: { negocio_id: input.negocioId, fuente, ticket_ref: referencia },
       select: { id: true, product_id: true, cantidad_inicial: true, cantidad_restante: true, costo_unitario: true },
       orderBy: { id: 'asc' },
     });
@@ -102,18 +108,20 @@ export async function prepararAperturaFifo(input: {
           cantidad_restante: lote.cantidad,
           costo_unitario: lote.costo,
           moneda: 'MXN',
-          fuente: 'inventario_inicial',
+          fuente,
           ticket_ref: referencia,
-          notas: `Apertura FIFO desde snapshot ${semana.inventario_semanal.apertura_snapshot_id}; costo ${criterio}`,
+          notas: `${modo === 'historico_prueba' ? 'Prueba histórica aislada' : 'Apertura'} FIFO desde snapshot ${semana.inventario_semanal.apertura_snapshot_id}; costo ${criterio}`,
         },
         select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
       });
       creados.push(creado);
     }
-    await tx.inventario_semanal.update({
-      where: { semana_id: semana.id },
-      data: { apertura_origen: 'fifo_lotes_iniciales', apertura_valor: valor },
-    });
+    if (modo === 'normal') {
+      await tx.inventario_semanal.update({
+        where: { semana_id: semana.id },
+        data: { apertura_origen: 'fifo_lotes_iniciales', apertura_valor: valor },
+      });
+    }
     return {
       estado: 'preparada' as const,
       semana_id: Number(semana.id),

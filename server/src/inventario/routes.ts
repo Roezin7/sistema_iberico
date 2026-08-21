@@ -78,8 +78,8 @@ inventarioRouter.get(
 
 /** POST /inventario/apertura-fifo — materializa el snapshot de apertura como lotes FIFO. */
 inventarioRouter.post('/apertura-fifo', soloAdmin, asyncHandler(async (req, res) => {
-  const body = z.object({ semana_id: z.coerce.number().int().positive(), criterio: z.literal('catalogo').default('catalogo') }).parse(req.body);
-  res.status(201).json(await prepararAperturaFifo({ negocioId: req.auth!.negocioId, semanaId: BigInt(body.semana_id), criterio: body.criterio }));
+  const body = z.object({ semana_id: z.coerce.number().int().positive(), criterio: z.literal('catalogo').default('catalogo'), modo: z.enum(['normal', 'historico_prueba']).default('normal') }).parse(req.body);
+  res.status(201).json(await prepararAperturaFifo({ negocioId: req.auth!.negocioId, semanaId: BigInt(body.semana_id), criterio: body.criterio, modo: body.modo }));
 }));
 
 /** POST /inventario/compras — registra compra revisada y crea lotes FIFO. */
@@ -213,6 +213,7 @@ inventarioRouter.post(
       from: z.string().datetime({ offset: true }),
       to: z.string().datetime({ offset: true }),
       confirmar: z.boolean().default(false),
+      modo: z.enum(['normal', 'historico_prueba']).default('normal'),
     }).parse(req.body);
     res.json(await consumirVentasEpos({ negocioId: req.auth!.negocioId, ...body }));
   }),

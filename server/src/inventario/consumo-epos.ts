@@ -14,12 +14,43 @@ interface PlanConsumo {
   consumos: { productId: bigint; loteId: bigint; cantidad: number; costoUnitario: number; costoTotal: number }[];
 }
 
+type CachedMenu = {
+  id: bigint;
+  nombre: string;
+  epos_product_id: number | null;
+  recetas: {
+    lineas: {
+      product_id: bigint;
+      cantidad: Prisma.Decimal;
+      unidad: string;
+      products: { name: string; unidad_base: string | null };
+    }[];
+  }[];
+};
+
+type CachedLot = {
+  id: bigint;
+  recibido_at: Date;
+  cantidad_restante: Prisma.Decimal;
+  costo_unitario: Prisma.Decimal;
+};
+
+type PlanContext = {
+  menus: CachedMenu[];
+  lotsByProduct: Map<string, CachedLot[]>;
+  consumedVentaIds: Set<string>;
+};
+
+type ModoCosteo = 'normal' | 'historico_prueba';
+
 function fechaISO(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
-async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date }): Promise<PlanConsumo> {
-  const previo = await client.inventory_consumptions.findFirst({ where: { negocio_id: negocioId, epos_venta_id: venta.id }, select: { id: true } });
+async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date }, context?: PlanContext): Promise<PlanConsumo> {
+  const previo = context
+    ? context.consumedVentaIds.has(venta.id.toString())
+    : await client.inventory_consumptions.findFirst({ where: { negocio_id: negocioId, epos_venta_id: venta.id }, select: { id: true } });
   if (previo) return { estado: 'ya_costeada', costoTotal: 0, consumos: [] };
 
   const includeReceta = {
@@ -33,18 +64,21 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
   // El ID es la relación primaria. Sólo si no existe una asociación por ID se
   // permite el respaldo por nombre exacto; un OR podía elegir otro menú de
   // forma no determinista cuando el nombre coincidía.
-  const menuPorId = venta.epos_product_id == null ? null : await client.productos_menu.findFirst({
-    where: { negocio_id: negocioId, activo: true, epos_product_id: venta.epos_product_id },
-    include: includeReceta,
-  });
-  const menuExacto = menuPorId ?? await client.productos_menu.findFirst({
-    where: { negocio_id: negocioId, activo: true, nombre: venta.producto_nombre },
-    include: includeReceta,
-  });
-  const menu = menuExacto ?? (await client.productos_menu.findMany({
-    where: { negocio_id: negocioId, activo: true },
-    include: includeReceta,
-  })).find((candidate) => normalizarNombreEpos(candidate.nombre) === normalizarNombreEpos(venta.producto_nombre)) ?? null;
+  const menuPorId = context
+    ? (venta.epos_product_id == null ? null : context.menus.find((candidate) => candidate.epos_product_id === venta.epos_product_id) ?? null)
+    : venta.epos_product_id == null ? null : await client.productos_menu.findFirst({
+      where: { negocio_id: negocioId, activo: true, epos_product_id: venta.epos_product_id },
+      include: includeReceta,
+    });
+  const menuExacto = menuPorId ?? (context
+    ? context.menus.find((candidate) => candidate.nombre === venta.producto_nombre) ?? null
+    : await client.productos_menu.findFirst({
+      where: { negocio_id: negocioId, activo: true, nombre: venta.producto_nombre },
+      include: includeReceta,
+    }));
+  const menu = menuExacto ?? (context
+    ? context.menus.find((candidate) => normalizarNombreEpos(candidate.nombre) === normalizarNombreEpos(venta.producto_nombre)) ?? null
+    : (await client.productos_menu.findMany({ where: { negocio_id: negocioId, activo: true }, include: includeReceta })).find((candidate) => normalizarNombreEpos(candidate.nombre) === normalizarNombreEpos(venta.producto_nombre)) ?? null);
   if (!menu) return { estado: 'excepcion', error: `Producto Epos sin mapeo: ${venta.producto_nombre}`, costoTotal: 0, consumos: [] };
   const receta = menu.recetas[0];
   if (!receta) return { estado: 'excepcion', error: `Sin receta validada: ${menu.nombre}`, costoTotal: 0, consumos: [] };
@@ -60,11 +94,13 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
     if (cantidadBase == null) {
       return { estado: 'excepcion', error: `Unidad incompatible en ${menu.nombre}: ${linea.products.name} (${linea.unidad} → ${unidadBase ?? 'sin unidad'})`, costoTotal: 0, consumos: [] };
     }
-    const lotes = await client.inventory_lots.findMany({
-      where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 } },
-      orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
-      select: { id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
-    });
+    const lotes = context
+      ? context.lotsByProduct.get(linea.product_id.toString()) ?? []
+      : await client.inventory_lots.findMany({
+        where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 } },
+        orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
+        select: { id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
+      });
     const resultado = consumirFIFO(lotes.map((lote) => ({
       id: Number(lote.id), recibidoAt: fechaISO(lote.recibido_at), cantidadRestante: Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
     })), cantidadBase);
@@ -76,37 +112,89 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
   return { estado: 'costeable', costoTotal: Number(consumos.reduce((sum, c) => sum + c.costoTotal, 0).toFixed(4)), consumos };
 }
 
+async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id: bigint }[], modo: ModoCosteo = 'normal'): Promise<PlanContext> {
+  const menus = await client.productos_menu.findMany({
+    where: { negocio_id: negocioId, activo: true },
+    select: {
+      id: true, nombre: true, epos_product_id: true,
+      recetas: {
+        where: { estado: 'validada' },
+        orderBy: { version: 'desc' },
+        take: 1,
+        select: { lineas: { select: { product_id: true, cantidad: true, unidad: true, products: { select: { name: true, unidad_base: true } } } } },
+      },
+    },
+  }) as CachedMenu[];
+  const productIds = [...new Set(menus.flatMap((menu) => menu.recetas[0]?.lineas.map((linea) => linea.product_id.toString()) ?? []))].map(BigInt);
+  const lots = productIds.length ? await client.inventory_lots.findMany({
+    where: {
+      negocio_id: negocioId,
+      product_id: { in: productIds },
+      estado: 'abierto',
+      cantidad_restante: { gt: 0 },
+      fuente: modo === 'historico_prueba' ? 'historico_prueba' : { not: 'historico_prueba' },
+    },
+    orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
+    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
+  }) : [];
+  const consumed = await client.inventory_consumptions.findMany({
+    where: { negocio_id: negocioId, epos_venta_id: { in: ventas.map((venta) => venta.id) } },
+    select: { epos_venta_id: true },
+  });
+  const lotsByProduct = new Map<string, CachedLot[]>();
+  for (const lot of lots) {
+    const list = lotsByProduct.get(lot.product_id.toString()) ?? [];
+    list.push(lot);
+    lotsByProduct.set(lot.product_id.toString(), list);
+  }
+  return { menus, lotsByProduct, consumedVentaIds: new Set(consumed.flatMap((row) => row.epos_venta_id == null ? [] : [row.epos_venta_id.toString()])) };
+}
+
+function aplicarPlanEnMemoria(context: PlanContext, plan: PlanConsumo) {
+  for (const consumo of plan.consumos) {
+    const lote = context.lotsByProduct.get(consumo.productId.toString())?.find((candidate) => candidate.id === consumo.loteId);
+    if (lote) lote.cantidad_restante = new Prisma.Decimal(Number(lote.cantidad_restante) - consumo.cantidad);
+  }
+}
+
 /** Calcula o aplica consumo FIFO para ventas Epos ya importadas. */
-export async function consumirVentasEpos(input: { negocioId: bigint; from: string; to: string; confirmar: boolean }) {
+export async function consumirVentasEpos(input: { negocioId: bigint; from: string; to: string; confirmar: boolean; modo?: ModoCosteo }) {
   const from = new Date(input.from);
   const to = new Date(input.to);
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) throw new HttpError(400, 'Periodo inválido');
   const ventas = await prisma.epos_ventas.findMany({ where: { negocio_id: input.negocioId, fecha: { gte: from, lt: to } }, orderBy: [{ fecha: 'asc' }, { id: 'asc' }] });
   const resultado = { periodo: { from: input.from, to: input.to }, confirmar: input.confirmar, ventas: ventas.length, costeadas: 0, excepciones: 0, ya_costeadas: 0, costo_fifo: 0, detalle: [] as Record<string, unknown>[] };
-
+  const modo = input.modo ?? 'normal';
+  const context = await cargarContexto(prisma, input.negocioId, ventas, modo);
+  const planes = [] as { venta: typeof ventas[number]; plan: PlanConsumo }[];
   for (const venta of ventas) {
-    const ejecutar = async (client: DbClient) => {
-      const plan = await planificar(client, input.negocioId, venta);
-      if (!input.confirmar || plan.estado !== 'costeable') return plan;
-      for (const consumo of plan.consumos) {
-        const actualizado = await client.inventory_lots.updateMany({ where: { id: consumo.loteId, negocio_id: input.negocioId, cantidad_restante: { gte: consumo.cantidad } }, data: { cantidad_restante: { decrement: consumo.cantidad } } });
-        if (actualizado.count !== 1) throw new HttpError(409, 'El lote FIFO cambió mientras se procesaba; reintenta la venta');
-        await client.inventory_lots.updateMany({ where: { id: consumo.loteId, negocio_id: input.negocioId, cantidad_restante: { lte: 0 } }, data: { estado: 'agotado' } });
-        await client.inventory_consumptions.create({ data: { negocio_id: input.negocioId, product_id: consumo.productId, lote_id: consumo.loteId, epos_venta_id: venta.id, fecha: venta.fecha, cantidad: consumo.cantidad, costo_unitario: consumo.costoUnitario, costo_total: consumo.costoTotal, fuente: 'venta_receta' } });
+    const plan = await planificar(prisma, input.negocioId, venta, context);
+    planes.push({ venta, plan });
+    if (plan.estado === 'costeable') aplicarPlanEnMemoria(context, plan);
+  }
+
+  if (input.confirmar) {
+    await prisma.$transaction(async (tx) => {
+      for (const { venta, plan } of planes) {
+        if (plan.estado === 'costeable') {
+          for (const consumo of plan.consumos) {
+            const actualizado = await tx.inventory_lots.updateMany({ where: { id: consumo.loteId, negocio_id: input.negocioId, cantidad_restante: { gte: consumo.cantidad } }, data: { cantidad_restante: { decrement: consumo.cantidad } } });
+            if (actualizado.count !== 1) throw new HttpError(409, 'El lote FIFO cambió mientras se procesaba; reintenta el costeo');
+            await tx.inventory_lots.updateMany({ where: { id: consumo.loteId, negocio_id: input.negocioId, cantidad_restante: { lte: 0 } }, data: { estado: 'agotado' } });
+            await tx.inventory_consumptions.create({ data: { negocio_id: input.negocioId, product_id: consumo.productId, lote_id: consumo.loteId, epos_venta_id: venta.id, fecha: venta.fecha, cantidad: consumo.cantidad, costo_unitario: consumo.costoUnitario, costo_total: consumo.costoTotal, fuente: modo === 'historico_prueba' ? 'venta_receta_historica' : 'venta_receta' } });
+          }
+          await tx.epos_ventas.update({ where: { id: venta.id }, data: { costo_fifo: plan.costoTotal, costeo_estado: 'costeada', costeo_error: null, costeado_at: new Date() } });
+        } else if (plan.estado === 'excepcion') {
+          await tx.epos_ventas.update({ where: { id: venta.id }, data: { costeo_estado: 'excepcion', costeo_error: plan.error } });
+        }
       }
-      await client.epos_ventas.update({ where: { id: venta.id }, data: { costo_fifo: plan.costoTotal, costeo_estado: 'costeada', costeo_error: null, costeado_at: new Date() } });
-      return plan;
-    };
-    const plan = input.confirmar ? await prisma.$transaction((tx) => ejecutar(tx)) : await ejecutar(prisma);
-    if (plan.estado === 'costeable') {
-      resultado.costeadas += 1;
-      resultado.costo_fifo += plan.costoTotal;
-    } else if (plan.estado === 'ya_costeada') {
-      resultado.ya_costeadas += 1;
-    } else {
-      resultado.excepciones += 1;
-      if (input.confirmar) await prisma.epos_ventas.update({ where: { id: venta.id }, data: { costeo_estado: 'excepcion', costeo_error: plan.error } });
-    }
+    }, { maxWait: 20_000, timeout: 120_000 });
+  }
+
+  for (const { venta, plan } of planes) {
+    if (plan.estado === 'costeable') { resultado.costeadas += 1; resultado.costo_fifo += plan.costoTotal; }
+    else if (plan.estado === 'ya_costeada') resultado.ya_costeadas += 1;
+    else resultado.excepciones += 1;
     resultado.detalle.push({ venta_id: Number(venta.id), producto: venta.producto_nombre, estado: plan.estado, costo_fifo: plan.costoTotal, error: plan.error ?? null });
   }
   resultado.costo_fifo = Number(resultado.costo_fifo.toFixed(4));
