@@ -50,6 +50,26 @@ export async function importarVentasEpos(input: {
   const preview = buildReconcilePreview(input.from, input.to, dailySummary, bookkeepingSummary);
   const claveImportacion = `${input.locationId ?? 0}:${input.from}:${input.to}`;
   const occurrence = new Map<string, number>();
+  const filasPreparadas = bookkeeping.map((row) => {
+    const productName = String(row.Product ?? 'SIN_PRODUCTO').trim() || 'SIN_PRODUCTO';
+    const occurrenceKey = [row.TransactionID ?? '', row.TransactionItemID ?? '', row.DateTime ?? '', row.ProductID ?? productName, row.Quantity ?? '', row.TotalSales ?? row.NetSales ?? '', row.Tender ?? 'SIN_METODO'].join('|');
+    const count = occurrence.get(occurrenceKey) ?? 0;
+    occurrence.set(occurrenceKey, count + 1);
+    return {
+      clave: claveFila(row, input.from, count),
+      epos_transaction_id: Number.isFinite(row.TransactionID) ? row.TransactionID : null,
+      epos_item_id: Number.isFinite(row.TransactionItemID) ? row.TransactionItemID : null,
+      fecha: fechaDeFila(row, input.from),
+      epos_product_id: Number.isFinite(row.ProductID) ? row.ProductID : null,
+      producto_nombre: productName,
+      cantidad: numero(row.Quantity),
+      venta_bruta: numero(row.TotalSales ?? row.NetSales),
+      venta_neta: row.NetSales == null ? null : numero(row.NetSales),
+      descuento: numero(row.Discount),
+      metodo_pago: String(row.Tender ?? 'SIN_METODO'),
+      raw_json: JSON.stringify(row),
+    };
+  });
 
   const result = await prisma.$transaction(async (tx) => {
     const existingImport = await tx.epos_importaciones.findUnique({
@@ -72,40 +92,20 @@ export async function importarVentasEpos(input: {
           },
         });
 
-    let nuevas = 0;
-    let duplicadas = 0;
-    for (const row of bookkeeping) {
-      const productName = String(row.Product ?? 'SIN_PRODUCTO').trim() || 'SIN_PRODUCTO';
-      const occurrenceKey = [row.TransactionID ?? '', row.TransactionItemID ?? '', row.DateTime ?? '', row.ProductID ?? productName, row.Quantity ?? '', row.TotalSales ?? row.NetSales ?? '', row.Tender ?? 'SIN_METODO'].join('|');
-      const count = occurrence.get(occurrenceKey) ?? 0;
-      occurrence.set(occurrenceKey, count + 1);
-      const clave = claveFila(row, input.from, count);
-      const existente = await tx.epos_ventas.findUnique({
-        where: { negocio_id_clave: { negocio_id: input.negocioId, clave } }, select: { id: true },
-      });
-      const data = {
-        negocio_id: input.negocioId, importacion_id: importacion.id, clave,
-        epos_transaction_id: Number.isFinite(row.TransactionID) ? row.TransactionID : null,
-        epos_item_id: Number.isFinite(row.TransactionItemID) ? row.TransactionItemID : null,
-        fecha: fechaDeFila(row, input.from),
-        epos_product_id: Number.isFinite(row.ProductID) ? row.ProductID : null,
-        producto_nombre: productName, cantidad: numero(row.Quantity),
-        venta_bruta: numero(row.TotalSales ?? row.NetSales),
-        venta_neta: row.NetSales == null ? null : numero(row.NetSales),
-        descuento: numero(row.Discount), metodo_pago: String(row.Tender ?? 'SIN_METODO'),
-        raw_json: JSON.stringify(row),
-      };
-      if (existente) {
-        duplicadas += 1;
-        await tx.epos_ventas.update({ where: { id: existente.id }, data });
-      } else {
-        nuevas += 1;
-        await tx.epos_ventas.create({ data });
-      }
-    }
+    const existentes = await tx.epos_ventas.findMany({
+      where: { negocio_id: input.negocioId, clave: { in: filasPreparadas.map((fila) => fila.clave) } },
+      select: { clave: true },
+    });
+    const clavesExistentes = new Set(existentes.map((fila) => fila.clave));
+    const nuevasData = filasPreparadas
+      .filter((fila) => !clavesExistentes.has(fila.clave))
+      .map((fila) => ({ negocio_id: input.negocioId, importacion_id: importacion.id, ...fila }));
+    if (nuevasData.length) await tx.epos_ventas.createMany({ data: nuevasData, skipDuplicates: true });
+    const nuevas = nuevasData.length;
+    const duplicadas = filasPreparadas.length - nuevas;
     await tx.epos_importaciones.update({ where: { id: importacion.id }, data: { filas_nuevas: nuevas, filas_duplicadas: duplicadas } });
     return { importacion, nuevas, duplicadas };
-  });
+  }, { maxWait: 20_000, timeout: 120_000 });
 
   return {
     ...preview, persistido: true, importacion_id: Number(result.importacion.id),
