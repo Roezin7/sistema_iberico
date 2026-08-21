@@ -21,26 +21,29 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
   const previo = await client.inventory_consumptions.findFirst({ where: { negocio_id: negocioId, epos_venta_id: venta.id }, select: { id: true } });
   if (previo) return { estado: 'ya_costeada', costoTotal: 0, consumos: [] };
 
-  const menu = await client.productos_menu.findFirst({
-    where: {
-      negocio_id: negocioId,
-      activo: true,
-      ...(venta.epos_product_id != null
-        ? { OR: [{ epos_product_id: venta.epos_product_id }, { nombre: venta.producto_nombre }] }
-        : { nombre: venta.producto_nombre }),
+  const includeReceta = {
+    recetas: {
+      where: { estado: 'validada', OR: [{ vigente_desde: null }, { vigente_desde: { lte: venta.fecha } }] },
+      orderBy: { version: 'desc' as const },
+      take: 1,
+      include: { lineas: { include: { products: { select: { id: true, name: true, unidad_base: true } } } } },
     },
-    include: {
-      recetas: {
-        where: { estado: 'validada', OR: [{ vigente_desde: null }, { vigente_desde: { lte: venta.fecha } }] },
-        orderBy: { version: 'desc' },
-        take: 1,
-        include: { lineas: { include: { products: { select: { id: true, name: true, unidad_base: true } } } } },
-      },
-    },
+  };
+  // El ID es la relación primaria. Sólo si no existe una asociación por ID se
+  // permite el respaldo por nombre exacto; un OR podía elegir otro menú de
+  // forma no determinista cuando el nombre coincidía.
+  const menuPorId = venta.epos_product_id == null ? null : await client.productos_menu.findFirst({
+    where: { negocio_id: negocioId, activo: true, epos_product_id: venta.epos_product_id },
+    include: includeReceta,
+  });
+  const menu = menuPorId ?? await client.productos_menu.findFirst({
+    where: { negocio_id: negocioId, activo: true, nombre: venta.producto_nombre },
+    include: includeReceta,
   });
   if (!menu) return { estado: 'excepcion', error: `Producto Epos sin mapeo: ${venta.producto_nombre}`, costoTotal: 0, consumos: [] };
   const receta = menu.recetas[0];
   if (!receta) return { estado: 'excepcion', error: `Sin receta validada: ${menu.nombre}`, costoTotal: 0, consumos: [] };
+  if (!receta.lineas.length) return { estado: 'excepcion', error: `Receta sin ingredientes: ${menu.nombre}`, costoTotal: 0, consumos: [] };
 
   const cantidadVendida = Number(venta.cantidad);
   if (!Number.isFinite(cantidadVendida) || cantidadVendida <= 0) return { estado: 'excepcion', error: `Cantidad inválida en venta: ${menu.nombre}`, costoTotal: 0, consumos: [] };

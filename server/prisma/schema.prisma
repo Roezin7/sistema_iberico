@@ -267,6 +267,8 @@ model purchases {
   @@index([negocio_id])
   @@index([negocio_id, estado, fecha_recepcion])
   @@index([origen_pago_id])
+  @@unique([negocio_id, ticket_ref])
+  @@unique([negocio_id, foto_hash])
 }
 
 /// Líneas capturadas desde un ticket. Se revisan antes de convertirse en
