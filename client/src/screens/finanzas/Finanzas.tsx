@@ -526,6 +526,11 @@ function CuadreView({ ref_, semana, filas, onChange }: { ref_: Referencias; sema
 function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; semana: Semana; movs: Movimiento[]; onChange: () => void }) {
   const nombreUbic = (id: number | null) => ref_.ubicaciones.find((u) => u.id === id)?.nombre ?? '';
   const confirmar = useConfirm();
+  const [editando, setEditando] = useState<number | null>(null);
+  const [montoEdit, setMontoEdit] = useState('');
+  const [origenEdit, setOrigenEdit] = useState<number | ''>('');
+  const [guardando, setGuardando] = useState(false);
+  const [errorEdit, setErrorEdit] = useState('');
 
   function exportar() {
     descargarCSV(
@@ -553,28 +558,26 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
         {movs.length === 0 && <li className="muted" style={{ padding: '1rem' }}>Sin movimientos aún.</li>}
         {movs.map((m) => (
           <li key={m.id} className="conteo-row">
-            <div className="conteo-info">
+            {editando === m.id ? <div className="conteo-info" style={{ display: 'grid', gap: '0.4rem' }}>
+              <strong>Editar {TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
+              <input type="number" min="0.01" step="0.01" value={montoEdit} onChange={(e) => setMontoEdit(e.target.value)} aria-label="Monto del movimiento" />
+              <select value={origenEdit} onChange={(e) => setOrigenEdit(e.target.value ? Number(e.target.value) : '')} aria-label="Origen del gasto">
+                <option value="">Origen…</option>{ref_.ubicaciones.filter((u) => u.tipo === 'efectivo' || u.tipo === 'banco').map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}
+              </select>
+              {errorEdit && <small className="error-msg">{errorEdit}</small>}
+              <div style={{ display: 'flex', gap: '0.4rem' }}><button className="btn-primary" disabled={guardando} onClick={async () => { setGuardando(true); setErrorEdit(''); try { await finanzas.editarMovimiento(m.id, { monto: Number(montoEdit), ubicacion_origen_id: origenEdit || null }); setEditando(null); onChange(); } catch (e) { setErrorEdit(e instanceof Error ? e.message : 'No se pudo editar'); } finally { setGuardando(false); } }}>Guardar</button><button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button></div>
+            </div> : <><div className="conteo-info">
               <strong>{TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
               <small className="muted">
                 {[nombreUbic(m.ubicacion_origen_id), nombreUbic(m.ubicacion_destino_id)].filter(Boolean).join(' → ')}
                 {m.descripcion ? ` · ${m.descripcion}` : ''}{m.facturado ? ' · facturado' : ''}
               </small>
-            </div>
-            <span>{mxn(m.monto)}</span>
+            </div><span>{mxn(m.monto)}</span></>}
             {semana.estado === 'abierta' && (
-              <button
-                className="icon-btn"
-                title="Borrar movimiento"
-                aria-label="Borrar movimiento"
-                onClick={async () => {
-                  const ok = await confirmar({ message: '¿Borrar este movimiento? Afecta el cuadre de la semana.', tone: 'danger', confirmText: 'Borrar' });
-                  if (!ok) return;
-                  await finanzas.borrarMovimiento(m.id);
-                  onChange();
-                }}
-              >
-                ✕
-              </button>
+              <>{(m.tipo === 'gasto' || m.tipo === 'sueldo') && editando !== m.id && <button className="btn-ghost" title="Editar gasto" onClick={() => { setEditando(m.id); setMontoEdit(String(m.monto)); setOrigenEdit(m.ubicacion_origen_id ?? ''); setErrorEdit(''); }}>Editar</button>}<button
+                className="icon-btn" title="Borrar movimiento" aria-label="Borrar movimiento"
+                onClick={async () => { const ok = await confirmar({ message: '¿Borrar este movimiento? Afecta el cuadre de la semana.', tone: 'danger', confirmText: 'Borrar' }); if (!ok) return; try { await finanzas.borrarMovimiento(m.id); onChange(); } catch (e) { setErrorEdit(e instanceof Error ? e.message : 'No se pudo borrar'); } }}
+              >✕</button></>
             )}
           </li>
         ))}

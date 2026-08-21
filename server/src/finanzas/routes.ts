@@ -107,6 +107,18 @@ finanzasRouter.delete('/movimientos/:id', asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
+finanzasRouter.patch('/movimientos/:id', asyncHandler(async (req, res) => {
+  const body = z.object({
+    monto: z.coerce.number().positive().optional(),
+    fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    ubicacion_origen_id: id.nullable().optional(),
+    categoria_id: id.nullable().optional(),
+    descripcion: z.string().max(500).nullable().optional(),
+    facturado: z.boolean().optional(),
+  }).parse(req.body);
+  res.json(await svc.editarMovimiento(req.auth!.negocioId, BigInt(id.parse(req.params.id)), body));
+}));
+
 // --- Arqueos ---
 finanzasRouter.post('/arqueos', asyncHandler(async (req, res) => {
   const body = z.object({

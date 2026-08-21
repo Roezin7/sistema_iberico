@@ -3,6 +3,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { convertirCantidad } from '../recetas/costeo.js';
 import { consumirFIFO } from './fifo.js';
+import { normalizarNombreEpos } from '../epos/mapeo-menu.js';
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
@@ -36,10 +37,14 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
     where: { negocio_id: negocioId, activo: true, epos_product_id: venta.epos_product_id },
     include: includeReceta,
   });
-  const menu = menuPorId ?? await client.productos_menu.findFirst({
+  const menuExacto = menuPorId ?? await client.productos_menu.findFirst({
     where: { negocio_id: negocioId, activo: true, nombre: venta.producto_nombre },
     include: includeReceta,
   });
+  const menu = menuExacto ?? (await client.productos_menu.findMany({
+    where: { negocio_id: negocioId, activo: true },
+    include: includeReceta,
+  })).find((candidate) => normalizarNombreEpos(candidate.nombre) === normalizarNombreEpos(venta.producto_nombre)) ?? null;
   if (!menu) return { estado: 'excepcion', error: `Producto Epos sin mapeo: ${venta.producto_nombre}`, costoTotal: 0, consumos: [] };
   const receta = menu.recetas[0];
   if (!receta) return { estado: 'excepcion', error: `Sin receta validada: ${menu.nombre}`, costoTotal: 0, consumos: [] };

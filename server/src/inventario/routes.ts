@@ -5,8 +5,9 @@ import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { inventarioActual, listaCompras, crearConteo } from './service.js';
 import { borradorCompraTicket, borradorConteo, draftDisponible } from './draft.js';
 import { listarLotes, registrarCompra } from './compras.js';
+import { prepararAperturaFifo } from './apertura-fifo.js';
 import { consumirVentasEpos } from './consumo-epos.js';
-import { actualizarBorradorLineas, confirmarBorradorCompra, crearBorradorCompra, listarBorradoresCompra, listarCompras, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra, validarCapturaCompra } from './compras-rapidas.js';
+import { actualizarBorradorLineas, cambiarOrigenPagoCompra, confirmarBorradorCompra, crearBorradorCompra, listarBorradoresCompra, listarCompras, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra, validarCapturaCompra } from './compras-rapidas.js';
 
 export const inventarioRouter = Router();
 
@@ -74,6 +75,12 @@ inventarioRouter.get(
     res.json(await listarLotes(req.auth!.negocioId, productId));
   }),
 );
+
+/** POST /inventario/apertura-fifo — materializa el snapshot de apertura como lotes FIFO. */
+inventarioRouter.post('/apertura-fifo', soloAdmin, asyncHandler(async (req, res) => {
+  const body = z.object({ semana_id: z.coerce.number().int().positive(), criterio: z.literal('catalogo').default('catalogo') }).parse(req.body);
+  res.status(201).json(await prepararAperturaFifo({ negocioId: req.auth!.negocioId, semanaId: BigInt(body.semana_id), criterio: body.criterio }));
+}));
 
 /** POST /inventario/compras — registra compra revisada y crea lotes FIFO. */
 inventarioRouter.post(
@@ -169,6 +176,13 @@ inventarioRouter.get('/compras/:id/foto', asyncHandler(async (req, res) => {
 inventarioRouter.post('/compras/:id/confirmar', soloAdmin, asyncHandler(async (req, res) => {
   const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
   res.json(await confirmarBorradorCompra(req.auth!.negocioId, req.auth!.usuarioId, id));
+}));
+
+/** PATCH /inventario/compras/:id/pago — corrige Banco/Caja sin recrear el FIFO. */
+inventarioRouter.patch('/compras/:id/pago', soloAdmin, asyncHandler(async (req, res) => {
+  const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  const body = z.object({ origen_pago_id: z.coerce.number().int().positive() }).parse(req.body);
+  res.json(await cambiarOrigenPagoCompra(req.auth!.negocioId, id, BigInt(body.origen_pago_id)));
 }));
 
 inventarioRouter.put('/compras/:id/lineas', soloAdmin, asyncHandler(async (req, res) => {

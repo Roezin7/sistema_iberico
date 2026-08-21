@@ -152,6 +152,35 @@ export async function listarCompras(negocioId: bigint, fecha?: string) {
   return filas.map((f) => ({ id: Number(f.id), fecha: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor, ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), estado: f.estado, origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null, movimientos: f.movimientos.map((m) => ({ tipo: m.tipo, monto: Number(m.monto) })), lineas: [...f.purchase_lines.map((l) => ({ tipo: 'inventario', producto: l.products.name, importe: Number(l.importe ?? 0) })), ...f.capture_lines.filter((l) => l.tipo_linea === 'gasto').map((l) => ({ tipo: 'gasto', producto: l.descripcion_fuente, importe: Number(l.importe) }))] }));
 }
 
+/** Corrige el origen de pago de una compra ya confirmada sin tocar sus lotes. */
+export async function cambiarOrigenPagoCompra(negocioId: bigint, purchaseId: bigint, origenPagoId: bigint) {
+  return prisma.$transaction(async (tx) => {
+    const origen = await tx.ubicaciones_fondos.findFirst({
+      where: { id: origenPagoId, negocio_id: negocioId, activo: true },
+      select: { id: true, tipo: true, nombre: true },
+    });
+    if (!origen) throw new HttpError(400, 'La ubicación de pago no pertenece al negocio o está inactiva');
+    const compra = await tx.purchases.findFirst({
+      where: { id: purchaseId, negocio_id: negocioId, estado: 'confirmada' },
+      select: { id: true, fecha_recepcion: true, origen_pago_id: true },
+    });
+    if (!compra) throw new HttpError(404, 'Compra confirmada no encontrada');
+    const semana = await tx.semanas.findFirst({
+      where: { negocio_id: negocioId, fecha_inicio: { lte: compra.fecha_recepcion }, fecha_fin: { gte: compra.fecha_recepcion } },
+      select: { id: true, estado: true },
+    });
+    if (!semana) throw new HttpError(409, 'No existe una semana para la fecha de la compra');
+    if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana de la compra está cerrada; reábrela antes de corregir el pago');
+
+    await tx.purchases.update({ where: { id: compra.id }, data: { origen_pago_id: origen.id } });
+    await tx.movimientos.updateMany({
+      where: { compra_id: compra.id, tipo: { in: ['compra_inventario', 'gasto'] } },
+      data: { ubicacion_origen_id: origen.id, facturado: origen.tipo === 'banco' },
+    });
+    return { purchase_id: Number(compra.id), origen_pago_id: Number(origen.id), origen: origen.nombre, facturado: origen.tipo === 'banco' };
+  });
+}
+
 export async function obtenerFotoCompra(negocioId: bigint, purchaseId: bigint) {
   const compra = await prisma.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId }, select: { foto_data: true, foto_mime: true } });
   if (!compra?.foto_data || !compra.foto_mime) throw new HttpError(404, 'Esta compra no tiene fotografía');

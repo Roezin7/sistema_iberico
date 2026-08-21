@@ -6,6 +6,7 @@ import { reconcilePreview } from './client.js';
 import { importarVentasEpos, listarImportacionesEpos, listarVentasEpos, listarExcepcionesEpos } from './imports.js';
 import { confirmarConciliacionDiaria, listarConciliacionesDiarias } from './reconciliation.js';
 import { env } from '../env.js';
+import { aplicarMapeoEpos, auditarMapeoEpos } from './mapeo-menu.js';
 
 export const eposRouter = Router();
 eposRouter.use(requireAuth, soloAdmin);
@@ -79,6 +80,17 @@ eposRouter.get('/exceptions', asyncHandler(async (req, res) => {
   const from = req.query.from === undefined ? undefined : z.string().datetime({ offset: true }).parse(req.query.from);
   const to = req.query.to === undefined ? undefined : z.string().datetime({ offset: true }).parse(req.query.to);
   res.json(await listarExcepcionesEpos({ negocioId: req.auth!.negocioId, from, to }));
+}));
+
+eposRouter.get('/mapeo-menu', asyncHandler(async (req, res) => {
+  const from = req.query.from === undefined ? undefined : new Date(z.string().datetime({ offset: true }).parse(req.query.from));
+  const to = req.query.to === undefined ? undefined : new Date(z.string().datetime({ offset: true }).parse(req.query.to));
+  res.json(await auditarMapeoEpos({ negocioId: req.auth!.negocioId, from, to }));
+}));
+
+eposRouter.post('/mapeo-menu/aplicar', asyncHandler(async (req, res) => {
+  const body = z.object({ from: z.string().datetime({ offset: true }).optional(), to: z.string().datetime({ offset: true }).optional() }).parse(req.body);
+  res.json(await aplicarMapeoEpos({ negocioId: req.auth!.negocioId, from: body.from ? new Date(body.from) : undefined, to: body.to ? new Date(body.to) : undefined }));
 }));
 
 const dailySchema = z.object({

@@ -308,6 +308,64 @@ export async function listarMovimientos(negocioId: bigint, semanaId: bigint) {
   }));
 }
 
+export interface EditarMovimientoInput {
+  monto?: number;
+  fecha?: string;
+  ubicacion_origen_id?: number | null;
+  categoria_id?: number | null;
+  descripcion?: string | null;
+  facturado?: boolean;
+}
+
+/** Edita un gasto/sueldo manual de una semana abierta. Los movimientos creados
+ * por una compra se corrigen desde el ticket para mantener compra y movimiento
+ * sincronizados. */
+export async function editarMovimiento(negocioId: bigint, movimientoId: bigint, input: EditarMovimientoInput) {
+  return prisma.$transaction(async (tx) => {
+    const actual = await tx.movimientos.findFirst({
+      where: { id: movimientoId, negocio_id: negocioId },
+      include: { semanas: { select: { estado: true, fecha_inicio: true, fecha_fin: true } } },
+    });
+    if (!actual) throw new HttpError(404, 'Movimiento no encontrado');
+    if (!['gasto', 'sueldo'].includes(actual.tipo)) throw new HttpError(400, 'Sólo se pueden editar gastos y sueldos manuales');
+    if (actual.compra_id != null) throw new HttpError(409, 'Este gasto pertenece a una compra; corrígelo desde el ticket');
+    if (actual.semanas.estado !== 'abierta') throw new HttpError(409, 'La semana está cerrada; reábrela antes de editar');
+
+    const fecha = input.fecha ? new Date(`${input.fecha}T00:00:00Z`) : actual.fecha;
+    if (Number.isNaN(fecha.getTime()) || iso(fecha) < iso(actual.semanas.fecha_inicio) || iso(fecha) > iso(actual.semanas.fecha_fin)) {
+      throw new HttpError(400, 'La fecha está fuera de la semana');
+    }
+    const monto = input.monto ?? num0(actual.monto);
+    if (!Number.isFinite(monto) || monto <= 0) throw new HttpError(400, 'El monto debe ser mayor a cero');
+
+    const origenId = input.ubicacion_origen_id === undefined
+      ? actual.ubicacion_origen_id
+      : input.ubicacion_origen_id == null ? null : BigInt(input.ubicacion_origen_id);
+    if (!origenId) throw new HttpError(400, 'El gasto requiere ubicación de origen');
+    const origen = await tx.ubicaciones_fondos.findFirst({ where: { id: origenId, negocio_id: negocioId, activo: true }, select: { id: true, tipo: true } });
+    if (!origen) throw new HttpError(400, 'La ubicación de origen no es válida');
+
+    const categoriaId = input.categoria_id === undefined
+      ? actual.categoria_id
+      : input.categoria_id == null ? null : BigInt(input.categoria_id);
+    if (actual.tipo === 'gasto' && !categoriaId) throw new HttpError(400, 'El gasto requiere categoría');
+    if (categoriaId) {
+      const categoria = await tx.categorias_gasto.findFirst({ where: { id: categoriaId, negocio_id: negocioId, activo: true }, select: { id: true } });
+      if (!categoria) throw new HttpError(400, 'La categoría no es válida');
+    }
+
+    const facturado = input.facturado ?? (actual.tipo === 'gasto' && origen.tipo === 'banco');
+    const actualizado = await tx.movimientos.update({
+      where: { id: actual.id },
+      data: {
+        monto, fecha, ubicacion_origen_id: origen.id, categoria_id: categoriaId,
+        facturado, descripcion: input.descripcion === undefined ? actual.descripcion : input.descripcion?.trim() || null,
+      },
+    });
+    return { id: Number(actualizado.id), monto: num0(actualizado.monto), fecha: iso(actualizado.fecha), facturado: actualizado.facturado };
+  });
+}
+
 // ---------------------------------------------------------------------------
 //  Captura diaria (ventas/propinas por día) — editable por día
 // ---------------------------------------------------------------------------
