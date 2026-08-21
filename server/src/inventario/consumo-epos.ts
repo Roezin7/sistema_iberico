@@ -174,21 +174,60 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
   }
 
   if (input.confirmar) {
+    const costeables = planes.filter(({ plan }) => plan.estado === 'costeable');
+    const excepciones = planes.filter(({ plan }) => plan.estado === 'excepcion');
+    const lotes = new Map<string, number>();
+    for (const { plan } of costeables) {
+      for (const consumo of plan.consumos) lotes.set(consumo.loteId.toString(), (lotes.get(consumo.loteId.toString()) ?? 0) + consumo.cantidad);
+    }
+    const consumos = costeables.flatMap(({ venta, plan }) => plan.consumos.map((consumo) => ({
+      negocio_id: input.negocioId,
+      product_id: consumo.productId,
+      lote_id: consumo.loteId,
+      epos_venta_id: venta.id,
+      fecha: venta.fecha,
+      cantidad: consumo.cantidad,
+      costo_unitario: consumo.costoUnitario,
+      costo_total: consumo.costoTotal,
+      fuente: modo === 'historico_prueba' ? 'venta_receta_historica' : 'venta_receta',
+    })));
+
     await prisma.$transaction(async (tx) => {
-      for (const { venta, plan } of planes) {
-        if (plan.estado === 'costeable') {
-          for (const consumo of plan.consumos) {
-            const actualizado = await tx.inventory_lots.updateMany({ where: { id: consumo.loteId, negocio_id: input.negocioId, cantidad_restante: { gte: consumo.cantidad } }, data: { cantidad_restante: { decrement: consumo.cantidad } } });
-            if (actualizado.count !== 1) throw new HttpError(409, 'El lote FIFO cambió mientras se procesaba; reintenta el costeo');
-            await tx.inventory_lots.updateMany({ where: { id: consumo.loteId, negocio_id: input.negocioId, cantidad_restante: { lte: 0 } }, data: { estado: 'agotado' } });
-            await tx.inventory_consumptions.create({ data: { negocio_id: input.negocioId, product_id: consumo.productId, lote_id: consumo.loteId, epos_venta_id: venta.id, fecha: venta.fecha, cantidad: consumo.cantidad, costo_unitario: consumo.costoUnitario, costo_total: consumo.costoTotal, fuente: modo === 'historico_prueba' ? 'venta_receta_historica' : 'venta_receta' } });
-          }
-          await tx.epos_ventas.update({ where: { id: venta.id }, data: { costo_fifo: plan.costoTotal, costeo_estado: 'costeada', costeo_error: null, costeado_at: new Date() } });
-        } else if (plan.estado === 'excepcion') {
-          await tx.epos_ventas.update({ where: { id: venta.id }, data: { costeo_estado: 'excepcion', costeo_error: plan.error } });
-        }
+      if (lotes.size) {
+        const entradas = [...lotes.entries()];
+        const params = entradas.flatMap(([id, cantidad]) => [id, cantidad]);
+        const values = entradas.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::numeric)`).join(',');
+        const actualizados = await tx.$executeRawUnsafe(
+          `UPDATE inventory_lots AS l SET cantidad_restante = l.cantidad_restante - v.cantidad
+           FROM (VALUES ${values}) AS v(id, cantidad)
+           WHERE l.id = v.id AND l.negocio_id = $${params.length + 1}::bigint
+             AND l.cantidad_restante >= v.cantidad`,
+          ...params, input.negocioId.toString(),
+        );
+        if (actualizados !== entradas.length) throw new HttpError(409, 'El lote FIFO cambió mientras se procesaba; reintenta el costeo');
+        const ids = entradas.map(([id]) => id).map((id) => `'${id.replaceAll("'", "''")}'`).join(',');
+        await tx.$executeRawUnsafe(`UPDATE inventory_lots SET estado = 'agotado' WHERE negocio_id = $1::bigint AND id IN (${ids}) AND cantidad_restante <= 0`, input.negocioId.toString());
       }
-    }, { maxWait: 20_000, timeout: 120_000 });
+      if (consumos.length) await tx.inventory_consumptions.createMany({ data: consumos });
+      if (costeables.length) {
+        const params = costeables.flatMap(({ venta, plan }) => [venta.id.toString(), plan.costoTotal]);
+        const values = costeables.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::numeric)`).join(',');
+        await tx.$executeRawUnsafe(
+          `UPDATE epos_ventas AS e SET costo_fifo = v.costo, costeo_estado = 'costeada', costeo_error = NULL, costeado_at = NOW()
+           FROM (VALUES ${values}) AS v(id, costo) WHERE e.id = v.id AND e.negocio_id = $${params.length + 1}::bigint`,
+          ...params, input.negocioId.toString(),
+        );
+      }
+      if (excepciones.length) {
+        const params = excepciones.flatMap(({ venta, plan }) => [venta.id.toString(), plan.error ?? 'Excepción de costeo']);
+        const values = excepciones.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::text)`).join(',');
+        await tx.$executeRawUnsafe(
+          `UPDATE epos_ventas AS e SET costeo_estado = 'excepcion', costeo_error = v.error
+           FROM (VALUES ${values}) AS v(id, error) WHERE e.id = v.id AND e.negocio_id = $${params.length + 1}::bigint`,
+          ...params, input.negocioId.toString(),
+        );
+      }
+    }, { maxWait: 60_000, timeout: 300_000 });
   }
 
   for (const { venta, plan } of planes) {

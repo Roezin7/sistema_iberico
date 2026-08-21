@@ -5,6 +5,16 @@ import { HttpError } from '../middleware/error.js';
 type CriterioCosto = 'catalogo';
 type ModoApertura = 'normal' | 'historico_prueba';
 
+// Correcciones confirmadas para reconstrucciones históricas. No alteran el
+// catálogo global ni la apertura de la semana activa; se aplican únicamente
+// al snapshot usado por el piloto histórico.
+const CONTENIDO_HISTORICO_CONFIRMADO: Record<string, number> = {
+  '13': 840,  // Arriero blanco del ticket histórico
+  '24': 1700, // Sprite 1.7 L
+  '27': 6000, // Agua mineral: paquete de 6 x 1 L
+  '33': 1776, // Schweppes/Tónica: paquete de 6 x 296 ml
+};
+
 function round(value: number, digits = 6) {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
@@ -70,7 +80,7 @@ export async function prepararAperturaFifo(input: {
     const productIds = [...new Set(lineas.map((l) => l.product_id.toString()))].map(BigInt);
     const productos = await tx.products.findMany({
       where: { negocio_id: input.negocioId, id: { in: productIds }, active: true },
-      select: { id: true, name: true, unit_cost: true },
+      select: { id: true, name: true, unit_cost: true, unidad_base: true, contenido_compra: true },
     });
     const porId = new Map(productos.map((p) => [p.id.toString(), p]));
     const cantidades = new Map<string, number>();
@@ -90,7 +100,19 @@ export async function prepararAperturaFifo(input: {
         faltantesCosto.push({ product_id: Number(key), producto: producto?.name ?? `Producto ${key}`, cantidad });
         continue;
       }
-      lotes.push({ product_id: BigInt(key), cantidad, costo: round(costo) });
+      // En la prueba histórica el snapshot conserva cantidades de compra
+      // (bolsas, botellas, paquetes). Se convierten a la unidad base del
+      // catálogo para que recetas en g/ml/pieza consuman correctamente. La
+      // apertura normal conserva el comportamiento histórico vigente.
+      const contenidoHistorico = CONTENIDO_HISTORICO_CONFIRMADO[key] ?? (producto?.contenido_compra == null ? null : Number(producto.contenido_compra));
+      const contenido = modo === 'historico_prueba' && producto?.unidad_base && contenidoHistorico != null
+        ? contenidoHistorico
+        : 1;
+      if (!Number.isFinite(contenido) || contenido <= 0) {
+        faltantesCosto.push({ product_id: Number(key), producto: producto?.name ?? `Producto ${key}`, cantidad });
+        continue;
+      }
+      lotes.push({ product_id: BigInt(key), cantidad: round(cantidad * contenido, 4), costo: round(costo / contenido, 6) });
     }
     if (faltantesCosto.length) {
       throw new HttpError(409, `Falta costo de catálogo para ${faltantesCosto.map((f) => f.producto).join(', ')}`);
