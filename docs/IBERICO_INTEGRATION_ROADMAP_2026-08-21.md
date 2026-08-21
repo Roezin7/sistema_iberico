@@ -12,7 +12,9 @@
 
 Se corrigió el adaptador para aceptar `ProductID` y `ProductId`, y `Discount` y
 `DiscountValue`. El formato real de Epos usaba la segunda variante; antes las
-ventas quedaban sin ID estable aunque se resolvieran por nombre.
+ventas quedaban sin ID estable aunque se resolvieran por nombre. También se
+corrigió el tratamiento de `DateTime` sin zona para respetar el día operativo
+local de México.
 
 ### Compras y tickets
 

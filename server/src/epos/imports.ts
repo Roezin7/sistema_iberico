@@ -11,9 +11,13 @@ import {
   type EposReportRow,
 } from './client.js';
 
-function fechaDeFila(row: EposReportRow, fallback: string) {
+/** Epos devuelve a veces DateTime sin zona. El negocio opera en México
+ * (UTC-06:00); sin este sufijo Node lo interpreta como UTC y mueve ventas
+ * nocturnas al día siguiente. */
+export function fechaDeFila(row: EposReportRow, fallback: string) {
   const raw = typeof row.DateTime === 'string' && row.DateTime ? row.DateTime : fallback;
-  const date = new Date(raw);
+  const tieneZona = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw);
+  const date = new Date(tieneZona ? raw : `${raw}-06:00`);
   if (Number.isNaN(date.getTime())) return new Date(fallback);
   return date;
 }

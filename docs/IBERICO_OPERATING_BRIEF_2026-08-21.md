@@ -18,9 +18,9 @@ semana que no debe contaminarse con ajustes históricos ni con cifras inventadas
 
 - 104 líneas y 126 unidades de venta fueron importadas desde Epos.
 - Ventas Bookkeeping: **$9,786.00**.
-- 88 ventas quedaron costeadas con FIFO.
-- Costo FIFO: **$3,190.1892**.
-- Excepciones finales: **0**.
+- 99 ventas quedaron costeadas con FIFO.
+- Costo FIFO: **$3,515.2268**.
+- Excepciones finales: **5**: piña, michemix, pepino (dos ventas) y mozzarella.
 - Se conservaron compras y gastos por **$7,925.70** sin duplicar movimientos.
 - La prueba necesitó regularizaciones explícitas porque el inventario inicial no
   estaba completamente representado.
@@ -36,16 +36,16 @@ flujo repetible de captura diaria con datos vivos y sin regularizaciones.
 | Inventario de apertura | Snapshot 52, valor $39,202.63 |
 | Lotes de apertura | 79 lotes, 423 unidades agregadas |
 | Conciliaciones diarias | Aún no confirmadas |
-| Ventas Epos existentes | 16 filas de prueba; $1,230.00 |
-| Ventas costeadas | 9 |
-| Excepciones actuales | 7: hierbabuena, romero y mozzarella |
+| Ventas Epos existentes | Ninguna dentro del intervalo local de la semana |
+| Ventas costeadas | 0 |
+| Excepciones actuales | 0 |
 | Compras con ticket móvil | Bodegas Alianza y La Comer confirmadas; compra local pendiente |
 | Cierre semanal | No iniciado |
 
-Las 16 ventas existentes son datos de prueba ya presentes en la semana 64. No
-se borran ni se vuelven a importar; deben tratarse como el primer lote de
-evidencia de la semana y quedar claramente separadas de las ventas reales que
-se sincronicen después.
+La revisión del límite horario confirmó que las 16 filas que aparecían al
+principio en la semana 64 eran ventas del domingo de la semana 63 guardadas con
+timestamps locales sin zona. Se corrigió el criterio de intervalo; no se
+borraron ventas y la semana 64 quedó sin ventas dentro de su periodo local.
 
 ## Objetivo de esta semana
 

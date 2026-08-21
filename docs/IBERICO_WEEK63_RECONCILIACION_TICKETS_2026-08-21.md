@@ -15,10 +15,10 @@ alterada por el recálculo.
 | Ventas Epos importadas | 104 líneas |
 | Unidades vendidas | 126 |
 | Ventas brutas/netas Epos | $9,786.00 |
-| Ventas costeadas | 88 |
-| Excepciones FIFO | 0 |
-| Costo FIFO de ventas | $3,190.1892 |
-| Margen bruto provisional antes de gastos | $6,595.8108 |
+| Ventas costeadas | 99 |
+| Excepciones FIFO | 5 |
+| Costo FIFO de ventas | $3,515.2268 |
+| Margen bruto provisional antes de gastos | $6,270.7732 |
 | Compras y gastos documentados | $7,925.70 |
 
 El margen anterior no debe presentarse como utilidad final: aún debe cruzarse
@@ -60,14 +60,15 @@ se deben crear automáticamente: deben sustituirse por conteo físico o ticket.
 - Las 104 ventas históricas conservan el periodo importado de Epos.
 - El recálculo reinició los lotes históricos antes de consumir para evitar
   dobles descuentos al repetir el script.
-- Las 88 ventas costeadas consumieron únicamente lotes `historico_prueba`.
+- Las 99 ventas costeadas consumieron únicamente lotes `historico_prueba`.
 - La semana 64 conservó sus 79 lotes de apertura y 423 unidades agregadas.
-- No quedaron excepciones FIFO en la semana 63.
+- Quedaron 5 excepciones explícitas: piña, michemix, pepino (dos ventas) y
+  mozzarella. No se rellenaron con ajustes automáticos.
 
 ## Discrepancia que queda documentada
 
 La cifra de $9,786 corresponde al total de filas del BookkeepingReport y es la
-fuente de ventas usada por el sistema. El costo FIFO ($3,190.1892) sólo cubre
+fuente de ventas usada por el sistema. El costo FIFO ($3,515.2268) sólo cubre
 las recetas verificadas y no debe mezclarse con el total de compras para
 calcular utilidad. La rentabilidad completa requiere agregar gastos, sueldos,
 merma y el inventario físico final.

@@ -9,8 +9,8 @@ import { consumirVentasEpos } from '../src/inventario/consumo-epos.js';
  */
 const prisma = new PrismaClient();
 const negocioId = 1n;
-const from = '2026-08-10T00:00:00.000Z';
-const to = '2026-08-17T00:00:00.000Z';
+const from = '2026-08-10T00:00:00-06:00';
+const to = '2026-08-17T00:00:00-06:00';
 const adjustmentRef = 'AJUSTE-FALTANTES-63';
 const adjustmentRef2 = 'AJUSTE-FALTANTES-63-2';
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { fechaDeFila } from './imports.js';
 import { buildReconcilePreview, eposDiscount, eposProductId, summarizeBookkeeping, summarizeDailySales } from './client.js';
 
 describe('puente Epos', () => {
@@ -29,6 +30,10 @@ describe('puente Epos', () => {
     expect(result.productos).toEqual([{ nombre: 'Mojito', product_id: 2539003, cantidad: 1, ventas: 75 }]);
     expect(eposProductId({ ProductId: 2539003 })).toBe(2539003);
     expect(eposDiscount({ DiscountValue: 5 })).toBe(5);
+  });
+
+  it('interpreta DateTime sin zona en la zona operativa de Ibérico', () => {
+    expect(fechaDeFila({ DateTime: '2026-08-16T20:01:37.15' }, '2026-08-16T00:00:00-06:00').toISOString()).toBe('2026-08-17T02:01:37.150Z');
   });
 
   it('calcula diferencias sólo en los campos comparables', () => {

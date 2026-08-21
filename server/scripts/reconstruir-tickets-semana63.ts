@@ -11,8 +11,10 @@ import { consumirVentasEpos } from '../src/inventario/consumo-epos.js';
 const prisma = new PrismaClient();
 const NEGOCIO = 1n;
 const SEMANA = 63n;
-const FROM = '2026-08-10T00:00:00.000Z';
-const TO = '2026-08-17T00:00:00.000Z';
+// Periodo local de Ibérico (México UTC-06:00). No usar medianoche UTC:
+// las ventas del domingo por la noche quedarían fuera del histórico.
+const FROM = '2026-08-10T00:00:00-06:00';
+const TO = '2026-08-17T00:00:00-06:00';
 
 type Line = {
   productId?: bigint;

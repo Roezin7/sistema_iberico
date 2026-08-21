@@ -15,8 +15,9 @@ async function main() {
   });
   if (!semana) throw new Error(`Semana ${semanaId} no existe`);
 
-  const from = semana.fecha_inicio;
-  const to = new Date(semana.fecha_fin.getTime() + 24 * 60 * 60 * 1000);
+  const fechaLocal = (value: Date) => value.toISOString().slice(0, 10);
+  const from = new Date(`${fechaLocal(semana.fecha_inicio)}T00:00:00-06:00`);
+  const to = new Date(`${fechaLocal(semana.fecha_fin)}T00:00:00-06:00`);
   const [ventas, conciliaciones, compras, excepciones, lotes] = await Promise.all([
     prisma.epos_ventas.groupBy({ by: ['costeo_estado'], where: { negocio_id: negocioId, fecha: { gte: from, lt: to } }, _count: { _all: true }, _sum: { venta_neta: true, costo_fifo: true } }),
     prisma.conciliaciones_diarias.findMany({ where: { negocio_id: negocioId, semana_id: semanaId }, select: { fecha: true, estado: true, epos_ventas: true } }),
