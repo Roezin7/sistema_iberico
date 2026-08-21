@@ -157,9 +157,9 @@ function ProductCard({ product }: { product: ProductoCosto }) {
         <strong className="menu-costos-card__price">{money(product.precio_venta)}</strong>
       </div>
       <div className="menu-costos-metrics">
-        <div><span>Costo receta</span><strong>{money(product.costo_receta)}</strong></div>
-        <div><span>Margen unitario</span><strong>{money(product.margen_unitario)}</strong></div>
-        <div><span>Food cost</span><strong>{percent(product.food_cost_pct)}</strong></div>
+        <div className="menu-costos-metric"><span>Costo receta</span><strong>{money(product.costo_receta)}</strong></div>
+        <div className="menu-costos-metric"><span>Margen unitario</span><strong>{money(product.margen_unitario)}</strong></div>
+        <div className="menu-costos-metric"><span>Food cost</span><strong>{percent(product.food_cost_pct)}</strong></div>
       </div>
       <details className="menu-costos-detail">
         <summary>Ver desglose <Icono name="chevron" size={15} /></summary>
