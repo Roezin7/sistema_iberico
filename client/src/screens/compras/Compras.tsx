@@ -13,8 +13,8 @@ interface RefCompra { productos: Producto[]; ubicaciones: { id: number; nombre: 
 interface LineaRapida { product_id: number | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_fuente: string; unidad_fuente: string; cantidad_base: string; unidad_compra: string; contenido_compra: string; costo_unitario: string; importe: string; confianza: number | null }
 interface Pendiente { id: number; fecha_recepcion: string; proveedor: string | null; ticket_ref: string | null; total: number | null; fuente?: string; estado: string; foto: boolean; origen_pago_id: number | null; notas?: string | null; lineas: Array<{ id: number; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_fuente: number | null; unidad_fuente: string | null; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null; costo_unitario: number | null; importe: number; confianza: number | null; notas: string | null }> }
 interface ValidacionCompra { valida: boolean; errores: Array<{ codigo: string; mensaje: string; linea?: number; producto?: string }>; advertencias: Array<{ codigo: string; mensaje: string; linea?: number; producto?: string }> }
-interface CompraDia { id: number; fecha: string; proveedor: string | null; ticket_ref: string | null; total: number; fuente?: string; estado: string; origen_pago_id: number | null; origen_pago?: string | null; lineas: { tipo: string; producto: string; importe: number }[] }
-interface Semana { id: number; etiqueta: string; fecha_inicio: string; fecha_fin: string; estado: 'abierta' | 'cerrada' }
+interface CompraDia { id: number; fecha: string; proveedor: string | null; ticket_ref: string | null; total: number; fuente?: string; estado: string; foto?: boolean; origen_pago_id: number | null; origen_pago?: string | null; lineas: { tipo: string; producto: string; importe: number }[] }
+export interface Semana { id: number; etiqueta: string; fecha_inicio: string; fecha_fin: string; estado: 'abierta' | 'cerrada' }
 
 const mxn = (n: number) => n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 const hoy = new Date().toISOString().slice(0, 10);
@@ -180,6 +180,67 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
   </section>;
 }
 
+/**
+ * Registro único embebible en Operación. Mantiene una sola fuente de verdad:
+ * una captura aparece aquí como pendiente, al confirmarse crea sus movimientos
+ * y lotes FIFO, y después queda disponible en el historial semanal.
+ */
+export function RegistroComprasPanel({ semana, onChange }: { semana: Semana; onChange: () => void }) {
+  const [productos, setProductos] = useState<Producto[]>([]);
+  const [ubicaciones, setUbicaciones] = useState<RefCompra['ubicaciones']>([]);
+  const [lotes, setLotes] = useState<Lote[]>([]);
+  const [pendientes, setPendientes] = useState<Pendiente[]>([]);
+  const [compras, setCompras] = useState<CompraDia[]>([]);
+  const [tab, setTab] = useState<'pendientes' | 'tickets' | 'lotes'>('pendientes');
+  const [cargando, setCargando] = useState(true);
+  const [mensaje, setMensaje] = useState('');
+
+  const comprasSemana = useMemo(() => compras.filter((c) => c.fecha >= semana.fecha_inicio && c.fecha <= semana.fecha_fin), [compras, semana]);
+  const lotesSemana = useMemo(() => lotes.filter((l) => l.recibido_at >= semana.fecha_inicio && l.recibido_at <= semana.fecha_fin), [lotes, semana]);
+  const pendientesSemana = useMemo(() => pendientes.filter((p) => p.fecha_recepcion >= semana.fecha_inicio && p.fecha_recepcion <= semana.fecha_fin), [pendientes, semana]);
+
+  async function cargar() {
+    setCargando(true);
+    try {
+      const [p, l, pend, tickets, refs] = await Promise.all([
+        api<Producto[]>('/catalogo/products'),
+        api<Lote[]>('/inventario/lotes'),
+        api<Pendiente[]>('/inventario/compras/pendientes'),
+        api<CompraDia[]>('/inventario/compras'),
+        api<RefCompra>('/inventario/compras/referencias'),
+      ]);
+      setProductos(p); setLotes(l); setPendientes(pend); setCompras(tickets); setUbicaciones(refs.ubicaciones);
+      if (pend.filter((x) => x.fecha_recepcion >= semana.fecha_inicio && x.fecha_recepcion <= semana.fecha_fin).length > 0) setTab('pendientes');
+    } catch (e) {
+      setMensaje(e instanceof Error ? e.message : 'No se pudo cargar el registro de compras.');
+    } finally { setCargando(false); }
+  }
+
+  useEffect(() => { void cargar(); }, [semana.id]);
+
+  return <section className="unified-purchases" aria-labelledby="registro-compras-titulo">
+    <div className="section-heading unified-purchases__heading">
+      <div><h2 id="registro-compras-titulo">Compras, gastos y FIFO</h2><p className="muted">Cada ticket se captura una vez. Aquí se revisa, se confirma y queda conectado al movimiento financiero y al lote FIFO.</p></div>
+      <span className={`status status--${semana.estado === 'abierta' ? 'ok' : 'cargando'}`}>{semana.estado === 'abierta' ? 'Captura abierta' : 'Consulta histórica'}</span>
+    </div>
+    {semana.estado === 'abierta' && <details className="operation-capture" open={pendientesSemana.length === 0}>
+      <summary><strong>Registrar compra con ticket</strong><span className="muted">Foto → revisión → confirmación</span></summary>
+      <div className="operation-capture__body"><CapturaRapida key={semana.id} fechaInicial={semana.fecha_inicio} onSaved={() => { void cargar(); onChange(); }} /></div>
+    </details>}
+    {mensaje && <div className="info-box" role="status">{mensaje}</div>}
+    <nav className="tabs unified-purchases__tabs" aria-label="Registro de compras">
+      <button className={tab === 'pendientes' ? 'tab tab--on' : 'tab'} onClick={() => setTab('pendientes')}>Pendientes por revisar {pendientesSemana.length ? `(${pendientesSemana.length})` : ''}</button>
+      <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => setTab('tickets')}>Historial de tickets ({comprasSemana.length})</button>
+      <button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => setTab('lotes')}>Lotes FIFO ({lotesSemana.length})</button>
+    </nav>
+    {cargando ? <section className="card"><Cargando etiqueta="Cargando compras y lotes…" /></section> : <>
+      {tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={[...productos].sort((a, b) => a.nombre.localeCompare(b.nombre))} ubicaciones={ubicaciones} onChange={() => { void cargar(); onChange(); }} />}
+      {tab === 'tickets' && <Tickets compras={comprasSemana} cargando={false} />}
+      {tab === 'lotes' && <Lotes lotes={lotesSemana} />}
+    </>}
+  </section>;
+}
+
 function Pendientes({ filas, productos, ubicaciones, onChange }: { filas: Pendiente[]; productos: Producto[]; ubicaciones: RefCompra['ubicaciones']; onChange: () => void }) {
   if (!filas.length) return <div className="empty-state"><strong>No hay compras pendientes</strong><p>Las capturas nuevas aparecerán aquí para revisión.</p></div>;
   return <section className="quick-pending">{filas.map((f) => <PendienteCard key={f.id} fila={f} productos={productos} ubicaciones={ubicaciones} onChange={onChange} />)}</section>;
@@ -230,11 +291,23 @@ function Tickets({ compras, cargando }: { compras: CompraDia[]; cargando: boolea
       <div className="ticket-day__head"><strong>{fechaCompra(fecha)}</strong><span>{filas.length} {filas.length === 1 ? 'ticket' : 'tickets'}</span></div>
       {filas.map((c) => <details className="ticket-card" key={c.id}>
         <summary><span><strong>{c.proveedor || 'Compra sin proveedor'}</strong><small>{c.ticket_ref || 'Sin folio'} · {c.estado}</small></span><span><strong>{mxn(c.total)}</strong><small>{c.origen_pago || 'Pago no registrado'}</small></span></summary>
-        <div className="ticket-lines">{c.lineas.length ? c.lineas.map((linea, i) => <div className="ticket-line" key={`${c.id}-${i}`}><span><small>{linea.tipo === 'gasto' ? 'Gasto' : 'Inventario'}</small>{linea.producto}</span><strong>{mxn(linea.importe)}</strong></div>) : <p className="muted">Este ticket no tiene líneas detalladas.</p>}</div>
+        <div className="ticket-lines">{c.lineas.length ? c.lineas.map((linea, i) => <div className="ticket-line" key={`${c.id}-${i}`}><span><small>{linea.tipo === 'gasto' ? 'Gasto' : 'Inventario'}</small>{linea.producto}</span><strong>{mxn(linea.importe)}</strong></div>) : <p className="muted">Este ticket no tiene líneas detalladas.</p>}{c.foto && <TicketSource purchaseId={c.id} />}</div>
       </details>)}
     </section>)}</div>
     {compras.length > limite && <button className="btn-secondary tickets-more" onClick={() => setLimite((n) => Math.min(n + 20, compras.length))}>Mostrar más ({compras.length - limite} restantes)</button>}
   </section>;
+}
+
+function TicketSource({ purchaseId }: { purchaseId: number }) {
+  const [foto, setFoto] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  async function abrir() {
+    try {
+      const r = await api<{ mime: string; data: string }>(`/inventario/compras/${purchaseId}/foto`);
+      setFoto(`data:${r.mime};base64,${r.data}`);
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo cargar la fuente.'); }
+  }
+  return <div className="ticket-source"><button className="btn-ghost" onClick={() => void abrir()}>{foto ? 'Ocultar fuente' : 'Ver recibo original'}</button>{foto && <img className="ticket-preview" src={foto} alt="Recibo original" />}{error && <small className="error-msg">{error}</small>}</div>;
 }
 
 function Lotes({ lotes }: { lotes: Lote[] }) {

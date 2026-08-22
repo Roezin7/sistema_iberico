@@ -124,8 +124,8 @@ export async function crearSemana(negocioId: bigint, fechaInicioStr?: string) {
   const s = await prisma.semanas.create({
     data: {
       negocio_id: negocioId,
-      // La etiqueta se normaliza después de obtener el ID; así todas las semanas
-      // nuevas usan el mismo formato que las históricas en la API.
+      // La etiqueta se normaliza después de crear la semana para conservar un
+      // valor legible también en consultas directas a la base.
       etiqueta: 'Semana',
       fecha_inicio: inicio,
       fecha_fin: fin,
@@ -133,14 +133,36 @@ export async function crearSemana(negocioId: bigint, fechaInicioStr?: string) {
   });
   const actualizado = await prisma.semanas.update({
     where: { id: s.id },
-    data: { etiqueta: etiquetaCanonica(s.id, inicio, fin) },
+    data: { etiqueta: etiquetaCanonica(inicio, fin) },
   });
   await asegurarInventarioSemanal(negocioId, actualizado.id);
   return serializarSemana(actualizado);
 }
 
-function etiquetaCanonica(id: bigint, inicio: Date, fin: Date) {
-  return `Semana ${id.toString()} (${iso(inicio)} → ${iso(fin)})`;
+// La numeración de semana es una convención operativa, no el ID interno de
+// PostgreSQL. Algunos registros históricos fueron importados fuera de orden,
+// por lo que usar `id` produce etiquetas como "Semana 14" después de la 64.
+// El ancla corresponde a la semana operativa vigente al introducir esta
+// normalización; las semanas futuras e históricas se calculan hacia delante o
+// atrás desde ella.
+const SEMANA_ANCLA_FECHA = Date.UTC(2026, 7, 17); // lunes 17-ago-2026
+const SEMANA_ANCLA_NUMERO = 64;
+
+function numeroSemanaOperativa(inicio: Date): number {
+  const fecha = Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), inicio.getUTCDate());
+  const semanasDesdeAncla = Math.round((fecha - SEMANA_ANCLA_FECHA) / (7 * 24 * 60 * 60 * 1000));
+  return SEMANA_ANCLA_NUMERO + semanasDesdeAncla;
+}
+
+function etiquetaCanonica(inicio: Date, fin: Date) {
+  const inicioNumero = numeroSemanaOperativa(inicio);
+  const dias = Math.round((Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), fin.getUTCDate()) -
+    Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), inicio.getUTCDate())) / (24 * 60 * 60 * 1000)) + 1;
+  const semanasCubiertas = Math.max(1, Math.round(dias / 7));
+  const numero = semanasCubiertas > 1
+    ? `${inicioNumero}–${inicioNumero + semanasCubiertas - 1}`
+    : `${inicioNumero}`;
+  return `Semana ${numero} (${iso(inicio)} → ${iso(fin)})`;
 }
 
 function serializarSemana(s: { id: bigint; etiqueta: string; fecha_inicio: Date; fecha_fin: Date; estado: string; cerrada_at: Date | null }) {
@@ -148,7 +170,7 @@ function serializarSemana(s: { id: bigint; etiqueta: string; fecha_inicio: Date;
     id: Number(s.id),
     // No dependemos de etiquetas históricas inconsistentes ("- Mayo", fechas
     // sueltas o puentes). La API siempre entrega una etiqueta homogénea.
-    etiqueta: etiquetaCanonica(s.id, s.fecha_inicio, s.fecha_fin),
+    etiqueta: etiquetaCanonica(s.fecha_inicio, s.fecha_fin),
     fecha_inicio: iso(s.fecha_inicio),
     fecha_fin: iso(s.fecha_fin),
     estado: s.estado,
@@ -225,6 +247,171 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     costo_ventas: costoVentas,
     estado: cierre == null ? 'pendiente_cierre' : 'cerrado',
     apertura_origen: semanal.apertura_origen,
+  };
+}
+
+type EstadoConciliacionInventario = 'pendiente_cierre' | 'calculada';
+
+interface FilaConciliacionInventario {
+  product_id: number;
+  producto: string;
+  unidad_base: string | null;
+  inventario_inicial: number;
+  compras_recibidas: number;
+  ajustes_inventario: number;
+  consumo_teorico: number;
+  existencia_fifo_esperada: number;
+  inventario_fisico_final: number;
+  diferencia_cantidad: number;
+  costo_fifo: number | null;
+  diferencia_valor: number | null;
+  incidencia: string;
+}
+
+/**
+ * Compara, producto por producto, el libro FIFO con el último conteo físico
+ * de la semana. La cantidad teórica se calcula como apertura + compras −
+ * consumo de recetas. La causa de una diferencia es una hipótesis operativa,
+ * no una conclusión automática: el usuario debe revisar la evidencia.
+ */
+async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint) {
+  const semanal = await asegurarInventarioSemanal(negocioId, semanaId);
+  const base = {
+    estado: (semanal.cierre_snapshot_id == null ? 'pendiente_cierre' : 'calculada') as EstadoConciliacionInventario,
+    apertura_snapshot_id: semanal.apertura_snapshot_id == null ? null : Number(semanal.apertura_snapshot_id),
+    cierre_snapshot_id: semanal.cierre_snapshot_id == null ? null : Number(semanal.cierre_snapshot_id),
+    filas: [] as FilaConciliacionInventario[],
+    total_diferencia_valor: null as number | null,
+    productos_con_incidencia: 0,
+  };
+  if (!semanal.apertura_snapshot_id || !semanal.cierre_snapshot_id) return base;
+
+  const semana = await prisma.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId }, select: { fecha_inicio: true, fecha_fin: true } });
+  if (!semana) throw new HttpError(404, 'Semana no encontrada');
+
+  const [productos, aperturaLineas, cierreLineas, comprasLotes, aperturaLotes, ajustesLotes, consumos, consumosAjuste] = await Promise.all([
+    prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, unit_cost: true } }),
+    prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.apertura_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
+    prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.cierre_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
+    prisma.inventory_lots.findMany({
+      where: { negocio_id: negocioId, purchase_id: { not: null }, recibido_at: { gte: semana.fecha_inicio, lte: semana.fecha_fin } },
+      select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
+    }),
+    prisma.inventory_lots.findMany({
+      where: { negocio_id: negocioId, ticket_ref: { in: [`APERTURA-FIFO-${semanaId}`, `APERTURA-FIFO-HISTORICO-${semanaId}`] } },
+      select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
+    }),
+    prisma.inventory_lots.findMany({
+      where: { negocio_id: negocioId, fuente: 'ajuste_inventario', ticket_ref: { startsWith: `AJUSTE-INVENTARIO-${semanaId}-` } },
+      select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
+    }),
+    prisma.inventory_consumptions.findMany({
+      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin } },
+      select: { product_id: true, lote_id: true, cantidad: true, fuente: true },
+    }),
+    prisma.inventory_consumptions.findMany({
+      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin }, fuente: 'ajuste_inventario' },
+      select: { product_id: true, cantidad: true },
+    }),
+  ]);
+
+  const redondearCantidad = (n: number) => Math.round((n + Number.EPSILON) * 10_000) / 10_000;
+
+  const acumularLineas = (lineas: { product_id: bigint; qty_captura: unknown; factor: unknown }[]) => {
+    const mapa = new Map<string, number>();
+    for (const linea of lineas) {
+      const key = linea.product_id.toString();
+      mapa.set(key, redondearCantidad((mapa.get(key) ?? 0) + num0(linea.qty_captura as never) * num0(linea.factor as never)));
+    }
+    return mapa;
+  };
+  const iniciales = acumularLineas(aperturaLineas);
+  const finales = acumularLineas(cierreLineas);
+  const compras = new Map<string, number>();
+  for (const lote of comprasLotes) {
+    const key = lote.product_id.toString();
+    compras.set(key, redondearCantidad((compras.get(key) ?? 0) + num0(lote.cantidad_inicial)));
+  }
+  const ajustes = new Map<string, number>();
+  for (const lote of ajustesLotes) {
+    const key = lote.product_id.toString();
+    ajustes.set(key, redondearCantidad((ajustes.get(key) ?? 0) + num0(lote.cantidad_inicial)));
+  }
+  for (const consumo of consumosAjuste) {
+    const key = consumo.product_id.toString();
+    ajustes.set(key, redondearCantidad((ajustes.get(key) ?? 0) - num0(consumo.cantidad)));
+  }
+  const consumosPorProducto = new Map<string, number>();
+  const consumosPorLote = new Map<string, number>();
+  for (const consumo of consumos) {
+    const cantidad = num0(consumo.cantidad);
+    const loteKey = consumo.lote_id.toString();
+    consumosPorLote.set(loteKey, redondearCantidad((consumosPorLote.get(loteKey) ?? 0) + cantidad));
+    if (consumo.fuente === 'ajuste_inventario') continue;
+    const productoKey = consumo.product_id.toString();
+    consumosPorProducto.set(productoKey, redondearCantidad((consumosPorProducto.get(productoKey) ?? 0) + cantidad));
+  }
+  const lotesPorProducto = new Map<string, { id: bigint; cantidad: number; costo: number }[]>();
+  for (const lote of [...aperturaLotes, ...comprasLotes, ...ajustesLotes]) {
+    const key = lote.product_id.toString();
+    const lista = lotesPorProducto.get(key) ?? [];
+    lista.push({ id: lote.id, cantidad: num0(lote.cantidad_inicial), costo: num0(lote.costo_unitario) });
+    lotesPorProducto.set(key, lista);
+  }
+
+  const productoPorId = new Map(productos.map((p) => [p.id.toString(), p]));
+  const ids = new Set([...iniciales.keys(), ...finales.keys(), ...compras.keys(), ...ajustes.keys(), ...consumosPorProducto.keys()]);
+  const filas = [...ids].map((key) => {
+    const producto = productoPorId.get(key);
+    const inicial = redondearCantidad(iniciales.get(key) ?? 0);
+    const comprasRecibidas = redondearCantidad(compras.get(key) ?? 0);
+    const ajusteInventario = redondearCantidad(ajustes.get(key) ?? 0);
+    const consumo = redondearCantidad(consumosPorProducto.get(key) ?? 0);
+    const esperado = redondearCantidad(inicial + comprasRecibidas + ajusteInventario - consumo);
+    const fisico = redondearCantidad(finales.get(key) ?? 0);
+    const diferencia = redondearCantidad(fisico - esperado);
+    const lotes = lotesPorProducto.get(key) ?? [];
+    const costoCatalogo = producto?.unit_cost == null ? null : num0(producto.unit_cost);
+    const tieneAperturaFifo = lotes.some((lote) => aperturaLotes.some((apertura) => apertura.id === lote.id));
+    const fifoRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosPorLote.get(lote.id.toString()) ?? 0)), 0);
+    const fifoValorRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosPorLote.get(lote.id.toString()) ?? 0)) * lote.costo, 0);
+    const costoPonderado = fifoRestante > 0.0001
+      ? Math.round((fifoValorRestante / fifoRestante) * 1_000_000) / 1_000_000
+      : lotes.length
+        ? Math.round((lotes.reduce((suma, lote) => suma + lote.cantidad * lote.costo, 0) / Math.max(lotes.reduce((suma, lote) => suma + lote.cantidad, 0), 0.0001)) * 1_000_000) / 1_000_000
+        : costoCatalogo;
+    const incidencia = !tieneAperturaFifo && inicial > 0
+      ? 'Apertura FIFO pendiente'
+      : Math.abs(diferencia) <= 0.01
+        ? 'Sin incidencia'
+        : diferencia < 0
+          ? 'Faltante físico: revisar merma, captura o receta'
+          : 'Sobrante físico: revisar compra no registrada o captura';
+    return {
+      product_id: Number(key),
+      producto: producto?.name ?? `Producto ${key}`,
+      unidad_base: producto?.unidad_base ?? null,
+      inventario_inicial: inicial,
+      compras_recibidas: comprasRecibidas,
+      ajustes_inventario: ajusteInventario,
+      consumo_teorico: consumo,
+      existencia_fifo_esperada: esperado,
+      inventario_fisico_final: fisico,
+      diferencia_cantidad: diferencia,
+      costo_fifo: costoPonderado,
+      diferencia_valor: costoPonderado == null ? null : redondear(diferencia * costoPonderado),
+      incidencia,
+    } satisfies FilaConciliacionInventario;
+  }).sort((a, b) => Math.abs(b.diferencia_valor ?? b.diferencia_cantidad) - Math.abs(a.diferencia_valor ?? a.diferencia_cantidad));
+
+  const conIncidencia = filas.filter((fila) => fila.incidencia !== 'Sin incidencia');
+  return {
+    ...base,
+    filas,
+    total_diferencia_valor: filas.some((fila) => fila.diferencia_valor != null)
+      ? redondear(filas.reduce((suma, fila) => suma + (fila.diferencia_valor ?? 0), 0))
+      : null,
+    productos_con_incidencia: conIncidencia.length,
   };
 }
 
@@ -601,6 +788,7 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
     gastosFacturados,
   });
   const inventario = await inventarioDeSemana(negocioId, semanaId);
+  const conciliacion_inventario = await conciliacionInventarioSemana(negocioId, semanaId);
 
   // Capital por socio.
   const ubicSocio = new Map<number, number>(); // ubicacion_id -> socio_id
@@ -624,6 +812,7 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
     comision_terminal_estimada: comisionTerminal(ventaTarjeta, propinaTarjeta),
     compras_inventario: comprasInventario,
     inventario,
+    conciliacion_inventario,
     utilidad: r.utilidad,
     margen: r.margen,
     utilidad_pct: r.utilidadPct,

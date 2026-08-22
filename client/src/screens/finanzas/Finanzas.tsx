@@ -9,7 +9,7 @@ import { useConfirm } from '../../ui/ConfirmProvider';
 import { useToast } from '../../ui/ToastProvider';
 import { Cargando } from '../../ui/Cargando';
 import { api } from '../../api';
-import { CapturaRapida } from '../compras/Compras';
+import { RegistroComprasPanel } from '../compras/Compras';
 
 interface ProductoCompra { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null }
 
@@ -172,7 +172,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
       </nav>
 
       {tab === 'dia' && <DiaView semana={semana} dias={dias} conciliaciones={conciliaciones} onChange={cargar} />}
-      {tab === 'resumen' && resumen && <ResumenView r={resumen} />}
+      {tab === 'resumen' && resumen && <ResumenView r={resumen} semana={semana} onCambio={cargar} />}
       {tab === 'movs' && (
         <MovimientosView ref_={ref_} semana={semana} movs={movs} onChange={cargar} />
       )}
@@ -425,7 +425,7 @@ function DetalleVentasEpos({ filas }: { filas: EposVenta[] }) {
   </details>;
 }
 
-function ResumenView({ r }: { r: Resumen }) {
+function ResumenView({ r, semana, onCambio }: { r: Resumen; semana: Semana; onCambio: () => void }) {
   const fila = (l: string, v: string, em?: boolean) => (
     <div className="kv"><span className="muted">{l}</span><span className={em ? 'big-number' : ''}>{v}</span></div>
   );
@@ -469,6 +469,8 @@ function ResumenView({ r }: { r: Resumen }) {
             : 'El inventario de cierre queda congelado y será la apertura de la siguiente semana.'}
         </p>
       </div>
+      <ConciliacionInventarioCard conciliacion={r.conciliacion_inventario} />
+      <CorreccionInventarioCard semana={semana} cierreId={r.inventario.cierre_snapshot_id} onSaved={onCambio} />
       <div className="resumen-card">
         <strong>Facturado (cuadre fiscal)</strong>
         {fila('Tarjeta facturable', mxn(r.facturado.tarjeta_facturable))}
@@ -486,6 +488,112 @@ function ResumenView({ r }: { r: Resumen }) {
       </div>
     </>
   );
+}
+
+function ConciliacionInventarioCard({ conciliacion }: { conciliacion: Resumen['conciliacion_inventario'] }) {
+  if (conciliacion.estado === 'pendiente_cierre') {
+    return (
+      <div className="resumen-card inventario-conciliacion">
+        <strong>Conciliación FIFO vs. inventario físico</strong>
+        <p className="muted">Se mostrará al cerrar la semana, después de capturar el inventario físico final.</p>
+      </div>
+    );
+  }
+
+  const filasConDiferencia = conciliacion.filas.filter((fila) => Math.abs(fila.diferencia_cantidad) > 0.01);
+  return (
+    <div className="resumen-card inventario-conciliacion">
+      <div className="section-heading">
+        <div>
+          <strong>Conciliación FIFO vs. inventario físico</strong>
+          <p className="muted">Apertura + compras + ajustes − consumo teórico frente al conteo final.</p>
+        </div>
+        <span className={`status ${conciliacion.productos_con_incidencia ? 'status--danger' : 'status--ok'}`}>
+          {conciliacion.productos_con_incidencia ? `${conciliacion.productos_con_incidencia} incidencia(s)` : 'Sin diferencias'}
+        </span>
+      </div>
+      <div className="summary-grid inventario-conciliacion__summary">
+        <div><small>Productos revisados</small><strong>{conciliacion.filas.length}</strong></div>
+        <div><small>Con diferencia</small><strong>{filasConDiferencia.length}</strong></div>
+        <div><small>Diferencia valorizada</small><strong>{conciliacion.total_diferencia_valor == null ? 'Pendiente' : mxn(conciliacion.total_diferencia_valor)}</strong></div>
+      </div>
+      <details className="inventario-conciliacion__details">
+        <summary>Ver detalle por producto</summary>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Producto</th><th>Inicial</th><th>Compras</th><th>Ajuste</th><th>Consumo teórico</th><th>FIFO esperado</th><th>Físico final</th><th>Diferencia</th><th>Valor</th><th>Incidencia</th></tr></thead>
+            <tbody>{conciliacion.filas.map((fila) => (
+              <tr key={fila.product_id}>
+                <td><strong>{fila.producto}</strong><small className="muted">{fila.unidad_base ?? 'unidad base pendiente'}</small></td>
+                <td>{fila.inventario_inicial}</td>
+                <td>{fila.compras_recibidas}</td>
+                <td>{fila.ajustes_inventario}</td>
+                <td>{fila.consumo_teorico}</td>
+                <td>{fila.existencia_fifo_esperada}</td>
+                <td>{fila.inventario_fisico_final}</td>
+                <td className={Math.abs(fila.diferencia_cantidad) > 0.01 ? 'text-danger' : ''}>{fila.diferencia_cantidad}</td>
+                <td>{fila.diferencia_valor == null ? '—' : mxn(fila.diferencia_valor)}</td>
+                <td>{fila.incidencia}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+        <p className="muted inventario-conciliacion__note">La incidencia es una hipótesis de revisión. Confirma si se trata de merma, error de captura, receta incorrecta o compra faltante antes de ajustar el inventario.</p>
+      </details>
+    </div>
+  );
+}
+
+function CorreccionInventarioCard({ semana, cierreId, onSaved }: { semana: Semana; cierreId: number | null; onSaved: () => void }) {
+  const [refs, setRefs] = useState<Awaited<ReturnType<typeof finanzas.correccionesReferencias>> | null>(null);
+  const [correcciones, setCorrecciones] = useState<Awaited<ReturnType<typeof finanzas.correcciones>>>([]);
+  const [productoId, setProductoId] = useState('');
+  const [zonaId, setZonaId] = useState('');
+  const [cantidad, setCantidad] = useState('');
+  const [motivo, setMotivo] = useState('');
+  const [nota, setNota] = useState('');
+  const [guardando, setGuardando] = useState(false);
+  const { error } = useToast();
+  const producto = refs?.productos.find((p) => String(p.id) === productoId);
+  const zona = producto?.unidades.find((u) => String(u.zona_id) === zonaId);
+  const puedeCorregir = cierreId != null && productoId && zonaId && Number(cantidad) !== 0 && motivo.trim().length >= 5;
+
+  async function cargar() {
+    try {
+      const [r, c] = await Promise.all([finanzas.correccionesReferencias(semana.id), finanzas.correcciones(semana.id)]);
+      setRefs(r); setCorrecciones(c);
+      if (!zonaId && r.zonas[0]) setZonaId(String(r.zonas[0].id));
+    } catch (e) { error(e instanceof Error ? e.message : 'No se pudieron cargar las referencias'); }
+  }
+  useEffect(() => { void cargar(); }, [semana.id]);
+
+  async function guardar() {
+    if (!puedeCorregir || !zona) return;
+    setGuardando(true);
+    try {
+      await finanzas.crearCorreccion(semana.id, {
+        product_id: Number(productoId), zona_id: Number(zonaId), cantidad_base: Number(cantidad) * zona.factor,
+        motivo, nota: nota || null, solicitud_id: crypto.randomUUID(),
+      });
+      setCantidad(''); setMotivo(''); setNota(''); await cargar(); onSaved();
+    } catch (e) { error(e instanceof Error ? e.message : 'No se pudo guardar la corrección'); }
+    finally { setGuardando(false); }
+  }
+
+  return <div className="resumen-card inventario-correccion">
+    <div className="section-heading"><div><strong>Corrección de inventario</strong><p className="muted">Ajusta una semana cerrada sin editar su snapshot histórico. El cambio queda auditado y se encadena a la siguiente apertura.</p></div><span className="chip chip--info">FIFO + físico</span></div>
+    {!cierreId ? <p className="muted">Captura y cierra el inventario físico antes de corregir esta semana.</p> : <>
+      <div className="form-grid form-grid--four">
+        <label>Producto<select value={productoId} onChange={(e) => { setProductoId(e.target.value); setZonaId(''); }}><option value="">Selecciona…</option>{refs?.productos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></label>
+        <label>Zona<select value={zonaId} onChange={(e) => setZonaId(e.target.value)} disabled={!producto}><option value="">Selecciona…</option>{producto?.unidades.map((u) => <option key={u.zona_id} value={u.zona_id}>{refs?.zonas.find((z) => z.id === u.zona_id)?.nombre} · {u.unidad_captura} × {u.factor}</option>)}</select></label>
+        <label>Cantidad (+/−)<input type="number" step="any" inputMode="decimal" value={cantidad} onChange={(e) => setCantidad(e.target.value)} placeholder="Ej. 2" />{zona && <small className="muted">{zona.unidad_captura} · {Number(cantidad || 0) * zona.factor} {producto?.unidad_base ?? 'base'}</small>}</label>
+        <label>Motivo<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. 2 cajas omitidas" /></label>
+      </div>
+      <label>Nota de evidencia (opcional)<input value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Qué se verificó y quién lo confirmó" /></label>
+      <button className="btn-primary" style={{ marginTop: '0.75rem' }} disabled={!puedeCorregir || guardando} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Aplicar corrección segura'}</button>
+      {correcciones.length > 0 && <details className="inventario-conciliacion__details" style={{ marginTop: '1rem' }}><summary>Historial de correcciones ({correcciones.length})</summary><div className="table-wrap"><table><thead><tr><th>Producto</th><th>Zona</th><th>Cantidad</th><th>Motivo</th><th>Usuario</th></tr></thead><tbody>{correcciones.map((c) => <tr key={c.id}><td>{c.producto}</td><td>{c.zona}</td><td className={c.cantidad_base < 0 ? 'text-danger' : ''}>{c.cantidad_captura} {c.unidad_captura} ({c.cantidad_base} base)</td><td>{c.motivo}{c.nota ? <small className="muted">{c.nota}</small> : null}</td><td>{c.usuario}</td></tr>)}</tbody></table></div></details>}
+    </>}
+  </div>;
 }
 
 function CuadreBanner({ filas }: { filas: FilaCuadre[] }) {
@@ -618,10 +726,6 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
         <strong>Registro único de operaciones</strong>
         <p className="muted">Una compra confirmada crea su lote FIFO y su movimiento financiero al mismo tiempo. Aquí se revisan juntos compras, egresos, ventas, depósitos y transferencias; no vuelvas a capturar una compra en esta pantalla.</p>
       </section>
-      {semana.estado === 'abierta' && <details className="operation-capture">
-        <summary><strong>Registrar compra con ticket</strong><span className="muted">Captura, revisión y confirmación en el mismo flujo</span></summary>
-        <div className="operation-capture__body"><CapturaRapida fechaInicial={semana.fecha_inicio} onSaved={onChange} /></div>
-      </details>}
       {semana.estado === 'abierta' && <details className="operation-adjustment">
         <summary><strong>Añadir ajuste manual</strong><span className="muted">Solo para correcciones, transferencias o movimientos que no provienen de un ticket</span></summary>
         <FormMovimiento ref_={ref_} semana={semana} onSaved={onChange} />
@@ -629,6 +733,7 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
       {movs.length > 0 && (
         <button className="btn-secondary" style={{ marginTop: '0.75rem' }} onClick={exportar}>Exportar registro</button>
       )}
+      <RegistroComprasPanel semana={semana} onChange={onChange} />
       <h3 className="section-title" style={{ marginTop: '1.25rem' }}>Historial de operaciones</h3>
       <ul className="conteo-list" style={{ marginTop: '1rem' }}>
         {movs.length === 0 && <li className="muted" style={{ padding: '1rem' }}>Sin operaciones registradas aún.</li>}

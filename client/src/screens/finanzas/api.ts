@@ -37,6 +37,18 @@ export interface Resumen {
     apertura_valor: number | null; compras: number; cierre_valor: number | null;
     costo_ventas: number | null; estado: 'pendiente_cierre' | 'cerrado'; apertura_origen: string | null;
   };
+  conciliacion_inventario: {
+    estado: 'pendiente_cierre' | 'calculada';
+    apertura_snapshot_id: number | null; cierre_snapshot_id: number | null;
+    total_diferencia_valor: number | null; productos_con_incidencia: number;
+    filas: {
+      product_id: number; producto: string; unidad_base: string | null;
+      inventario_inicial: number; compras_recibidas: number; ajustes_inventario: number; consumo_teorico: number;
+      existencia_fifo_esperada: number; inventario_fisico_final: number;
+      diferencia_cantidad: number; costo_fifo: number | null;
+      diferencia_valor: number | null; incidencia: string;
+    }[];
+  };
 }
 export interface Movimiento {
   id: number; fecha: string; tipo: TipoMov; monto: number;
@@ -87,6 +99,9 @@ export const finanzas = {
   crearSemana: (fecha_inicio?: string) => api<Semana>('/finanzas/semanas', { method: 'POST', body: { fecha_inicio } }),
   cuadre: (id: number) => api<{ ubicaciones: FilaCuadre[] }>(`/finanzas/semanas/${id}/cuadre`),
   resumen: (id: number) => api<Resumen>(`/finanzas/semanas/${id}/resumen`),
+  correccionesReferencias: (semanaId: number) => api<CorreccionReferencias>(`/finanzas/semanas/${semanaId}/inventario-correcciones/referencias`),
+  correcciones: (semanaId: number) => api<CorreccionInventario[]>(`/finanzas/semanas/${semanaId}/inventario-correcciones`),
+  crearCorreccion: (semanaId: number, body: Record<string, unknown>) => api(`/finanzas/semanas/${semanaId}/inventario-correcciones`, { method: 'POST', body }),
   movimientos: (id: number) => api<Movimiento[]>(`/finanzas/semanas/${id}/movimientos`),
   dias: (id: number) => api<ResumenDiario>(`/finanzas/semanas/${id}/dias`),
   guardarDia: (id: number, body: { fecha: string; venta_efectivo: number; venta_tarjeta: number; propina_tarjeta: number; gasto_efectivo: number; sueldos: number }) =>
@@ -100,6 +115,16 @@ export const finanzas = {
   cerrar: (id: number) => api<Resumen>(`/finanzas/semanas/${id}/cerrar`, { method: 'POST', body: {} }),
   reabrir: (id: number) => api<Semana>(`/finanzas/semanas/${id}/reabrir`, { method: 'POST', body: {} }),
 };
+
+export interface CorreccionReferencias {
+  zonas: { id: number; nombre: string }[];
+  productos: { id: number; nombre: string; unidad_base: string | null; costo: number | null; unidades: { zona_id: number; unidad_captura: string; factor: number }[] }[];
+}
+export interface CorreccionInventario {
+  id: number; product_id: number; producto: string; unidad_base: string | null; unidad_captura: string; zona_id: number; zona: string;
+  cantidad_base: number; cantidad_captura: number; factor: number; costo_unitario: number; motivo: string; nota: string | null;
+  usuario: string; creado_at: string; snapshot_anterior_id: number; snapshot_nuevo_id: number;
+}
 
 export interface CompraDetalleLinea {
   id: number | null; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente';

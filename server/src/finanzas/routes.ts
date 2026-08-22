@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import * as svc from './service.js';
+import { crearCorreccionInventario, listarCorrecciones, referenciasCorreccion } from '../inventario/correcciones.js';
 
 export const finanzasRouter = Router();
 
@@ -61,6 +62,32 @@ finanzasRouter.get('/semanas/:id/cuadre', asyncHandler(async (req, res) => {
 
 finanzasRouter.get('/semanas/:id/resumen', asyncHandler(async (req, res) => {
   res.json(await svc.resumen(req.auth!.negocioId, BigInt(id.parse(req.params.id))));
+}));
+
+/** Referencias y correcciones físicas auditables ligadas a una semana. */
+finanzasRouter.get('/semanas/:id/inventario-correcciones/referencias', asyncHandler(async (req, res) => {
+  res.json(await referenciasCorreccion(req.auth!.negocioId));
+}));
+
+finanzasRouter.get('/semanas/:id/inventario-correcciones', asyncHandler(async (req, res) => {
+  res.json(await listarCorrecciones(req.auth!.negocioId, BigInt(id.parse(req.params.id))));
+}));
+
+finanzasRouter.post('/semanas/:id/inventario-correcciones', asyncHandler(async (req, res) => {
+  const body = z.object({
+    product_id: id,
+    zona_id: id,
+    cantidad_base: z.coerce.number().finite().refine((n) => n !== 0, 'La corrección no puede ser cero'),
+    motivo: z.string().trim().min(5).max(500),
+    nota: z.string().trim().max(1000).nullable().optional(),
+    solicitud_id: z.string().trim().max(120).nullable().optional(),
+  }).parse(req.body);
+  const resultado = await crearCorreccionInventario({
+    negocioId: req.auth!.negocioId, usuarioId: req.auth!.usuarioId, semanaId: BigInt(id.parse(req.params.id)),
+    productId: BigInt(body.product_id), zonaId: BigInt(body.zona_id), cantidadBase: body.cantidad_base,
+    motivo: body.motivo, nota: body.nota, solicitudId: body.solicitud_id,
+  });
+  res.status(201).json(resultado);
 }));
 
 finanzasRouter.get('/semanas/:id/movimientos', asyncHandler(async (req, res) => {
