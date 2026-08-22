@@ -10,6 +10,7 @@ import { useConfirm } from '../../ui/ConfirmProvider';
 import { useToast } from '../../ui/ToastProvider';
 import { Cargando } from '../../ui/Cargando';
 import { api } from '../../api';
+import { CapturaRapida } from '../compras/Compras';
 
 interface ProductoCompra { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null }
 
@@ -90,7 +91,7 @@ function Marco({ children }: { children: React.ReactNode }) {
       <header className="page-head">
         <div className="page-title">
           <Icono name="wallet" size={24} className="ttl-icon" />
-        <h1>Cierre y caja</h1>
+        <h1>Operación</h1>
         </div>
       </header>
       <div className="tab-body">{children}</div>
@@ -164,10 +165,10 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
           )}
         </span>
       </div>
-      <nav className="tabs">
-        <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Cortes diarios</button>
+      <nav className="tabs" aria-label="Flujo semanal">
+        <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Operación diaria</button>
         <button className={tab === 'resumen' ? 'tab tab--on' : 'tab'} onClick={() => setTab('resumen')}>Resumen</button>
-        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Movimientos</button>
+        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Registro único</button>
         <button className={tab === 'cuadre' ? 'tab tab--on' : 'tab'} onClick={() => setTab('cuadre')}>Cuadre</button>
       </nav>
 
@@ -376,11 +377,11 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
         )}
         {verVentas && <DetalleVentasEpos filas={ventasDetalle} />}
       </>}
-      <div className="dia-section muted">Egresos del día</div>
+      <div className="dia-section muted">Compras y egresos del día</div>
       {(dia.gasto_itemizado > 0 || dia.compra_inventario > 0) && (
         <div className="info-box info-box--compact">
           <strong>Egresos registrados:</strong>{dia.compra_inventario ? ` inventario FIFO ${mxn(dia.compra_inventario)}` : ''}{dia.compra_inventario && dia.gasto_itemizado ? ' ·' : ''}{dia.gasto_itemizado ? ` gastos con ticket ${mxn(dia.gasto_itemizado)}` : ''}
-          <Link to={`/compras?fecha=${dia.fecha}&return=finanzas`} className="inline-link">Ver egresos del día</Link>
+          <Link to={`/compras?fecha=${dia.fecha}&return=finanzas`} className="inline-link">Abrir registro de compras</Link>
         </div>
       )}
       <div className="dia-inputs dia-inputs--2">
@@ -389,7 +390,10 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
       </div>
       {abierta && (
         <div className="dia-actions">
-          <Link className="btn-secondary" to={`/compras?fecha=${dia.fecha}&return=finanzas`}>Registrar egreso</Link>
+          <details className="dia-capture">
+            <summary className="btn-secondary">Registrar compra con ticket</summary>
+            <div className="dia-capture__body"><CapturaRapida fechaInicial={dia.fecha} onSaved={onSaved} /></div>
+          </details>
           <button className="btn-primary dia-save" onClick={guardar} disabled={guardando}>
             {guardando ? 'Guardando…' : ok ? '✓ Guardado' : 'Guardar día'}
           </button>
@@ -611,12 +615,20 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
 
   return (
     <>
-      {semana.estado === 'abierta' && <FormMovimiento ref_={ref_} semana={semana} onSaved={onChange} />}
+      <section className="info-box unified-operations-intro">
+        <strong>Registro único de operaciones</strong>
+        <p className="muted">Una compra confirmada crea su lote FIFO y su movimiento financiero al mismo tiempo. Aquí se revisan juntos compras, egresos, ventas, depósitos y transferencias; no vuelvas a capturar una compra en esta pantalla.</p>
+      </section>
+      {semana.estado === 'abierta' && <details className="operation-adjustment">
+        <summary><strong>Añadir ajuste manual</strong><span className="muted">Solo para correcciones, transferencias o movimientos que no provienen de un ticket</span></summary>
+        <FormMovimiento ref_={ref_} semana={semana} onSaved={onChange} />
+      </details>}
       {movs.length > 0 && (
-        <button className="btn-secondary" style={{ marginTop: '0.75rem' }} onClick={exportar}>Exportar CSV</button>
+        <button className="btn-secondary" style={{ marginTop: '0.75rem' }} onClick={exportar}>Exportar registro</button>
       )}
+      <h3 className="section-title" style={{ marginTop: '1.25rem' }}>Operaciones de la semana</h3>
       <ul className="conteo-list" style={{ marginTop: '1rem' }}>
-        {movs.length === 0 && <li className="muted" style={{ padding: '1rem' }}>Sin movimientos aún.</li>}
+        {movs.length === 0 && <li className="muted" style={{ padding: '1rem' }}>Sin operaciones registradas aún.</li>}
         {movs.map((m) => (
           <li key={m.id} className="conteo-row">
             {editando === m.id ? <div className="conteo-info" style={{ display: 'grid', gap: '0.4rem' }}>
@@ -634,14 +646,14 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
               {errorEdit && <small className="error-msg">{errorEdit}</small>}
               <div style={{ display: 'flex', gap: '0.4rem' }}><button className="btn-primary" disabled={guardando} onClick={async () => { setGuardando(true); setErrorEdit(''); try { await finanzas.editarMovimiento(m.id, { monto: Number(montoEdit), ubicacion_origen_id: origenEdit || null, ubicacion_destino_id: destinoEdit || null, categoria_id: categoriaEdit || null }); setEditando(null); onChange(); } catch (e) { setErrorEdit(e instanceof Error ? e.message : 'No se pudo editar'); } finally { setGuardando(false); } }}>Guardar</button><button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button></div>
             </div> : <><div className="conteo-info">
-              <strong>{TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
+              <strong>{m.compra_id != null || m.tipo === 'compra_inventario' ? 'Compra · movimiento vinculado' : TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
               <small className="muted">
                 {[nombreUbic(m.ubicacion_origen_id), nombreUbic(m.ubicacion_destino_id)].filter(Boolean).join(' → ')}
                 {m.descripcion ? ` · ${m.descripcion}` : ''}{m.facturado ? ' · facturado' : ''}
               </small>
             </div><span>{mxn(m.monto)}</span></>}
             {semana.estado === 'abierta' && (
-              <>{editando !== m.id && (m.compra_id != null ? <button className="btn-ghost" title="Editar ticket y movimientos vinculados" onClick={() => setCompraEditando(m.compra_id!)}>Editar ticket</button> : <button className="btn-ghost" title="Editar movimiento" onClick={() => { setEditando(m.id); setMontoEdit(String(m.monto)); setOrigenEdit(m.ubicacion_origen_id ?? ''); setDestinoEdit(m.ubicacion_destino_id ?? ''); setCategoriaEdit(m.categoria_id ?? ''); setErrorEdit(''); }}>Editar</button>)}{m.compra_id == null && <button
+              <>{editando !== m.id && (m.compra_id != null ? <button className="btn-ghost" title="Editar compra y movimiento vinculado" onClick={() => setCompraEditando(m.compra_id!)}>Editar compra</button> : <button className="btn-ghost" title="Editar movimiento" onClick={() => { setEditando(m.id); setMontoEdit(String(m.monto)); setOrigenEdit(m.ubicacion_origen_id ?? ''); setDestinoEdit(m.ubicacion_destino_id ?? ''); setCategoriaEdit(m.categoria_id ?? ''); setErrorEdit(''); }}>Editar</button>)}{m.compra_id == null && <button
                 className="icon-btn" title="Borrar movimiento" aria-label="Borrar movimiento"
                 onClick={async () => { const ok = await confirmar({ message: '¿Borrar este movimiento? Afecta el cuadre de la semana.', tone: 'danger', confirmText: 'Borrar' }); if (!ok) return; try { await finanzas.borrarMovimiento(m.id); onChange(); } catch (e) { setErrorEdit(e instanceof Error ? e.message : 'No se pudo borrar'); } }}
               >✕</button>}</>

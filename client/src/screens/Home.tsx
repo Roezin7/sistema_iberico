@@ -15,7 +15,7 @@ interface Modulo {
 
 const MODULOS: Modulo[] = [
   { clave: 'inventario', titulo: 'Inventario', icono: 'package', desc: 'Conteos y lista de compras', ruta: '/inventario' },
-  { clave: 'finanzas', titulo: 'Cierre y caja', icono: 'wallet', desc: 'Cortes diarios, pagos y cuadre', ruta: '/finanzas', soloAdmin: true },
+  { clave: 'finanzas', titulo: 'Operación', icono: 'wallet', desc: 'Ventas, compras, egresos y cuadre', ruta: '/finanzas', soloAdmin: true },
   { clave: 'patrimonio', titulo: 'Patrimonio', icono: 'trending', desc: 'Tendencia y snapshots', ruta: '/patrimonio', soloAdmin: true },
   { clave: 'ajustes', titulo: 'Catálogo y ajustes', icono: 'settings', desc: 'Productos, mínimos, saldos', ruta: '/configuracion', soloAdmin: true },
 ];

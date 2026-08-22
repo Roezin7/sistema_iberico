@@ -42,6 +42,8 @@ function AppBody() {
       <OfflineBanner />
       <Routes>
         <Route path="/" element={<Home />} />
+        {/* Acceso legado: la operación diaria y el cierre viven ahora en un solo flujo. */}
+        <Route path="/operacion" element={<Navigate to="/finanzas" replace />} />
         <Route path="/inventario" element={<Inventario />} />
         <Route path="/finanzas" element={<SoloAdmin rol="admin"><Finanzas /></SoloAdmin>} />
         <Route path="/patrimonio" element={<SoloAdmin rol="admin"><Patrimonio /></SoloAdmin>} />
