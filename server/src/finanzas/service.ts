@@ -154,7 +154,7 @@ function numeroSemanaOperativa(inicio: Date): number {
   return SEMANA_ANCLA_NUMERO + semanasDesdeAncla;
 }
 
-function etiquetaCanonica(inicio: Date, fin: Date) {
+export function etiquetaCanonica(inicio: Date, fin: Date) {
   const inicioNumero = numeroSemanaOperativa(inicio);
   const dias = Math.round((Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), fin.getUTCDate()) -
     Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), inicio.getUTCDate())) / (24 * 60 * 60 * 1000)) + 1;

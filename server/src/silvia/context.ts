@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import { resumen } from '../finanzas/service.js';
+import { resumen, etiquetaCanonica } from '../finanzas/service.js';
 import { listarSnapshots } from '../patrimonio/service.js';
 import { inventarioActual, listaCompras } from '../inventario/service.js';
 
@@ -29,7 +29,7 @@ export async function contextoNegocio(negocioId: bigint): Promise<string> {
     for (const s of [...semanas].reverse()) {
       try {
         const r = await resumen(negocioId, s.id);
-        const etiqueta = `Semana ${s.id.toString()} (${s.fecha_inicio.toISOString().slice(0, 10)} → ${s.fecha_fin.toISOString().slice(0, 10)})`;
+        const etiqueta = etiquetaCanonica(s.fecha_inicio, s.fecha_fin);
         filas.push(
           `  ${etiqueta} (${s.estado}): ventas ${mxn(r.ventas.total)}, utilidad ${mxn(r.utilidad)}, ` +
             `margen ${pct(r.margen)}, comisión ${mxn(r.comision_terminal_estimada)}, compras ${mxn(r.compras_inventario)}, ` +
