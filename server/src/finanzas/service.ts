@@ -124,19 +124,31 @@ export async function crearSemana(negocioId: bigint, fechaInicioStr?: string) {
   const s = await prisma.semanas.create({
     data: {
       negocio_id: negocioId,
-      etiqueta: `Semana ${iso(inicio)}`,
+      // La etiqueta se normaliza después de obtener el ID; así todas las semanas
+      // nuevas usan el mismo formato que las históricas en la API.
+      etiqueta: 'Semana',
       fecha_inicio: inicio,
       fecha_fin: fin,
     },
   });
-  await asegurarInventarioSemanal(negocioId, s.id);
-  return serializarSemana(s);
+  const actualizado = await prisma.semanas.update({
+    where: { id: s.id },
+    data: { etiqueta: etiquetaCanonica(s.id, inicio, fin) },
+  });
+  await asegurarInventarioSemanal(negocioId, actualizado.id);
+  return serializarSemana(actualizado);
+}
+
+function etiquetaCanonica(id: bigint, inicio: Date, fin: Date) {
+  return `Semana ${id.toString()} (${iso(inicio)} → ${iso(fin)})`;
 }
 
 function serializarSemana(s: { id: bigint; etiqueta: string; fecha_inicio: Date; fecha_fin: Date; estado: string; cerrada_at: Date | null }) {
   return {
     id: Number(s.id),
-    etiqueta: s.etiqueta,
+    // No dependemos de etiquetas históricas inconsistentes ("- Mayo", fechas
+    // sueltas o puentes). La API siempre entrega una etiqueta homogénea.
+    etiqueta: etiquetaCanonica(s.id, s.fecha_inicio, s.fecha_fin),
     fecha_inicio: iso(s.fecha_inicio),
     fecha_fin: iso(s.fecha_fin),
     estado: s.estado,

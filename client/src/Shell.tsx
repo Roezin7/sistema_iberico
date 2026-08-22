@@ -23,7 +23,6 @@ const ADMIN_ITEMS: Item[] = [
   { ruta: '/costos-menu', label: 'Costos del menú', icono: 'trending', soloAdmin: true },
   { ruta: '/patrimonio', label: 'Patrimonio', icono: 'trending', soloAdmin: true },
   { ruta: '/configuracion', label: 'Configuración', icono: 'settings', soloAdmin: true },
-  { ruta: '/marketing', label: 'Laboratorio', icono: 'sparkles', soloAdmin: true },
 ];
 
 export default function Shell({ children }: { children: ReactNode }) {

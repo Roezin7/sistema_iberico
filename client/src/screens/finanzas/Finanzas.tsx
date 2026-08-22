@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import {
   finanzas, epos, mxn, TIPOS, type Referencias, type Semana, type Resumen, type FilaCuadre,
   type Movimiento, type TipoMov, type DiaFila, type ConciliacionDiaria, type EposVenta, type CompraDetalle, type CompraDetalleLinea,
@@ -381,7 +380,6 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
       {(dia.gasto_itemizado > 0 || dia.compra_inventario > 0) && (
         <div className="info-box info-box--compact">
           <strong>Egresos registrados:</strong>{dia.compra_inventario ? ` inventario FIFO ${mxn(dia.compra_inventario)}` : ''}{dia.compra_inventario && dia.gasto_itemizado ? ' ·' : ''}{dia.gasto_itemizado ? ` gastos con ticket ${mxn(dia.gasto_itemizado)}` : ''}
-          <Link to={`/compras?fecha=${dia.fecha}&return=finanzas`} className="inline-link">Abrir registro de compras</Link>
         </div>
       )}
       <div className="dia-inputs dia-inputs--2">
@@ -390,10 +388,6 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
       </div>
       {abierta && (
         <div className="dia-actions">
-          <details className="dia-capture">
-            <summary className="btn-secondary">Registrar compra con ticket</summary>
-            <div className="dia-capture__body"><CapturaRapida fechaInicial={dia.fecha} onSaved={onSaved} /></div>
-          </details>
           <button className="btn-primary dia-save" onClick={guardar} disabled={guardando}>
             {guardando ? 'Guardando…' : ok ? '✓ Guardado' : 'Guardar día'}
           </button>
@@ -619,6 +613,10 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
         <strong>Registro único de operaciones</strong>
         <p className="muted">Una compra confirmada crea su lote FIFO y su movimiento financiero al mismo tiempo. Aquí se revisan juntos compras, egresos, ventas, depósitos y transferencias; no vuelvas a capturar una compra en esta pantalla.</p>
       </section>
+      {semana.estado === 'abierta' && <details className="operation-capture">
+        <summary><strong>Registrar compra con ticket</strong><span className="muted">Captura, revisión y confirmación en el mismo flujo</span></summary>
+        <div className="operation-capture__body"><CapturaRapida fechaInicial={semana.fecha_inicio} onSaved={onChange} /></div>
+      </details>}
       {semana.estado === 'abierta' && <details className="operation-adjustment">
         <summary><strong>Añadir ajuste manual</strong><span className="muted">Solo para correcciones, transferencias o movimientos que no provienen de un ticket</span></summary>
         <FormMovimiento ref_={ref_} semana={semana} onSaved={onChange} />
@@ -626,7 +624,7 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
       {movs.length > 0 && (
         <button className="btn-secondary" style={{ marginTop: '0.75rem' }} onClick={exportar}>Exportar registro</button>
       )}
-      <h3 className="section-title" style={{ marginTop: '1.25rem' }}>Operaciones de la semana</h3>
+      <h3 className="section-title" style={{ marginTop: '1.25rem' }}>Historial de operaciones</h3>
       <ul className="conteo-list" style={{ marginTop: '1rem' }}>
         {movs.length === 0 && <li className="muted" style={{ padding: '1rem' }}>Sin operaciones registradas aún.</li>}
         {movs.map((m) => (
