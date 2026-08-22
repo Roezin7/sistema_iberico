@@ -995,6 +995,52 @@ select:disabled {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
+.operation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(7rem, 9rem) minmax(9rem, auto);
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+.operation-row__info {
+  min-width: 0;
+}
+.operation-row__info strong,
+.operation-row__info small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.operation-row__amount {
+  justify-self: end;
+  white-space: nowrap;
+  text-align: right;
+}
+.operation-row__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  min-width: 0;
+}
+.operation-row__actions .btn-ghost {
+  white-space: nowrap;
+}
+.operation-row__editor {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+@media (max-width: 760px) {
+  .operation-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.45rem 0.7rem;
+  }
+  .operation-row__info { grid-column: 1; }
+  .operation-row__amount { grid-column: 2; grid-row: 1; }
+  .operation-row__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
 .conteo-input {
   width: 92px;
   text-align: right;

@@ -581,6 +581,11 @@ function CuadreView({ ref_, semana, filas, onChange }: { ref_: Referencias; sema
 
 function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; semana: Semana; movs: Movimiento[]; onChange: () => void }) {
   const nombreUbic = (id: number | null) => ref_.ubicaciones.find((u) => u.id === id)?.nombre ?? '';
+  const etiquetaMovimiento = (m: Movimiento) => {
+    if (m.tipo === 'compra_inventario') return 'Compra de inventario';
+    if (m.tipo === 'gasto' && m.compra_id != null) return 'Gasto operativo · ticket vinculado';
+    return TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo;
+  };
   const confirmar = useConfirm();
   const [editando, setEditando] = useState<number | null>(null);
   const [montoEdit, setMontoEdit] = useState('');
@@ -628,8 +633,8 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
       <ul className="conteo-list" style={{ marginTop: '1rem' }}>
         {movs.length === 0 && <li className="muted" style={{ padding: '1rem' }}>Sin operaciones registradas aún.</li>}
         {movs.map((m) => (
-          <li key={m.id} className="conteo-row">
-            {editando === m.id ? <div className="conteo-info" style={{ display: 'grid', gap: '0.4rem' }}>
+          <li key={m.id} className="conteo-row operation-row">
+            {editando === m.id ? <div className="conteo-info operation-row__editor" style={{ display: 'grid', gap: '0.4rem' }}>
               <strong>Editar {TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
               <input type="number" min="0.01" step="0.01" value={montoEdit} onChange={(e) => setMontoEdit(e.target.value)} aria-label="Monto del movimiento" />
               <select value={origenEdit} onChange={(e) => setOrigenEdit(e.target.value ? Number(e.target.value) : '')} aria-label="Origen del movimiento">
@@ -643,19 +648,21 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
               </select>}
               {errorEdit && <small className="error-msg">{errorEdit}</small>}
               <div style={{ display: 'flex', gap: '0.4rem' }}><button className="btn-primary" disabled={guardando} onClick={async () => { setGuardando(true); setErrorEdit(''); try { await finanzas.editarMovimiento(m.id, { monto: Number(montoEdit), ubicacion_origen_id: origenEdit || null, ubicacion_destino_id: destinoEdit || null, categoria_id: categoriaEdit || null }); setEditando(null); onChange(); } catch (e) { setErrorEdit(e instanceof Error ? e.message : 'No se pudo editar'); } finally { setGuardando(false); } }}>Guardar</button><button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button></div>
-            </div> : <><div className="conteo-info">
-              <strong>{m.compra_id != null || m.tipo === 'compra_inventario' ? 'Compra · movimiento vinculado' : TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
+            </div> : <><div className="conteo-info operation-row__info">
+              <strong>{etiquetaMovimiento(m)}</strong>
               <small className="muted">
                 {[nombreUbic(m.ubicacion_origen_id), nombreUbic(m.ubicacion_destino_id)].filter(Boolean).join(' → ')}
                 {m.descripcion ? ` · ${m.descripcion}` : ''}{m.facturado ? ' · facturado' : ''}
               </small>
-            </div><span>{mxn(m.monto)}</span></>}
+            </div><span className="operation-row__amount">{mxn(m.monto)}</span></>}
+            <div className="operation-row__actions">
             {semana.estado === 'abierta' && (
               <>{editando !== m.id && (m.compra_id != null ? <button className="btn-ghost" title="Editar compra y movimiento vinculado" onClick={() => setCompraEditando(m.compra_id!)}>Editar compra</button> : <button className="btn-ghost" title="Editar movimiento" onClick={() => { setEditando(m.id); setMontoEdit(String(m.monto)); setOrigenEdit(m.ubicacion_origen_id ?? ''); setDestinoEdit(m.ubicacion_destino_id ?? ''); setCategoriaEdit(m.categoria_id ?? ''); setErrorEdit(''); }}>Editar</button>)}{m.compra_id == null && <button
                 className="icon-btn" title="Borrar movimiento" aria-label="Borrar movimiento"
                 onClick={async () => { const ok = await confirmar({ message: '¿Borrar este movimiento? Afecta el cuadre de la semana.', tone: 'danger', confirmText: 'Borrar' }); if (!ok) return; try { await finanzas.borrarMovimiento(m.id); onChange(); } catch (e) { setErrorEdit(e instanceof Error ? e.message : 'No se pudo borrar'); } }}
               >✕</button>}</>
             )}
+            </div>
           </li>
         ))}
       </ul>
