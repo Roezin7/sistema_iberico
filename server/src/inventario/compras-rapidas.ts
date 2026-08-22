@@ -8,6 +8,8 @@ export type CapturaCompraLinea = {
   product_id?: bigint | null;
   tipo_linea: 'inventario' | 'gasto' | 'pendiente';
   descripcion_fuente: string;
+  cantidad_fuente?: number | null;
+  unidad_fuente?: string | null;
   cantidad_base?: number | null;
   unidad_compra?: string | null;
   contenido_compra?: number | null;
@@ -21,7 +23,8 @@ export type CapturaCompraInput = {
   fecha_recepcion: string;
   proveedor?: string | null;
   ticket_ref?: string | null;
-  total: number;
+  total?: number | null;
+  tipo_documento?: 'ticket' | 'orden_manuscrita';
   moneda?: string;
   notas?: string | null;
   origen_pago_id?: bigint | null;
@@ -79,7 +82,7 @@ async function validarOrigen(negocioId: bigint, origenPagoId?: bigint | null) {
 
 export async function crearBorradorCompra(negocioId: bigint, usuarioId: bigint, input: CapturaCompraInput) {
   if (!input.lineas.length) throw new HttpError(400, 'El ticket debe tener al menos una línea');
-  if (input.total < 0 || input.lineas.some((l) => !l.descripcion_fuente.trim() || l.importe < 0)) {
+  if ((input.total != null && input.total < 0) || input.lineas.some((l) => !l.descripcion_fuente.trim() || l.importe < 0)) {
     throw new HttpError(400, 'El total y las líneas deben tener valores válidos');
   }
   const fecha = fechaUTC(input.fecha_recepcion);
@@ -98,7 +101,7 @@ export async function crearBorradorCompra(negocioId: bigint, usuarioId: bigint, 
     const compra = await tx.purchases.create({
       data: {
         negocio_id: negocioId, fecha_recepcion: fecha, proveedor: input.proveedor?.trim() || null,
-        ticket_ref: ticket, total: input.total, moneda: input.moneda ?? 'MXN', fuente: 'ticket_movil',
+        ticket_ref: ticket, total: input.total, moneda: input.moneda ?? 'MXN', fuente: input.tipo_documento === 'orden_manuscrita' ? 'orden_manuscrita' : 'ticket_movil',
         notas: input.notas?.trim() || null, estado: 'revision', foto_data: foto?.data ?? null,
         foto_mime: foto?.mime ?? null, foto_hash: foto?.hash ?? null, origen_pago_id: input.origen_pago_id ?? null,
         capturada_por: usuarioId,
@@ -107,7 +110,7 @@ export async function crearBorradorCompra(negocioId: bigint, usuarioId: bigint, 
     await tx.purchase_capture_lines.createMany({
       data: input.lineas.map((l) => ({
         purchase_id: compra.id, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea,
-        descripcion_fuente: l.descripcion_fuente.trim(), cantidad_base: l.cantidad_base ?? null,
+        descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null,
         unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null,
         costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null,
         notas: l.notas?.trim() || null,
@@ -125,11 +128,11 @@ export async function listarBorradoresCompra(negocioId: bigint) {
   });
   return filas.map((f) => ({
     id: Number(f.id), fecha_recepcion: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor,
-    ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), estado: f.estado, foto: !!f.foto_data, notas: f.notas,
+    ticket_ref: f.ticket_ref, total: f.total == null ? null : Number(f.total), fuente: f.fuente, estado: f.estado, foto: !!f.foto_data, notas: f.notas,
     origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null,
     lineas: f.capture_lines.map((l) => ({ id: Number(l.id), product_id: l.product_id ? Number(l.product_id) : null,
       producto: l.products?.name ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente,
-      cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), unidad_compra: l.unidad_compra,
+      cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), unidad_compra: l.unidad_compra,
       contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe), confianza: l.confianza == null ? null : Number(l.confianza), notas: l.notas })),
   }));
 }
@@ -149,7 +152,7 @@ export async function listarCompras(negocioId: bigint, fecha?: string) {
   const where: { negocio_id: bigint; fecha_recepcion?: Date } = { negocio_id: negocioId };
   if (fecha) where.fecha_recepcion = fechaUTC(fecha);
   const filas = await prisma.purchases.findMany({ where, include: { purchase_lines: { include: { products: { select: { name: true, unidad_base: true } } } }, capture_lines: true, movimientos: { select: { tipo: true, monto: true } }, origen_pago: { select: { nombre: true } } }, orderBy: [{ fecha_recepcion: 'desc' }, { id: 'desc' }] });
-  return filas.map((f) => ({ id: Number(f.id), fecha: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor, ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), estado: f.estado, origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null, origen_pago: f.origen_pago?.nombre ?? null, movimientos: f.movimientos.map((m) => ({ tipo: m.tipo, monto: Number(m.monto) })), lineas: [...f.purchase_lines.map((l) => ({ id: `${f.id}-${l.product_id}`, tipo: 'inventario', producto: l.products.name, product_id: Number(l.product_id), cantidad_base: Number(l.qty), costo_unitario: Number(l.costo_unitario), importe: Number(l.importe ?? 0) })), ...f.capture_lines.filter((l) => l.tipo_linea === 'gasto').map((l) => ({ id: Number(l.id), tipo: 'gasto', producto: l.descripcion_fuente, product_id: l.product_id ? Number(l.product_id) : null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) }))] }));
+  return filas.map((f) => ({ id: Number(f.id), fecha: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor, ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), fuente: f.fuente, estado: f.estado, origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null, origen_pago: f.origen_pago?.nombre ?? null, movimientos: f.movimientos.map((m) => ({ tipo: m.tipo, monto: Number(m.monto) })), lineas: [...f.purchase_lines.map((l) => ({ id: `${f.id}-${l.product_id}`, tipo: 'inventario', producto: l.products.name, product_id: Number(l.product_id), cantidad_base: Number(l.qty), costo_unitario: Number(l.costo_unitario), importe: Number(l.importe ?? 0) })), ...f.capture_lines.filter((l) => l.tipo_linea === 'gasto').map((l) => ({ id: Number(l.id), tipo: 'gasto', producto: l.descripcion_fuente, product_id: l.product_id ? Number(l.product_id) : null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) }))] }));
 }
 
 export async function obtenerCompraConfirmada(negocioId: bigint, purchaseId: bigint) {
@@ -164,11 +167,11 @@ export async function obtenerCompraConfirmada(negocioId: bigint, purchaseId: big
   if (!compra) throw new HttpError(404, 'Compra no encontrada');
   return {
     id: Number(compra.id), fecha_recepcion: compra.fecha_recepcion.toISOString().slice(0, 10), proveedor: compra.proveedor,
-    ticket_ref: compra.ticket_ref, total: Number(compra.total ?? 0), estado: compra.estado,
+    ticket_ref: compra.ticket_ref, total: Number(compra.total ?? 0), fuente: compra.fuente, estado: compra.estado,
     origen_pago_id: compra.origen_pago_id ? Number(compra.origen_pago_id) : null,
     origen_pago: compra.origen_pago?.nombre ?? null,
     lineas: compra.capture_lines.length
-      ? compra.capture_lines.map((l) => ({ id: Number(l.id), product_id: l.product_id ? Number(l.product_id) : null, producto: l.products?.name ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe), confianza: l.confianza == null ? null : Number(l.confianza), notas: l.notas }))
+      ? compra.capture_lines.map((l) => ({ id: Number(l.id), product_id: l.product_id ? Number(l.product_id) : null, producto: l.products?.name ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente, cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe), confianza: l.confianza == null ? null : Number(l.confianza), notas: l.notas }))
       : compra.purchase_lines.map((l) => ({ id: null, product_id: Number(l.product_id), producto: l.products.name, tipo_linea: 'inventario', descripcion_fuente: l.products.name, cantidad_base: Number(l.qty), unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: Number(l.costo_unitario), importe: Number(l.importe ?? 0), confianza: 1, notas: null })),
   };
 }
@@ -205,7 +208,7 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     const origen = origenId ? await tx.ubicaciones_fondos.findFirst({ where: { id: origenId, negocio_id: negocioId, activo: true }, select: { id: true, tipo: true } }) : null;
     if (!origen) throw new HttpError(400, 'La compra requiere una ubicación de pago válida');
     await tx.purchase_capture_lines.deleteMany({ where: { purchase_id: purchaseId } });
-    await tx.purchase_capture_lines.createMany({ data: input.lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
+    await tx.purchase_capture_lines.createMany({ data: input.lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
     await tx.purchase_lines.deleteMany({ where: { purchase_id: purchaseId } });
     await tx.inventory_lots.deleteMany({ where: { purchase_id: purchaseId } });
     const porProducto = new Map<string, { qty: number; importe: number; unidad: string | null; contenido: number | null }>();
@@ -245,7 +248,7 @@ export async function cambiarOrigenPagoCompra(negocioId: bigint, purchaseId: big
     });
     if (!origen) throw new HttpError(400, 'La ubicación de pago no pertenece al negocio o está inactiva');
     const compra = await tx.purchases.findFirst({
-      where: { id: purchaseId, negocio_id: negocioId, estado: 'confirmada' },
+      where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['confirmada', 'revision', 'borrador'] } },
       select: { id: true, fecha_recepcion: true, origen_pago_id: true },
     });
     if (!compra) throw new HttpError(404, 'Compra confirmada no encontrada');
@@ -285,6 +288,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     const compra = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId, estado: 'confirmando' }, include: { capture_lines: true } });
     if (!compra) throw new HttpError(409, 'No se pudo reservar la compra para confirmación');
     if (!compra.origen_pago_id) throw new HttpError(400, 'Selecciona de dónde salió el pago antes de confirmar');
+    if (compra.total == null) throw new HttpError(400, 'Completa el total de la orden antes de confirmar');
     if (compra.capture_lines.some((l) => l.tipo_linea === 'pendiente' || (l.tipo_linea === 'inventario' && (!l.product_id || !l.cantidad_base || Number(l.cantidad_base) <= 0)))) {
       throw new HttpError(400, 'Todas las líneas deben clasificarse y las de inventario deben tener producto y cantidad');
     }
@@ -346,7 +350,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     for (const [productId, line] of productos) {
       const costo = line.costo;
       const purchaseLine = await tx.purchase_lines.create({ data: { purchase_id: compra.id, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
-      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: purchaseLine.product_id, purchase_id: compra.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: compra.moneda, fuente: 'ticket_movil', ticket_ref: compra.ticket_ref, notas: notasCompra } });
+      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: purchaseLine.product_id, purchase_id: compra.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: compra.moneda, fuente: compra.fuente, ticket_ref: compra.ticket_ref, notas: notasCompra } });
     }
     const categoria = gastoTotal > 0 ? await tx.categorias_gasto.findFirst({ where: { negocio_id: negocioId, nombre: 'Otros', activo: true } }) : null;
     const facturado = origen.tipo === 'banco';
@@ -361,13 +365,14 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
   });
 }
 
-export async function actualizarBorradorLineas(negocioId: bigint, purchaseId: bigint, lineas: CapturaCompraLinea[]) {
+export async function actualizarBorradorLineas(negocioId: bigint, purchaseId: bigint, lineas: CapturaCompraLinea[], total?: number | null) {
   const compra = await prisma.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } }, select: { id: true } });
   if (!compra) throw new HttpError(404, 'Compra pendiente no encontrada');
   if (!lineas.length) throw new HttpError(400, 'La compra debe conservar al menos una línea');
   await prisma.$transaction(async (tx) => {
+    if (total !== undefined) await tx.purchases.update({ where: { id: purchaseId }, data: { total } });
     await tx.purchase_capture_lines.deleteMany({ where: { purchase_id: purchaseId } });
-    await tx.purchase_capture_lines.createMany({ data: lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
+      await tx.purchase_capture_lines.createMany({ data: lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
   });
   return { purchase_id: Number(purchaseId), actualizado: true, lineas: lineas.length };
 }

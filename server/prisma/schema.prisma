@@ -279,6 +279,9 @@ model purchase_capture_lines {
   product_id         BigInt?
   tipo_linea         String    @default("pendiente")
   descripcion_fuente String
+  // Valores tal como aparecen en la fuente (especialmente ordenes manuscritas).
+  cantidad_fuente    Decimal?  @db.Decimal(14, 4)
+  unidad_fuente      String?
   cantidad_base      Decimal?  @db.Decimal(14, 4)
   unidad_compra      String?
   contenido_compra   Decimal?  @db.Decimal(14, 4)

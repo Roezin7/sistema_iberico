@@ -1923,6 +1923,10 @@ select:disabled {
 .quick-purchase__section-label { margin-top: .9rem; color: var(--ink-2); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .compras-epos .quick-purchase__intro { margin-bottom: 1rem; }
 .quick-purchase__actions { display: flex; gap: .6rem; flex-wrap: wrap; margin-bottom: .8rem; }
+.quick-purchase__mode { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; padding: .65rem .75rem; margin-bottom: .8rem; border: 1px solid var(--line); border-radius: .7rem; background: rgba(255,255,255,.02); }
+.quick-purchase__mode strong { margin-right: .2rem; }
+.quick-purchase__mode .tab { padding: .42rem .7rem; }
+.quick-purchase__mode .muted { flex: 1 1 100%; font-size: .82rem; }
 .quick-purchase__loading { min-height: 2.25rem; display: flex; align-items: center; color: var(--ink-2); }
 .file-button { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
 .file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
@@ -1932,6 +1936,7 @@ select:disabled {
 .quick-line__head { grid-column: 1 / -1; display: flex; justify-content: space-between; }
 .quick-line__numbers { display: flex; gap: .4rem; }
 .quick-line__numbers input { min-width: 0; width: 50%; }
+.quick-line__numbers input:nth-child(n+3) { width: 25%; }
 .quick-pending { display: grid; gap: 1rem; }
 .quick-pending__card { border-color: rgba(220, 167, 69, .45); }
 .quick-day { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .8rem; }
@@ -1975,7 +1980,8 @@ select:disabled {
   .quick-purchase__actions > * { flex: 1 1 45%; justify-content: center; }
   .quick-line { grid-template-columns: 1fr; }
   .quick-line__numbers { width: 100%; }
-  .quick-line__numbers input { width: 50%; }
+  .quick-line__numbers { flex-wrap: wrap; }
+  .quick-line__numbers input { width: calc(50% - .2rem); }
   .quick-line .btn-ghost { justify-self: start; }
   .quick-day__row { align-items: flex-start; }
   .quick-day__row > strong { flex: 0 0 auto; white-space: nowrap; }

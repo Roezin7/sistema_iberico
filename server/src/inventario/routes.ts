@@ -62,7 +62,7 @@ inventarioRouter.get('/compras', asyncHandler(async (req, res) => {
 }));
 
 inventarioRouter.post('/compras/rapidas/ocr', asyncHandler(async (req, res) => {
-  const body = z.object({ imagen_base64: z.string().min(100), imagen_tipo: z.string().regex(/^image\//) }).parse(req.body);
+  const body = z.object({ imagen_base64: z.string().min(100), imagen_tipo: z.string().regex(/^image\//), modo: z.enum(['ticket', 'orden_manuscrita']).default('ticket') }).parse(req.body);
   res.json(await borradorCompraTicket(req.auth!.negocioId, body));
 }));
 
@@ -119,7 +119,8 @@ inventarioRouter.post('/compras/rapidas', asyncHandler(async (req, res) => {
     fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     proveedor: z.string().trim().max(160).optional().nullable(),
     ticket_ref: z.string().trim().max(120).optional().nullable(),
-    total: z.coerce.number().nonnegative(),
+    total: z.coerce.number().nonnegative().optional().nullable(),
+    tipo_documento: z.enum(['ticket', 'orden_manuscrita']).default('ticket'),
     moneda: z.string().trim().min(1).max(8).default('MXN'),
     notas: z.string().trim().max(1000).optional().nullable(),
     origen_pago_id: z.coerce.number().int().positive().optional().nullable(),
@@ -129,6 +130,8 @@ inventarioRouter.post('/compras/rapidas', asyncHandler(async (req, res) => {
       product_id: z.coerce.number().int().positive().optional().nullable(),
       tipo_linea: z.enum(['inventario', 'gasto', 'pendiente']).default('pendiente'),
       descripcion_fuente: z.string().trim().min(1).max(240),
+      cantidad_fuente: z.coerce.number().nonnegative().optional().nullable(),
+      unidad_fuente: z.string().trim().max(30).optional().nullable(),
       cantidad_base: z.coerce.number().positive().optional().nullable(),
       unidad_compra: z.string().trim().max(30).optional().nullable(),
       contenido_compra: z.coerce.number().positive().optional().nullable(),
@@ -157,6 +160,8 @@ inventarioRouter.post('/compras/validar', asyncHandler(async (req, res) => {
       product_id: z.coerce.number().int().positive().optional().nullable(),
       tipo_linea: z.enum(['inventario', 'gasto', 'pendiente']),
       descripcion_fuente: z.string().trim().min(1).max(240),
+      cantidad_fuente: z.coerce.number().nonnegative().optional().nullable(),
+      unidad_fuente: z.string().trim().max(30).optional().nullable(),
       cantidad_base: z.coerce.number().positive().optional().nullable(),
       unidad_compra: z.string().trim().max(30).optional().nullable(),
       contenido_compra: z.coerce.number().positive().optional().nullable(),
@@ -203,6 +208,8 @@ inventarioRouter.patch('/compras/:id', soloAdmin, asyncHandler(async (req, res) 
       product_id: z.coerce.number().int().positive().nullable().optional(),
       tipo_linea: z.enum(['inventario', 'gasto', 'pendiente']),
       descripcion_fuente: z.string().trim().min(1).max(240),
+      cantidad_fuente: z.coerce.number().nonnegative().optional().nullable(),
+      unidad_fuente: z.string().trim().max(30).optional().nullable(),
       cantidad_base: z.coerce.number().positive().nullable().optional(),
       unidad_compra: z.string().trim().max(30).nullable().optional(),
       contenido_compra: z.coerce.number().positive().nullable().optional(),
@@ -221,15 +228,16 @@ inventarioRouter.patch('/compras/:id', soloAdmin, asyncHandler(async (req, res) 
 
 inventarioRouter.put('/compras/:id/lineas', soloAdmin, asyncHandler(async (req, res) => {
   const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
-  const body = z.object({ lineas: z.array(z.object({
+  const body = z.object({ total: z.coerce.number().nonnegative().nullable().optional(), lineas: z.array(z.object({
     product_id: z.coerce.number().int().positive().optional().nullable(),
-    tipo_linea: z.enum(['inventario', 'gasto', 'pendiente']),
-    descripcion_fuente: z.string().trim().min(1).max(240),
-    cantidad_base: z.coerce.number().positive().optional().nullable(), unidad_compra: z.string().trim().max(30).optional().nullable(),
+      tipo_linea: z.enum(['inventario', 'gasto', 'pendiente']),
+      descripcion_fuente: z.string().trim().min(1).max(240),
+      cantidad_fuente: z.coerce.number().nonnegative().optional().nullable(), unidad_fuente: z.string().trim().max(30).optional().nullable(),
+      cantidad_base: z.coerce.number().positive().optional().nullable(), unidad_compra: z.string().trim().max(30).optional().nullable(),
     contenido_compra: z.coerce.number().positive().optional().nullable(), costo_unitario: z.coerce.number().nonnegative().optional().nullable(),
     importe: z.coerce.number().nonnegative(), confianza: z.coerce.number().min(0).max(1).optional().nullable(), notas: z.string().trim().max(500).optional().nullable(),
   })).min(1) }).parse(req.body);
-  res.json(await actualizarBorradorLineas(req.auth!.negocioId, id, body.lineas.map((l) => ({ ...l, product_id: l.product_id == null ? null : BigInt(l.product_id) }))));
+  res.json(await actualizarBorradorLineas(req.auth!.negocioId, id, body.lineas.map((l) => ({ ...l, product_id: l.product_id == null ? null : BigInt(l.product_id) })), body.total));
 }));
 
 inventarioRouter.post('/compras/:id/rechazar', soloAdmin, asyncHandler(async (req, res) => {

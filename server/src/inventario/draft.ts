@@ -132,6 +132,7 @@ export interface LineaTicketBorrador {
   descripcion_fuente: string;
   product_id: number | null;
   cantidad: number | null;
+  unidad_fuente: string | null;
   costo_unitario: number | null;
   importe: number;
   confianza: 'alta' | 'media' | 'baja';
@@ -148,41 +149,42 @@ const HERRAMIENTA_TICKET: Anthropic.Tool = {
       total: { type: ['number', 'null'] },
       lineas: { type: 'array', items: { type: 'object', properties: {
         descripcion_fuente: { type: 'string' }, product_id: { type: ['integer', 'null'] },
-        cantidad: { type: ['number', 'null'] }, costo_unitario: { type: ['number', 'null'] },
-        importe: { type: 'number' }, confianza: { type: 'string', enum: ['alta', 'media', 'baja'] },
-      }, required: ['descripcion_fuente', 'product_id', 'cantidad', 'costo_unitario', 'importe', 'confianza'] } },
+        cantidad: { type: ['number', 'null'] }, unidad_fuente: { type: ['string', 'null'], description: 'Unidad escrita en la fuente: kg, g, pz, caja, paquete, manojo, etc.' }, costo_unitario: { type: ['number', 'null'] },
+        importe: { type: ['number', 'null'] }, confianza: { type: 'string', enum: ['alta', 'media', 'baja'] },
+      }, required: ['descripcion_fuente', 'product_id', 'cantidad', 'unidad_fuente', 'costo_unitario', 'importe', 'confianza'] } },
     },
     required: ['proveedor', 'fecha', 'total', 'lineas'],
   },
 };
 
 /** La IA sólo propone líneas; la compra sigue pendiente hasta la confirmación humana. */
-export async function borradorCompraTicket(negocioId: bigint, entrada: { imagen_base64: string; imagen_tipo: string }) {
+export async function borradorCompraTicket(negocioId: bigint, entrada: { imagen_base64: string; imagen_tipo: string; modo?: 'ticket' | 'orden_manuscrita' }) {
   if (!env.ANTHROPIC_API_KEY) throw new HttpError(503, 'La IA no está configurada en el servidor.');
   const productos = await prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true }, orderBy: { name: 'asc' } });
   const catalogo = productos.map((p) => `${Number(p.id)}: ${p.name}`).join('\n');
   const nombrePorId = new Map(productos.map((p) => [Number(p.id), p.name]));
-  const sys = `Eres un asistente que lee tickets de compra de un bar. Extrae únicamente lo visible.
+  const esManuscrita = entrada.modo === 'orden_manuscrita';
+  const sys = `Eres un asistente que lee ${esManuscrita ? 'ordenes manuscritas de compra y abasto' : 'tickets de compra de un bar'}. Extrae únicamente lo visible.
 Empata cada línea al catálogo por nombre. Si no es inequívoco, usa product_id null y confianza baja.
-No conviertas el total del ticket en una línea. No inventes cantidades ni precios.
-Si una línea no permite determinar importe, omítela.
+No conviertas el total del documento en una línea. No inventes cantidades ni precios.
+${esManuscrita ? 'Conserva la cantidad y la unidad tal como aparecen (kg, g, pz, caja, paquete, manojo, etc.) en cantidad y unidad_fuente. En una orden manuscrita el importe y el total pueden ser null; no los rellenes. Devuelve todos los renglones legibles aunque queden pendientes de precio y marca confianza baja cuando la escritura sea ambigua.' : 'Si una línea no permite determinar importe, omítela.'}
 CATÁLOGO:\n${catalogo}`;
   const cli = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   let resp: Anthropic.Message;
   try {
     resp = await cli.messages.create({ model: MODELO, max_tokens: 4096, thinking: { type: 'adaptive' }, system: sys, tools: [HERRAMIENTA_TICKET], tool_choice: { type: 'tool', name: 'registrar_ticket' }, messages: [{ role: 'user', content: [
       { type: 'image', source: { type: 'base64', media_type: entrada.imagen_tipo as 'image/jpeg', data: entrada.imagen_base64.replace(/^data:[^;]+;base64,/, '') } },
-      { type: 'text', text: 'Lee este ticket y devuelve la propuesta estructurada.' },
+      { type: 'text', text: esManuscrita ? 'Lee esta orden manuscrita y devuelve la propuesta estructurada, preservando cantidades y unidades.' : 'Lee este ticket y devuelve la propuesta estructurada.' },
     ] }] });
   } catch (e) {
     if (e instanceof Anthropic.APIError) throw new HttpError(e.status === 401 ? 401 : 502, `No se pudo leer el ticket: ${String(e.message).slice(0, 180)}`);
     throw e;
   }
   const tool = resp.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
-  const input = (tool?.input ?? {}) as { proveedor?: string | null; fecha?: string | null; total?: number | null; lineas?: Array<{ descripcion_fuente?: string; product_id?: number | null; cantidad?: number | null; costo_unitario?: number | null; importe?: number; confianza?: string }> };
-  const lineas: LineaTicketBorrador[] = (input.lineas ?? []).filter((l) => typeof l.importe === 'number' && l.importe >= 0).map((l) => {
+  const input = (tool?.input ?? {}) as { proveedor?: string | null; fecha?: string | null; total?: number | null; lineas?: Array<{ descripcion_fuente?: string; product_id?: number | null; cantidad?: number | null; unidad_fuente?: string | null; costo_unitario?: number | null; importe?: number | null; confianza?: string }> };
+  const lineas: LineaTicketBorrador[] = (input.lineas ?? []).filter((l) => esManuscrita ? typeof l.cantidad === 'number' : typeof l.importe === 'number' && l.importe >= 0).map((l) => {
     const pid = l.product_id != null && nombrePorId.has(Number(l.product_id)) ? Number(l.product_id) : null;
-    return { descripcion_fuente: String(l.descripcion_fuente ?? ''), product_id: pid, cantidad: l.cantidad == null ? null : Number(l.cantidad), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe), confianza: (['alta', 'media', 'baja'].includes(l.confianza ?? '') ? l.confianza : 'baja') as 'alta' | 'media' | 'baja' };
+    return { descripcion_fuente: String(l.descripcion_fuente ?? ''), product_id: pid, cantidad: l.cantidad == null ? null : Number(l.cantidad), unidad_fuente: l.unidad_fuente?.trim() || null, costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: l.importe == null ? 0 : Number(l.importe), confianza: (['alta', 'media', 'baja'].includes(l.confianza ?? '') ? l.confianza : 'baja') as 'alta' | 'media' | 'baja' };
   });
-  return { proveedor: input.proveedor ?? null, fecha: input.fecha ?? null, total: input.total == null ? null : Number(input.total), lineas };
+  return { modo: entrada.modo ?? 'ticket', proveedor: input.proveedor ?? null, fecha: input.fecha ?? null, total: input.total == null ? null : Number(input.total), lineas };
 }
