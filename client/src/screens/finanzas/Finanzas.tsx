@@ -2,13 +2,22 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   finanzas, epos, mxn, TIPOS, type Referencias, type Semana, type Resumen, type FilaCuadre,
-  type Movimiento, type TipoMov, type DiaFila, type ConciliacionDiaria, type CompraDetalle, type CompraDetalleLinea,
+  type Movimiento, type TipoMov, type DiaFila, type ConciliacionDiaria, type EposVenta, type CompraDetalle, type CompraDetalleLinea,
 } from './api';
 import { Icono } from '../../icons';
 import { descargarCSV } from '../../csv';
 import { useConfirm } from '../../ui/ConfirmProvider';
 import { useToast } from '../../ui/ToastProvider';
 import { Cargando } from '../../ui/Cargando';
+import { api } from '../../api';
+
+interface ProductoCompra { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null }
+
+function presentacionCompra(p: ProductoCompra) {
+  if (p.contenido_compra == null && !p.unidad_compra) return p.unidad_base ? `unidad base: ${p.unidad_base}` : 'presentación pendiente';
+  const contenido = p.contenido_compra == null ? '' : `${Number.isInteger(p.contenido_compra) ? p.contenido_compra : p.contenido_compra.toLocaleString('es-MX', { maximumFractionDigits: 3 })} ${p.unidad_base ?? ''}`.trim();
+  return [contenido, p.unidad_compra ? `por ${p.unidad_compra}` : ''].filter(Boolean).join(' ');
+}
 
 function sumarDias(fechaIso: string, n: number): string {
   const d = new Date(fechaIso + 'T00:00:00Z');
@@ -195,7 +204,7 @@ function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; d
   return (
     <>
       <div className="resumen-card">
-        <span className="muted">Ventas de la semana</span>
+        <span className="muted">Operación viernes a domingo · ventas de la semana</span>
         <strong className="big-number">{mxn(totalSemana)}</strong>
       </div>
 
@@ -214,8 +223,8 @@ function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; d
       </div>
 
       {operativos.length === 0 && <div className="empty-state"><strong>No hay días operativos en esta semana.</strong><p>Ibérico registra ventas regulares de viernes a domingo.</p></div>}
-      {dias.map((d) => (
-        <DiaCard key={d.fecha} semana={semana} dia={d} abierta={abierta} operativo={esDiaOperativo(d.fecha)} conciliacion={conciliaciones.find((c) => c.fecha === d.fecha)} onSaved={onChange} />
+      {operativos.map((d) => (
+        <DiaCard key={d.fecha} semana={semana} dia={d} abierta={abierta} operativo conciliacion={conciliaciones.find((c) => c.fecha === d.fecha)} onSaved={onChange} />
       ))}
     </>
   );
@@ -232,6 +241,10 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
   const [consultandoEpos, setConsultandoEpos] = useState(false);
   const [eposNota, setEposNota] = useState('');
   const [eposCorte, setEposCorte] = useState<Awaited<ReturnType<typeof epos.syncDaily>> | null>(null);
+  const [ventasDetalle, setVentasDetalle] = useState<EposVenta[]>([]);
+  const [verVentas, setVerVentas] = useState(false);
+  const [cargandoVentas, setCargandoVentas] = useState(false);
+  const [correccionManual, setCorreccionManual] = useState(false);
   const [cuentasAbiertas, setCuentasAbiertas] = useState(String(conciliacion?.cuentas_abiertas ?? 0));
   const { error } = useToast();
 
@@ -250,7 +263,7 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
 
   const n = (s: string) => Number(s) || 0;
   const ventas = n(efectivo) + n(tarjeta) + n(propina);
-  const egresos = n(gasto) + n(sueldos);
+  const egresos = dia.total_egresos;
 
   async function guardar() {
     setGuardando(true); setOk(false);
@@ -276,9 +289,21 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
       setEfectivo(String(metodo('Cash')));
       setTarjeta(String(metodo('Card')));
       setEposNota(otros ? `Importado: ${mxn(corte.bookkeeping.ventas)} · otros métodos ${mxn(otros)} · revisa y confirma` : `Importado: ${mxn(corte.bookkeeping.ventas)} · revisa y confirma`);
+      await cargarVentasDetalle();
     } catch (e) {
       error(e instanceof Error ? e.message : 'No se pudo consultar Epos');
     } finally { setConsultandoEpos(false); }
+  }
+
+  async function cargarVentasDetalle() {
+    setCargandoVentas(true);
+    try {
+      const desde = `${dia.fecha}T00:00:00-06:00`;
+      const hasta = `${sumarDias(dia.fecha, 1)}T00:00:00-06:00`;
+      setVentasDetalle(await epos.ventas(desde, hasta));
+      setVerVentas(true);
+    } catch (e) { error(e instanceof Error ? e.message : 'No se pudo cargar el detalle de ventas'); }
+    finally { setCargandoVentas(false); }
   }
 
   async function confirmarCorte() {
@@ -314,29 +339,33 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
     } catch (e) { error(e instanceof Error ? e.message : 'No se pudo confirmar el corte'); }
   }
 
-  const campo = (emoji: string, label: string, val: string, set: (v: string) => void) => (
-    <label>{emoji} {label}<input type="number" inputMode="decimal" value={val} disabled={!abierta} onChange={(e) => set(e.target.value)} placeholder="0" /></label>
+  const campo = (emoji: string, label: string, val: string, set: (v: string) => void, bloqueado = !abierta) => (
+    <label>{emoji} {label}<input type="number" inputMode="decimal" value={val} disabled={bloqueado} onChange={(e) => set(e.target.value)} placeholder="0" /></label>
   );
 
   return (
     <div className="dia-card">
       <div className="dia-card__head">
         <strong>{dia.dia} <span className="muted">{dia.fecha.slice(5)}</span></strong>
-        <span className="muted">{operativo ? `ventas ${mxn(ventas)}` : 'captura administrativa'}{egresos ? ` · egresos ${mxn(egresos)}` : ''}</span>
+        <span className="muted">ventas {mxn(ventas)}{egresos ? ` · egresos ${mxn(egresos)}` : ''}</span>
       </div>
       {operativo && <>
-        <div className="dia-section muted">Ventas <span className={conciliacion ? 'badge-ok' : 'badge-neutral'}>{conciliacion ? 'Corte confirmado' : 'Pendiente de corte'}</span></div>
+        <div className="dia-section muted">Ventas <span className={conciliacion ? 'badge-ok' : eposCorte ? 'badge-info' : 'badge-neutral'}>{conciliacion ? 'Corte confirmado' : eposCorte ? 'Ventas importadas · revisar' : 'Pendiente de importar'}</span></div>
         <div className="dia-inputs">
-          {campo('💵', 'Efectivo', efectivo, setEfectivo)}
-          {campo('💳', 'Tarjeta', tarjeta, setTarjeta)}
-          {campo('🎁', 'Propina', propina, setPropina)}
+          {campo('💵', 'Efectivo', efectivo, setEfectivo, !abierta || (!!eposCorte && !correccionManual))}
+          {campo('💳', 'Tarjeta', tarjeta, setTarjeta, !abierta || (!!eposCorte && !correccionManual))}
+          {campo('🎁', 'Propina', propina, setPropina, !abierta || (!!eposCorte && !correccionManual))}
         </div>
         {abierta && (
           <div style={{ marginTop: '0.6rem' }}>
             <button className="pill" onClick={consultarEpos} disabled={consultandoEpos}>
-              {consultandoEpos ? 'Importando Epos…' : 'Importar y revisar Epos'}
+              {consultandoEpos ? 'Importando ventas…' : eposCorte ? 'Actualizar ventas Epos' : 'Importar ventas Epos'}
+            </button>
+            <button className="btn-secondary" style={{ marginLeft: '0.5rem' }} onClick={() => void cargarVentasDetalle()} disabled={cargandoVentas}>
+              {cargandoVentas ? 'Cargando detalle…' : verVentas ? 'Actualizar productos vendidos' : 'Ver productos vendidos'}
             </button>
             {eposNota && <small className="muted" style={{ display: 'block', marginTop: '0.4rem' }}>{eposNota}</small>}
+            {eposCorte && <button className="link-btn" style={{ marginTop: '0.45rem' }} onClick={() => setCorreccionManual((v) => !v)}>{correccionManual ? 'Ocultar corrección manual' : 'Corregir manualmente'}</button>}
             {eposCorte && <>
               <label className="inline-field">Cuentas abiertas al cierre
                 <input type="number" min="0" step="1" value={cuentasAbiertas} onChange={(e) => setCuentasAbiertas(e.target.value)} />
@@ -345,21 +374,22 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
             </>}
           </div>
         )}
+        {verVentas && <DetalleVentasEpos filas={ventasDetalle} />}
       </>}
       <div className="dia-section muted">Egresos del día</div>
       {(dia.gasto_itemizado > 0 || dia.compra_inventario > 0) && (
         <div className="info-box info-box--compact">
-          <strong>Compras capturadas:</strong>{dia.compra_inventario ? ` FIFO ${mxn(dia.compra_inventario)}` : ''}{dia.compra_inventario && dia.gasto_itemizado ? ' ·' : ''}{dia.gasto_itemizado ? ` gastos ${mxn(dia.gasto_itemizado)}` : ''}
-          <Link to={`/compras?fecha=${dia.fecha}`} className="inline-link">Ver compras del día</Link>
+          <strong>Egresos registrados:</strong>{dia.compra_inventario ? ` inventario FIFO ${mxn(dia.compra_inventario)}` : ''}{dia.compra_inventario && dia.gasto_itemizado ? ' ·' : ''}{dia.gasto_itemizado ? ` gastos con ticket ${mxn(dia.gasto_itemizado)}` : ''}
+          <Link to={`/compras?fecha=${dia.fecha}&return=finanzas`} className="inline-link">Ver egresos del día</Link>
         </div>
       )}
       <div className="dia-inputs dia-inputs--2">
-        {campo('🧾', 'Otros gastos no registrados', gasto, setGasto)}
+        {campo('🧾', 'Gasto sin ticket', gasto, setGasto)}
         {campo('👷', 'Sueldos', sueldos, setSueldos)}
       </div>
       {abierta && (
         <div className="dia-actions">
-          <Link className="btn-secondary" to={`/compras?fecha=${dia.fecha}`}>Agregar compra</Link>
+          <Link className="btn-secondary" to={`/compras?fecha=${dia.fecha}&return=finanzas`}>Registrar egreso</Link>
           <button className="btn-primary dia-save" onClick={guardar} disabled={guardando}>
             {guardando ? 'Guardando…' : ok ? '✓ Guardado' : 'Guardar día'}
           </button>
@@ -367,6 +397,34 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
       )}
     </div>
   );
+}
+
+function DetalleVentasEpos({ filas }: { filas: EposVenta[] }) {
+  const porProducto = new Map<string, { cantidad: number; venta: number; costo: number; costeadas: boolean; excepciones: number }>();
+  const porMetodo = new Map<string, number>();
+  filas.forEach((fila) => {
+    const previo = porProducto.get(fila.producto) ?? { cantidad: 0, venta: 0, costo: 0, costeadas: true, excepciones: 0 };
+    const costo = fila.costo_fifo ?? 0;
+    porProducto.set(fila.producto, {
+      cantidad: previo.cantidad + fila.cantidad,
+      venta: previo.venta + (fila.venta_neta ?? fila.venta_bruta),
+      costo: previo.costo + costo,
+      costeadas: previo.costeadas && fila.costo_fifo != null,
+      excepciones: previo.excepciones + (fila.costeo_estado === 'excepcion' ? 1 : 0),
+    });
+    porMetodo.set(fila.metodo_pago, (porMetodo.get(fila.metodo_pago) ?? 0) + (fila.venta_neta ?? fila.venta_bruta));
+  });
+  const productos = [...porProducto.entries()].sort((a, b) => b[1].venta - a[1].venta);
+  if (!filas.length) return <div className="info-box info-box--compact"><strong>No hay ventas persistidas para este día.</strong><span className="muted">Importa Epos o revisa el rango de la semana.</span></div>;
+  return <details className="ventas-detalle" open>
+    <summary><strong>Detalle de ventas Epos</strong><span className="muted">{filas.length} líneas · {productos.length} productos</span></summary>
+    <div className="ventas-detalle__summary">
+      {[...porMetodo.entries()].map(([metodo, total]) => <span key={metodo}><small>{metodo}</small><strong>{mxn(total)}</strong></span>)}
+    </div>
+    <div className="ventas-detalle__table table-wrap"><table><thead><tr><th>Producto</th><th>Unidades</th><th>Venta</th><th>Costo FIFO</th><th>Estado</th></tr></thead><tbody>
+      {productos.map(([producto, dato]) => <tr key={producto}><td><strong>{producto}</strong></td><td>{dato.cantidad}</td><td>{mxn(dato.venta)}</td><td>{dato.costeadas ? mxn(dato.costo) : 'Pendiente'}</td><td>{dato.excepciones ? <span className="status status--danger">{dato.excepciones} excepción(es)</span> : <span className="status status--ok">Revisado</span>}</td></tr>)}
+    </tbody></table></div>
+  </details>;
 }
 
 function ResumenView({ r }: { r: Resumen }) {
@@ -591,7 +649,7 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
           </li>
         ))}
       </ul>
-      {compraEditando != null && <CompraEditor compraId={compraEditando} ref_={ref_} onClose={() => setCompraEditando(null)} onSaved={() => { setCompraEditando(null); onChange(); }} />}
+      {compraEditando != null && <CompraEditorV2 compraId={compraEditando} ref_={ref_} onClose={() => setCompraEditando(null)} onSaved={() => { setCompraEditando(null); onChange(); }} />}
     </>
   );
 }
@@ -613,6 +671,92 @@ function CompraEditor({ compraId, ref_, onClose, onSaved }: { compraId: number; 
     finally { setGuardando(false); }
   }
   return <section className="card movement-purchase-editor" style={{ marginTop: '1rem' }}><div className="section-heading"><div><h3>Editar compra vinculada</h3><p className="muted">Las cantidades, importes y movimientos se actualizan juntos.</p></div><button className="icon-btn" onClick={onClose} aria-label="Cerrar editor">✕</button></div>{!compra && !error && <Cargando etiqueta="Cargando ticket…" />}{compra && <><div className="form-grid form-grid--three"><label>Total del ticket<input type="number" min="0" step="0.01" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value ? Number(e.target.value) : '')}>{ref_.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div><div className="quick-lines">{lineas.map((l, i) => <div className="quick-line" key={l.id ?? `${compra.id}-${i}`}><strong>{l.producto || l.descripcion_fuente}</strong><small className="muted">{l.tipo_linea === 'inventario' ? 'Inventario FIFO' : 'Gasto operativo'}</small><input value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} aria-label={`Descripción línea ${i + 1}`} /><div className="quick-line__numbers"><input type="number" min="0" step="any" value={l.cantidad_base ?? ''} onChange={(e) => editar(i, 'cantidad_base', e.target.value)} aria-label={`Cantidad línea ${i + 1}`} /><input type="number" min="0" step="0.01" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} aria-label={`Importe línea ${i + 1}`} /></div></div>)}</div>{error && <div className="error-msg">{error}</div>}<div className="sticky-action"><button className="btn-ghost" onClick={onClose}>Cancelar</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Guardar ticket y movimientos'}</button></div></>}</section>;
+}
+
+function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number; ref_: Referencias; onClose: () => void; onSaved: () => void }) {
+  const [compra, setCompra] = useState<CompraDetalle | null>(null);
+  const [lineas, setLineas] = useState<CompraDetalleLinea[]>([]);
+  const [productos, setProductos] = useState<ProductoCompra[]>([]);
+  const [total, setTotal] = useState('');
+  const [origen, setOrigen] = useState<number | ''>('');
+  const [guardando, setGuardando] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setError('');
+    Promise.all([
+      finanzas.obtenerCompra(compraId),
+      api<ProductoCompra[]>('/catalogo/products'),
+    ]).then(([c, p]) => {
+      setCompra(c);
+      setLineas(c.lineas);
+      setTotal(String(c.total));
+      setOrigen(c.origen_pago_id ?? '');
+      setProductos(p);
+    }).catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar el ticket.'));
+  }, [compraId]);
+
+  function editar(i: number, campo: keyof CompraDetalleLinea, valor: string) {
+    const numerico = campo === 'cantidad_base' || campo === 'contenido_compra' || campo === 'importe' || campo === 'costo_unitario';
+    setLineas((v) => v.map((l, idx) => idx === i ? { ...l, [campo]: numerico ? (valor === '' ? null : Number(valor)) : valor } : l));
+  }
+
+  function seleccionarProducto(i: number, valor: string) {
+    const productId = valor ? Number(valor) : null;
+    const producto = productos.find((p) => p.id === productId);
+    setLineas((v) => v.map((l, idx) => idx === i ? {
+      ...l,
+      product_id: productId,
+      producto: producto?.nombre ?? null,
+      unidad_compra: producto?.unidad_compra ?? l.unidad_compra,
+      contenido_compra: producto?.contenido_compra ?? l.contenido_compra,
+      descripcion_fuente: l.descripcion_fuente || producto?.nombre || '',
+    } : l));
+  }
+
+  function agregarLinea() {
+    setLineas((v) => [...v, { id: null, product_id: null, producto: null, tipo_linea: 'inventario', descripcion_fuente: '', cantidad_base: null, unidad_compra: null, contenido_compra: null, costo_unitario: null, importe: 0, confianza: 1, notas: null }]);
+  }
+
+  async function guardar() {
+    if (!compra || !origen || !lineas.length) return;
+    setGuardando(true); setError('');
+    try {
+      await finanzas.editarCompra(compra.id, {
+        total: Number(total), origen_pago_id: Number(origen),
+        lineas: lineas.map((l) => ({
+          ...l,
+          id: undefined,
+          producto: undefined,
+          descripcion_fuente: l.descripcion_fuente.trim() || l.producto || 'Línea nueva',
+          product_id: l.product_id,
+          cantidad_base: l.cantidad_base,
+          importe: Number(l.importe),
+          costo_unitario: l.costo_unitario,
+        })),
+      });
+      onSaved();
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar el ticket.'); }
+    finally { setGuardando(false); }
+  }
+
+  return <section className="card movement-purchase-editor" style={{ marginTop: '1rem' }}>
+    <div className="section-heading"><div><h3>Editar compra vinculada</h3><p className="muted">Las líneas, cantidades, costos y movimientos se actualizan juntos.</p></div><button className="icon-btn" onClick={onClose} aria-label="Cerrar editor">✕</button></div>
+    {!compra && !error && <Cargando etiqueta="Cargando ticket…" />}
+    {compra && <>
+      <div className="form-grid form-grid--three"><label>Total del ticket<input type="number" min="0" step="0.01" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value ? Number(e.target.value) : '')}>{ref_.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
+      <div className="quick-lines">{lineas.map((l, i) => { const producto = productos.find((p) => p.id === l.product_id); return <div className="quick-line" key={l.id ?? `${compra.id}-${i}`}>
+        <div className="quick-line__head"><strong>Línea {i + 1}{l.producto ? ` · ${l.producto}` : ''}</strong><button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))} disabled={lineas.length === 1}>Quitar</button></div>
+        <input value={l.descripcion_fuente} placeholder="Descripción de la fuente" onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} aria-label={`Descripción línea ${i + 1}`} />
+        <select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value)}><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option><option value="pendiente">Pendiente</option></select>
+        {l.tipo_linea === 'inventario' && <><select value={l.product_id ?? ''} onChange={(e) => seleccionarProducto(i, e.target.value)}><option value="">Producto…</option>{productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {presentacionCompra(p)}</option>)}</select>{producto && <small className="quick-line__presentation">Presentación configurada: {presentacionCompra(producto)}</small>}</>}
+        <div className="quick-line__numbers"><input type="number" min="0" step="any" value={l.cantidad_base ?? ''} placeholder="Cantidad base" onChange={(e) => editar(i, 'cantidad_base', e.target.value)} aria-label={`Cantidad línea ${i + 1}`} /><input value={l.unidad_compra ?? ''} placeholder="Unidad de compra" onChange={(e) => editar(i, 'unidad_compra', e.target.value)} aria-label={`Unidad línea ${i + 1}`} /><input type="number" min="0" step="any" value={l.contenido_compra ?? ''} placeholder="Contenido por compra" onChange={(e) => editar(i, 'contenido_compra', e.target.value)} aria-label={`Contenido por compra línea ${i + 1}`} /><input type="number" min="0" step="0.01" value={l.costo_unitario ?? ''} placeholder="Costo unitario" onChange={(e) => editar(i, 'costo_unitario', e.target.value)} aria-label={`Costo unitario línea ${i + 1}`} /><input type="number" min="0" step="0.01" value={l.importe} placeholder="Importe" onChange={(e) => editar(i, 'importe', e.target.value)} aria-label={`Importe línea ${i + 1}`} /></div>
+      </div>; })}</div>
+      {error && <div className="error-msg">{error}</div>}
+      <div className="sticky-action"><button className="btn-secondary" onClick={agregarLinea}>Agregar línea</button><button className="btn-ghost" onClick={onClose}>Cancelar</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Guardar ticket y movimientos'}</button></div>
+    </>}
+    {!compra && error && <div className="error-msg">{error}</div>}
+  </section>;
 }
 
 function FormMovimiento({ ref_, semana, onSaved }: { ref_: Referencias; semana: Semana; onSaved: () => void }) {

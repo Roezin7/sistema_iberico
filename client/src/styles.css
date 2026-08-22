@@ -73,6 +73,7 @@
 .marketing-actions { display: flex; justify-content: flex-end; gap: 0.5rem; flex-wrap: wrap; }
 .badge-neutral { display: inline-flex; align-items: center; padding: 0.25rem 0.55rem; border-radius: var(--r-pill); background: var(--surface-2); color: var(--ink-2); font-size: 0.72rem; font-weight: 600; }
 .badge-warn { display: inline-flex; align-items: center; padding: 0.25rem 0.55rem; border-radius: var(--r-pill); background: var(--warning-bg, #f7ecd4); color: var(--warning, #8a5b00); font-size: 0.72rem; font-weight: 600; }
+.badge-info { display: inline-flex; align-items: center; padding: 0.25rem 0.55rem; border-radius: var(--r-pill); background: color-mix(in srgb, var(--brand) 18%, transparent); color: var(--brand); font-size: 0.72rem; font-weight: 600; }
 .response-row { display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 0.75rem; padding: 0.75rem 0; border-bottom: 1px solid var(--border); }
 .response-row:last-child { border-bottom: 0; }
 .form-grid { display: grid; gap: 0.8rem; margin: 0.8rem 0 1rem; }
@@ -250,6 +251,10 @@ table th {
   color: var(--success);
 }
 .status--error {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.status--danger {
   background: var(--danger-bg);
   color: var(--danger);
 }
@@ -1117,6 +1122,14 @@ select:disabled {
   width: 100%;
   margin-top: 0.8rem;
 }
+.ventas-detalle { margin-top: .8rem; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); overflow: hidden; }
+.ventas-detalle > summary { display: flex; justify-content: space-between; gap: .75rem; align-items: center; padding: .7rem .8rem; cursor: pointer; list-style: none; }
+.ventas-detalle > summary::-webkit-details-marker { display: none; }
+.ventas-detalle__summary { display: flex; gap: .7rem; flex-wrap: wrap; padding: 0 .8rem .7rem; }
+.ventas-detalle__summary span { display: grid; gap: .15rem; min-width: 8rem; padding: .55rem .65rem; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface); }
+.ventas-detalle__summary small { color: var(--ink-3); }
+.ventas-detalle__table { padding: 0 .8rem .8rem; }
+.ventas-detalle__table table { min-width: 620px; }
 
 /* ---------- 11. TAREAS ---------- */
 .task-row {
@@ -1934,9 +1947,9 @@ select:disabled {
 .quick-lines { display: grid; gap: .7rem; margin-top: .8rem; }
 .quick-line { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(150px, .9fr) minmax(0, 1.2fr) minmax(180px, 1fr) auto; gap: .5rem; align-items: center; padding: .65rem; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); }
 .quick-line__head { grid-column: 1 / -1; display: flex; justify-content: space-between; }
-.quick-line__numbers { display: flex; gap: .4rem; }
-.quick-line__numbers input { min-width: 0; width: 50%; }
-.quick-line__numbers input:nth-child(n+3) { width: 25%; }
+.quick-line__presentation { grid-column: 1 / -1; color: var(--ink-2); font-size: .78rem; }
+.quick-line__numbers { display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); gap: .4rem; width: 100%; grid-column: 1 / -1; }
+.quick-line__numbers input { min-width: 0; width: auto; }
 .quick-pending { display: grid; gap: 1rem; }
 .quick-pending__card { border-color: rgba(220, 167, 69, .45); }
 .quick-day { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .8rem; }
@@ -1979,9 +1992,8 @@ select:disabled {
   .quick-purchase__intro { align-items: flex-start; }
   .quick-purchase__actions > * { flex: 1 1 45%; justify-content: center; }
   .quick-line { grid-template-columns: 1fr; }
-  .quick-line__numbers { width: 100%; }
-  .quick-line__numbers { flex-wrap: wrap; }
-  .quick-line__numbers input { width: calc(50% - .2rem); }
+  .quick-line__numbers { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-line__numbers input { width: auto; }
   .quick-line .btn-ghost { justify-self: start; }
   .quick-day__row { align-items: flex-start; }
   .quick-day__row > strong { flex: 0 0 auto; white-space: nowrap; }

@@ -63,6 +63,13 @@ export interface EposCorteDiario {
   importacion_id?: number;
 }
 
+export interface EposVenta {
+  id: number; fecha: string; producto: string; cantidad: number;
+  venta_bruta: number; venta_neta: number | null; descuento: number;
+  metodo_pago: string; costo_fifo: number | null;
+  costeo_estado: string; costeo_error: string | null;
+}
+
 export interface ConciliacionDiaria {
   id: number; fecha: string; estado: string;
   epos: { ventas: number; efectivo: number; tarjeta: number; otros: number };
@@ -106,6 +113,7 @@ export interface CompraDetalle {
 
 export const epos = {
   syncDaily: (fecha: string) => api<EposCorteDiario>('/epos/sync-daily', { method: 'POST', body: { fecha } }),
+  ventas: (from: string, to: string) => api<EposVenta[]>(`/epos/sales?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   conciliaciones: (semanaId: number) => api<ConciliacionDiaria[]>(`/epos/conciliaciones-diarias?semana_id=${semanaId}`),
   confirmarConciliacion: (body: {
     semana_id: number; fecha: string;
