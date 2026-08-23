@@ -131,16 +131,39 @@ export async function listarImportacionesEpos(negocioId: bigint, limite = 20) {
   }));
 }
 
-export async function listarVentasEpos(input: { negocioId: bigint; from?: string; to?: string; limite?: number }) {
+export async function listarVentasEpos(input: { negocioId: bigint; from?: string; to?: string; importacionId?: number; limite?: number }) {
   const from = input.from ? new Date(input.from) : undefined;
   const to = input.to ? new Date(input.to) : undefined;
   if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) {
     throw new HttpError(400, 'Periodo inválido');
   }
+  // Epos puede incluir en el cierre de un día operativo ventas realizadas
+  // después de medianoche. En ese caso la fecha/hora de la línea pertenece al
+  // día calendario siguiente, pero debe permanecer junto al corte que generó
+  // la importación. Usamos la importación como fuente de pertenencia cuando
+  // el periodo consultado coincide exactamente con un sync diario.
+  let importacionIds: bigint[] | undefined;
+  if (input.importacionId != null) {
+    const importacion = await prisma.epos_importaciones.findFirst({
+      where: { id: BigInt(input.importacionId), negocio_id: input.negocioId },
+      select: { id: true },
+    });
+    if (importacion) importacionIds = [importacion.id];
+  } else if (from && to) {
+    const importaciones = await prisma.epos_importaciones.findMany({
+      where: { negocio_id: input.negocioId, periodo_desde: from, periodo_hasta: to },
+      select: { id: true },
+    });
+    if (importaciones.length) importacionIds = importaciones.map((row) => row.id);
+  }
   const rows = await prisma.epos_ventas.findMany({
     where: {
       negocio_id: input.negocioId,
-      ...(from || to ? { fecha: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } } : {}),
+      ...(importacionIds
+        ? { importacion_id: { in: importacionIds } }
+        : from || to
+          ? { fecha: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } }
+          : {}),
     },
     orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
     take: Math.min(Math.max(input.limite ?? 5000, 1), 20000),

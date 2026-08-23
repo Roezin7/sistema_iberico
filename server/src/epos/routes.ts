@@ -72,8 +72,9 @@ eposRouter.get('/imports', asyncHandler(async (req, res) => {
 eposRouter.get('/sales', asyncHandler(async (req, res) => {
   const from = req.query.from === undefined ? undefined : z.string().datetime({ offset: true }).parse(req.query.from);
   const to = req.query.to === undefined ? undefined : z.string().datetime({ offset: true }).parse(req.query.to);
+  const importacionId = req.query.importacion_id === undefined ? undefined : z.coerce.number().int().positive().parse(req.query.importacion_id);
   const limite = req.query.limit === undefined ? 5000 : z.coerce.number().int().positive().parse(req.query.limit);
-  res.json(await listarVentasEpos({ negocioId: req.auth!.negocioId, from, to, limite }));
+  res.json(await listarVentasEpos({ negocioId: req.auth!.negocioId, from, to, importacionId, limite }));
 }));
 
 eposRouter.get('/exceptions', asyncHandler(async (req, res) => {
