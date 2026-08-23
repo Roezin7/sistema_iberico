@@ -168,7 +168,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
       <nav className="tabs" aria-label="Flujo semanal">
         <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Operación diaria</button>
         <button className={tab === 'resumen' ? 'tab tab--on' : 'tab'} onClick={() => setTab('resumen')}>Resumen</button>
-        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Registro único</button>
+        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Compras</button>
         <button className={tab === 'cuadre' ? 'tab tab--on' : 'tab'} onClick={() => setTab('cuadre')}>Cuadre</button>
       </nav>
 
@@ -775,8 +775,8 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
   return (
     <>
       <section className="info-box unified-operations-intro">
-        <strong>Registro único de operaciones</strong>
-        <p className="muted">Una compra confirmada crea su lote FIFO y su movimiento financiero al mismo tiempo. Aquí se revisan juntos compras, egresos, ventas, depósitos y transferencias; no vuelvas a capturar una compra en esta pantalla.</p>
+        <strong>Compras</strong>
+        <p className="muted">Captura cada compra una sola vez. Al confirmarla se crea el lote FIFO y el movimiento financiero; el historial de operaciones se consulta abajo.</p>
       </section>
       {semana.estado === 'abierta' && <details className="operation-adjustment">
         <summary><strong>Añadir ajuste manual</strong><span className="muted">Solo para correcciones, transferencias o movimientos que no provienen de un ticket</span></summary>
