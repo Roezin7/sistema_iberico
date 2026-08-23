@@ -80,6 +80,10 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
     const lotes = [] as { id: bigint; product_id: bigint; cantidad_inicial: Prisma.Decimal; costo_unitario: Prisma.Decimal }[];
     for (const linea of input.lineas) {
       const importe = linea.importe ?? linea.cantidad_base * linea.costo_unitario_base;
+      // Si llega el importe real del ticket, el costo FIFO debe quedar en
+      // unidad base. El precio capturado puede ser el de una botella, bolsa o
+      // caja; por eso se deriva como importe / cantidad_base.
+      const costoBase = linea.importe == null ? linea.costo_unitario_base : importe / linea.cantidad_base;
       await tx.purchase_lines.create({
         data: {
           purchase_id: compra.id,
@@ -87,7 +91,7 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
           qty: linea.cantidad_base,
           unidad_compra: linea.unidad_compra ?? null,
           contenido_compra: linea.contenido_compra ?? null,
-          costo_unitario: linea.costo_unitario_base,
+          costo_unitario: costoBase,
           importe,
         },
       });
@@ -99,7 +103,7 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
           recibido_at: fecha,
           cantidad_inicial: linea.cantidad_base,
           cantidad_restante: linea.cantidad_base,
-          costo_unitario: linea.costo_unitario_base,
+          costo_unitario: costoBase,
           moneda: input.moneda ?? 'MXN',
           fuente: input.fuente ?? 'manual',
           ticket_ref: ticketRef,

@@ -401,7 +401,12 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       const prev = productos.get(key);
       const qty = Number(l.cantidad_base);
       const importe = Number(l.importe);
-      const costo = l.costo_unitario == null ? importe / qty : Number(l.costo_unitario);
+      // El lote FIFO siempre se valora en unidad base (g, ml o pieza).
+      // El precio capturado del ticket puede ser el de la presentación
+      // comercial (caja, bolsa, botella), por lo que no debe usarse
+      // directamente como costo por unidad base. La fuente confiable para el
+      // lote es el importe total dividido entre la cantidad base convertida.
+      const costo = importe / qty;
       productos.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, costo: (prev.importe + importe) / (prev.qty + qty), unidad: prev.unidad ?? l.unidad_compra, contenido: prev.contenido ?? (l.contenido_compra == null ? null : Number(l.contenido_compra)) } : { qty, importe, costo, unidad: l.unidad_compra, contenido: l.contenido_compra == null ? null : Number(l.contenido_compra) });
     }
     for (const [productId, line] of productos) {

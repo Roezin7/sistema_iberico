@@ -353,7 +353,9 @@ model inventory_consumptions {
   lote           inventory_lots @relation(fields: [lote_id], references: [id], onDelete: Restrict)
   epos_venta     epos_ventas?   @relation(fields: [epos_venta_id], references: [id], onDelete: SetNull)
 
-  @@unique([epos_venta_id, product_id])
+  // Una venta puede consumir el mismo producto desde varios lotes FIFO.
+  // La unicidad debe conservar la trazabilidad por lote, no impedir el split.
+  @@unique([epos_venta_id, product_id, lote_id])
   @@index([negocio_id, fecha])
   @@index([lote_id])
   @@index([epos_venta_id])
