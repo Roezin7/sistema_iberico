@@ -110,9 +110,9 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
     },
   });
 
-  // El costo operativo vigente se calcula sobre los lotes FIFO abiertos. Es
-  // una lectura pura: no consume lotes ni modifica recetas. El costo estático
-  // del catálogo se conserva como referencia histórica/configuración.
+  // El costo operativo vigente se calcula sobre todos los lotes FIFO abiertos,
+  // incluidos los que vienen de aperturas históricas. Los lotes no desaparecen
+  // al cambiar de semana: sólo se agotan por ventas o ajustes trazables.
   const productIds = [...new Set(productos.flatMap((p) => p.recetas[0]?.estado === 'validada'
     ? p.recetas[0].lineas.map((l) => l.product_id.toString())
     : []))].map(BigInt);
@@ -122,7 +122,6 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
       product_id: { in: productIds },
       estado: 'abierto',
       cantidad_restante: { gt: 0 },
-      fuente: { not: 'historico_prueba' },
     },
     orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
     select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },

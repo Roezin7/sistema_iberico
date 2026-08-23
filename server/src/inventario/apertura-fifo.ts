@@ -90,10 +90,34 @@ export async function prepararAperturaFifo(input: {
       cantidades.set(key, round((cantidades.get(key) ?? 0) + cantidad, 4));
     }
 
+    // El libro FIFO es continuo. Si ya existe existencia abierta recibida
+    // antes de esta apertura, esa existencia ya es el inventario que cruza la
+    // semana y no debe materializarse otra vez desde el snapshot. Sólo se
+    // crea un lote de arranque para un producto que todavía no tiene saldo en
+    // el libro (por ejemplo, una alta física que aún no tenía lote).
+    const lotesPrevios = modo === 'normal'
+      ? await tx.inventory_lots.findMany({
+        where: {
+          negocio_id: input.negocioId,
+          product_id: { in: productIds },
+          recibido_at: { lte: semana.fecha_inicio },
+          estado: 'abierto',
+          cantidad_restante: { gt: 0 },
+        },
+        select: { product_id: true },
+      })
+      : [];
+    const productosConSaldo = new Set(lotesPrevios.map((lote) => lote.product_id.toString()));
+    const omitidos = new Set<string>();
+
     const faltantesCosto: { product_id: number; producto: string; cantidad: number }[] = [];
     const lotes = [] as { product_id: bigint; cantidad: number; costo: number }[];
     for (const [key, cantidad] of cantidades) {
       if (cantidad <= 0) continue;
+      if (modo === 'normal' && productosConSaldo.has(key)) {
+        omitidos.add(key);
+        continue;
+      }
       const producto = porId.get(key);
       const costo = producto?.unit_cost == null ? null : Number(producto.unit_cost);
       if (!producto || costo == null || !Number.isFinite(costo) || costo < 0) {
@@ -138,7 +162,7 @@ export async function prepararAperturaFifo(input: {
       });
       creados.push(creado);
     }
-    if (modo === 'normal') {
+    if (modo === 'normal' && !omitidos.size) {
       await tx.inventario_semanal.update({
         where: { semana_id: semana.id },
         data: { apertura_origen: 'fifo_lotes_iniciales', apertura_valor: valor },
@@ -150,6 +174,7 @@ export async function prepararAperturaFifo(input: {
       snapshot_id: Number(semana.inventario_semanal.apertura_snapshot_id),
       referencia,
       valor,
+      omitidos_por_lote_existente: [...omitidos].map(Number),
       lotes: creados.map((l) => ({ id: Number(l.id), product_id: Number(l.product_id), cantidad_inicial: Number(l.cantidad_inicial), cantidad_restante: Number(l.cantidad_inicial), costo_unitario: Number(l.costo_unitario) })),
       faltantes_costo: faltantesCosto,
     };

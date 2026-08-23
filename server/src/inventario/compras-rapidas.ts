@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { cantidadBaseDesdePresentacion, notasDeValidacion, resumirCompra, validarDiscrepanciasCompra, type ProductoReglaCompra } from './compras-rapidas-logic.js';
+import { costearVentasPendientesEnVivo } from './consumo-epos.js';
 
 export type CapturaCompraLinea = {
   product_id?: bigint | null;
@@ -209,7 +210,7 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
   origen_pago_id?: bigint | null; lineas: EditarCompraLinea[];
 }) {
   if (!input.lineas.length) throw new HttpError(400, 'La compra debe conservar al menos una línea');
-  return prisma.$transaction(async (tx) => {
+  const resultado = await prisma.$transaction(async (tx) => {
     const actual = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId }, include: { inventory_lots: { include: { consumptions: { select: { id: true }, take: 1 } } }, capture_lines: true } });
     if (!actual) throw new HttpError(404, 'Compra no encontrada');
     if (actual.estado !== 'confirmada') throw new HttpError(409, 'Sólo se pueden editar compras confirmadas');
@@ -260,6 +261,8 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     } else if (gastoMov) await tx.movimientos.delete({ where: { id: gastoMov.id } });
     return { purchase_id: Number(purchaseId), actualizado: true, inventario: invTotal, gasto: gastoTotal, total };
   });
+  const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
+  return { ...resultado, costeo_en_vivo: costeoEnVivo };
 }
 
 /** Corrige el origen de pago de una compra ya confirmada sin tocar sus lotes. */
@@ -298,7 +301,7 @@ export async function obtenerFotoCompra(negocioId: bigint, purchaseId: bigint) {
 }
 
 export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigint, purchaseId: bigint) {
-  return prisma.$transaction(async (tx) => {
+  const resultado = await prisma.$transaction(async (tx) => {
     const claim = await tx.purchases.updateMany({
       where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } },
       data: { estado: 'confirmando' },
@@ -417,6 +420,8 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     await tx.purchases.update({ where: { id: compra.id }, data: { total, estado: 'confirmada', notas: notasCompra, confirmada_por: usuarioId, confirmada_at: new Date() } });
     return { purchase_id: Number(compra.id), estado: 'confirmada', inventario: inventarioTotal, gasto: gastoTotal, movimientos: (inventarioTotal > 0 ? 1 : 0) + (gastoTotal > 0 ? 1 : 0), discrepancias: validacion.advertencias };
   });
+  const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
+  return { ...resultado, costeo_en_vivo: costeoEnVivo };
 }
 
 export async function actualizarBorradorLineas(negocioId: bigint, purchaseId: bigint, lineas: CapturaCompraLinea[], total?: number | null) {

@@ -35,7 +35,9 @@ export interface Resumen {
   inventario: {
     apertura_snapshot_id: number | null; cierre_snapshot_id: number | null;
     apertura_valor: number | null; compras: number; cierre_valor: number | null;
-    costo_ventas: number | null; estado: 'pendiente_cierre' | 'cerrado'; apertura_origen: string | null;
+    costo_ventas: number | null; costo_ventas_fuente: 'ledger_fifo_en_vivo' | 'conciliacion_inventario';
+    valor_fifo_corte: number; unidades_fifo_corte: number;
+    estado: 'pendiente_cierre' | 'cerrado'; apertura_origen: string | null;
   };
   conciliacion_inventario: {
     estado: 'pendiente_cierre' | 'calculada';

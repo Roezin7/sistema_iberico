@@ -543,7 +543,7 @@ function DetalleVentasEpos({ filas, preview, metodoMixto }: { filas: EposVenta[]
     <div className="ventas-detalle__summary">
       {[...porMetodo.entries()].map(([metodo, total]) => <span key={metodo}><small>{metodo}</small><strong>{mxn(total)}</strong></span>)}
     </div>
-    {productosDisponibles > 0 && <div className="info-box info-box--compact"><strong>{productosDisponibles} producto(s) tienen costo FIFO disponible.</strong><span className="muted">El costo se puede aplicar desde Compras; esta vista previa no descuenta inventario.</span></div>}
+    {productosDisponibles > 0 && <div className="info-box info-box--compact"><strong>{productosDisponibles} producto(s) tienen costo FIFO disponible.</strong><span className="muted">El costo se aplica automáticamente al sincronizar las ventas; aquí se muestra el estado para revisión.</span></div>}
     {excepcionesReales > 0 && <div className="info-box info-box--compact"><strong>{excepcionesReales} producto(s) tienen una excepción real.</strong><span className="muted">Sólo se muestran aquí productos sin mapeo Epos o con inventario FIFO insuficiente.</span></div>}
     <div className="ventas-detalle__table table-wrap"><table><thead><tr><th>Producto</th><th>Unidades</th><th>Venta</th><th>Costo FIFO</th><th>Estado</th></tr></thead><tbody>
       {productos.map(([producto, dato]) => <tr key={producto}><td><strong>{producto}</strong></td><td>{dato.cantidad}</td><td>{mxn(dato.venta)}</td><td>{dato.costo > 0 ? mxn(dato.costo) : '—'}</td><td><div className="ventas-detalle__statuses">
@@ -593,7 +593,8 @@ function ResumenView({ r, semana, onCambio }: { r: Resumen; semana: Semana; onCa
         {fila('Inventario de apertura', mxn(r.inventario.apertura_valor))}
         {fila('Compras de la semana', mxn(r.inventario.compras))}
         {fila('Inventario de cierre', mxn(r.inventario.cierre_valor))}
-        {fila('Costo de ventas (apertura + compras − cierre)', mxn(r.inventario.costo_ventas))}
+        {fila(r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' ? 'Costo de ventas FIFO en vivo' : 'Costo de ventas (apertura + compras − cierre)', mxn(r.inventario.costo_ventas))}
+        {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>El valor del corte FIFO se reconstruye con los lotes que siguen abiertos; los lotes pasan a la siguiente semana sin reiniciarse.</p>}
         <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>
           {r.inventario.estado === 'pendiente_cierre'
             ? 'Pendiente: captura el inventario físico de cierre para abrir la siguiente semana con ese mismo saldo.'

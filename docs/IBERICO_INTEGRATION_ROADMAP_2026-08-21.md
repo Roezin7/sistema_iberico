@@ -8,7 +8,9 @@
 - Vista previa de conciliación.
 - Sincronización idempotente de ventas.
 - Desglose por producto, día y método de pago.
-- Importación persistida sin modificar inventario automáticamente.
+- Importación persistida con costeo FIFO automático para ventas pendientes.
+- Cada compra confirmada crea su lote y dispara el recosteo de ventas pendientes.
+- Los lotes y consumos cruzan semanas; el ledger no se reinicia al abrir un nuevo periodo.
 
 Se corrigió el adaptador para aceptar `ProductID` y `ProductId`, y `Discount` y
 `DiscountValue`. El formato real de Epos usaba la segunda variante; antes las
@@ -35,12 +37,13 @@ local de México.
 
 ## Falta para una operación integrada
 
-### Prioridad 1 — cerrar la semana 64 sin datos manuales duplicados
+### Prioridad 1 — operar el ledger continuo sin datos manuales duplicados
 
 - Sincronización diaria desde Epos.
 - Conciliación diaria de efectivo, tarjeta, otros y cuentas abiertas.
 - Compra móvil completa con suma de líneas igual al ticket.
-- Resolución de las siete excepciones actuales.
+- Resolución de las excepciones reales restantes.
+- Revisión semanal sólo como control contra el ledger, no como disparador del costo.
 
 ### Prioridad 2 — catálogo estable Epos → menú
 
@@ -75,6 +78,7 @@ producto, no utilidad operativa.
 Después de demostrar tres días seguidos sin duplicados:
 
 - programar sincronización diaria;
+- costear en vivo después de cada sincronización y compra confirmada;
 - generar alerta de corte pendiente;
 - generar cola visual de excepciones;
 - impedir cierre con excepciones críticas sin decisión humana;

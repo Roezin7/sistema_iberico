@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { costearVentasPendientesEnVivo } from './consumo-epos.js';
 
 export interface LineaCompraInput {
   product_id: bigint;
@@ -41,7 +42,7 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
 
   const fecha = fechaUTC(input.fecha_recepcion);
   const ticketRef = input.ticket_ref?.trim() || null;
-  return prisma.$transaction(async (tx) => {
+  const resultado = await prisma.$transaction(async (tx) => {
     if (ticketRef) {
       const repetida = await tx.purchases.findFirst({
         where: { negocio_id: negocioId, ticket_ref: ticketRef },
@@ -121,6 +122,10 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
       })),
     };
   });
+  // Una compra confirmada puede resolver excepciones anteriores. El lote queda
+  // disponible de inmediato y el recálculo respeta la fecha de recepción.
+  const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
+  return { ...resultado, costeo_en_vivo: costeoEnVivo };
 }
 
 export async function listarLotes(negocioId: bigint, productId?: bigint) {

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { consumirVentasEpos } from '../inventario/consumo-epos.js';
 import {
   buildReconcilePreview,
   fetchReconcileData,
@@ -36,8 +37,13 @@ function claveFila(row: EposReportRow, fallback: string, occurrence: number) {
   return `row:${createHash('sha256').update(identity).digest('hex')}`;
 }
 
-/** Importa el BookkeepingReport de forma idempotente. No modifica inventario,
- * recetas, gastos ni conciliaciones confirmadas. */
+/** Importa el BookkeepingReport de forma idempotente.
+ *
+ * La importación sólo agrega filas de Epos una vez. Después dispara el costeo
+ * FIFO en vivo: no reescribe ventas ya costeadas ni modifica recetas, gastos o
+ * conciliaciones confirmadas; únicamente crea consumos para ventas pendientes
+ * que puedan resolverse con lotes abiertos.
+ */
 export async function importarVentasEpos(input: {
   negocioId: bigint;
   from: string;
@@ -114,10 +120,29 @@ export async function importarVentasEpos(input: {
     return { importacion, nuevas, duplicadas };
   }, { maxWait: 20_000, timeout: 120_000 });
 
+  // La importación es el disparador operativo: en cuanto Epos deja las ventas
+  // en el libro local, se intenta costearlas contra todos los lotes abiertos.
+  // La operación es idempotente y no modifica Epos; una receta sin validar o
+  // una existencia realmente insuficiente queda visible como excepción.
+  const costeoEnVivo = await consumirVentasEpos({
+    negocioId: input.negocioId,
+    from: input.from,
+    to: input.to,
+    confirmar: true,
+    modo: 'normal',
+  });
+
   return {
     ...preview, persistido: true, importacion_id: Number(result.importacion.id),
     filas_persistidas: result.nuevas, filas_duplicadas: result.duplicadas,
-    nota: 'Las ventas importadas son evidencia de Epos; no descuentan inventario hasta confirmar recetas y el corte diario.',
+    costeo_en_vivo: {
+      ventas: costeoEnVivo.ventas,
+      costeadas: costeoEnVivo.costeadas,
+      excepciones: costeoEnVivo.excepciones,
+      pendientes: costeoEnVivo.pendientes,
+      costo_fifo: costeoEnVivo.costo_fifo,
+    },
+    nota: 'Las ventas se costean automáticamente contra el libro FIFO abierto; sólo quedan pendientes las recetas o productos que requieren revisión.',
   };
 }
 
@@ -200,4 +225,36 @@ export async function listarExcepcionesEpos(input: { negocioId: bigint; from?: s
     cantidad: Number(row.cantidad),
     error: row.costeo_error ?? 'Revisión pendiente',
   }));
+}
+
+/** Agrupa excepciones para que el operador vea causas y no una lista repetida
+ * por cada línea vendida. El detalle original sigue disponible en /exceptions. */
+export async function resumirExcepcionesEpos(input: { negocioId: bigint; from?: string; to?: string }) {
+  const detalle = await listarExcepcionesEpos(input);
+  const grupos = new Map<string, {
+    tipo: 'sin_mapeo' | 'inventario_insuficiente' | 'otra';
+    causa: string;
+    producto: string;
+    ventas: number;
+    unidades: number;
+    primera_fecha: string;
+    ultima_fecha: string;
+  }>();
+  for (const fila of detalle) {
+    const sinMapeo = fila.error.toLowerCase().includes('sin mapeo');
+    const insuficiente = fila.error.toLowerCase().includes('inventario insuficiente');
+    const tipo = sinMapeo ? 'sin_mapeo' : insuficiente ? 'inventario_insuficiente' : 'otra';
+    const causa = sinMapeo ? 'Producto Epos sin mapeo' : insuficiente ? fila.error.replace(/; faltan\s+[^ ]+\s+\S+$/i, '') : fila.error;
+    const key = `${tipo}|${fila.producto}|${causa}`;
+    const previo = grupos.get(key);
+    if (previo) {
+      previo.ventas += 1;
+      previo.unidades += fila.cantidad;
+      previo.primera_fecha = previo.primera_fecha < fila.fecha ? previo.primera_fecha : fila.fecha;
+      previo.ultima_fecha = previo.ultima_fecha > fila.fecha ? previo.ultima_fecha : fila.fecha;
+    } else {
+      grupos.set(key, { tipo, causa, producto: fila.producto, ventas: 1, unidades: fila.cantidad, primera_fecha: fila.fecha, ultima_fecha: fila.fecha });
+    }
+  }
+  return [...grupos.values()].sort((a, b) => b.ventas - a.ventas || a.producto.localeCompare(b.producto, 'es'));
 }

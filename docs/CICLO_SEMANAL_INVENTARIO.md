@@ -47,9 +47,15 @@ cierres históricos.
 Mientras una semana no tenga conteo de cierre, el resumen muestra
 `pendiente_cierre` y no calcula un costo de ventas defendible.
 
-## Nota sobre ventas y FIFO
+## Nota sobre ventas y FIFO en vivo
 
-La fórmula semanal es el control contable de alto nivel. Cuando la capa FIFO
-esté activa para todos los productos, el costo consumido por lote será la fuente
-detallada; el ciclo de apertura/cierre seguirá siendo el control de existencia y
-la detección de mermas o descuadres.
+El libro FIFO es continuo y no se reinicia al cambiar de semana. Una compra
+confirmada agrega un lote con su fecha y costo; una venta Epos sincronizada
+consume inmediatamente los lotes disponibles en orden de recepción. Los lotes
+restantes pasan a las semanas siguientes sin copiarse ni volver a valuarse como
+una compra nueva.
+
+La fórmula semanal queda como control de alto nivel y puente contable. El costo
+de ventas detallado proviene del ledger de consumos FIFO del periodo. El cierre
+físico se compara contra la existencia FIFO esperada para identificar merma,
+error de captura, receta incorrecta o compra faltante.

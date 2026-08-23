@@ -47,6 +47,11 @@ function fechaISO(value: Date) {
   return value.toISOString().slice(0, 10);
 }
 
+function finDelDia(value: Date) {
+  const fecha = fechaISO(value);
+  return new Date(`${fecha}T23:59:59.999Z`);
+}
+
 async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date }, context?: PlanContext): Promise<PlanConsumo> {
   const previo = context
     ? context.consumedVentaIds.has(venta.id.toString())
@@ -97,10 +102,13 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
     if (cantidadBase == null) {
       return { estado: 'pendiente', error: `Unidad pendiente en ${menu.nombre}: ${linea.products.name} (${linea.unidad} → ${unidadBase ?? 'sin unidad'})`, costoTotal: 0, consumos: [] };
     }
+    // Un lote sólo puede cubrir ventas posteriores a su recepción. Esto evita
+    // que una compra capturada con fecha futura tape artificialmente un faltante
+    // histórico cuando el costeo se reintenta en vivo.
     const lotes = context
-      ? context.lotsByProduct.get(linea.product_id.toString()) ?? []
+      ? (context.lotsByProduct.get(linea.product_id.toString()) ?? []).filter((lote) => lote.recibido_at <= finDelDia(venta.fecha))
       : await client.inventory_lots.findMany({
-        where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 } },
+        where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 }, recibido_at: { lte: finDelDia(venta.fecha) } },
         orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
         select: { id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
       });
@@ -135,7 +143,6 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
       product_id: { in: productIds },
       estado: 'abierto',
       cantidad_restante: { gt: 0 },
-      fuente: modo === 'historico_prueba' ? 'historico_prueba' : { not: 'historico_prueba' },
     },
     orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
     select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
@@ -267,4 +274,108 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
   }
   resultado.costo_fifo = Number(resultado.costo_fifo.toFixed(4));
   return resultado;
+}
+
+/**
+ * Reprocesa únicamente ventas que todavía no tienen un costo válido.
+ *
+ * El libro FIFO es continuo: las compras nuevas pueden resolver una venta
+ * pendiente siempre que el lote tenga fecha de recepción anterior o igual a
+ * la venta. Las ventas ya costeadas conservan sus consumos inmutables.
+ */
+export async function costearVentasPendientesEnVivo(input: {
+  negocioId: bigint;
+  from?: Date;
+  to?: Date;
+}) {
+  const pendientes = await prisma.epos_ventas.findMany({
+    where: {
+      negocio_id: input.negocioId,
+      costeo_estado: { in: ['pendiente', 'excepcion'] },
+      ...(input.from || input.to ? { fecha: { ...(input.from ? { gte: input.from } : {}), ...(input.to ? { lt: input.to } : {}) } } : {}),
+    },
+    orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
+    select: { fecha: true },
+  });
+  if (!pendientes.length) return { ventas: 0, costeadas: 0, excepciones: 0, pendientes: 0, costo_fifo: 0 };
+  const primera = pendientes[0]!;
+  const ultima = pendientes[pendientes.length - 1]!;
+  const from = input.from ?? primera.fecha;
+  const to = input.to ?? new Date(ultima.fecha.getTime() + 1);
+  const resultado = await consumirVentasEpos({
+    negocioId: input.negocioId,
+    from: from.toISOString(),
+    to: to.toISOString(),
+    confirmar: true,
+    modo: 'normal',
+  });
+  return {
+    ventas: resultado.ventas,
+    costeadas: resultado.costeadas,
+    excepciones: resultado.excepciones,
+    pendientes: resultado.pendientes,
+    costo_fifo: resultado.costo_fifo,
+  };
+}
+
+/** Snapshot operativo del ledger continuo. No cambia lotes ni ventas. */
+export async function estadoFifoEnVivo(negocioId: bigint) {
+  const [lotes, pendientes, excepciones] = await Promise.all([
+    prisma.inventory_lots.findMany({
+      where: { negocio_id: negocioId, estado: 'abierto', cantidad_restante: { gt: 0 } },
+      select: { cantidad_restante: true, costo_unitario: true },
+    }),
+    prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: 'pendiente' } }),
+    prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: 'excepcion' } }),
+  ]);
+  const valor = lotes.reduce((sum, lote) => sum + Number(lote.cantidad_restante) * Number(lote.costo_unitario), 0);
+  return {
+    lotes_abiertos: lotes.length,
+    unidades_base_abiertas: lotes.reduce((sum, lote) => sum + Number(lote.cantidad_restante), 0),
+    valor_fifo_abierto: Number(valor.toFixed(4)),
+    ventas_pendientes: pendientes,
+    ventas_excepcion: excepciones,
+    costeo: 'en_vivo',
+  };
+}
+
+/**
+ * Valora el libro FIFO a una fecha de corte. Se reconstruye desde los lotes
+ * y el ledger inmutable de consumos para que una semana posterior no borre ni
+ * reinicie la existencia de las semanas anteriores.
+ */
+export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date) {
+  const lotes = await prisma.inventory_lots.findMany({
+    where: {
+      negocio_id: negocioId,
+      recibido_at: { lte: fechaCorte },
+      estado: { in: ['abierto', 'agotado'] },
+    },
+    select: { id: true, cantidad_inicial: true, costo_unitario: true },
+  });
+  if (!lotes.length) return { valor: 0, unidades: 0, lotes: 0 };
+  const consumos = await prisma.inventory_consumptions.findMany({
+    where: { negocio_id: negocioId, fecha: { lte: fechaCorte }, lote_id: { in: lotes.map((lote) => lote.id) } },
+    select: { lote_id: true, cantidad: true },
+  });
+  const consumido = new Map<string, number>();
+  for (const consumo of consumos) {
+    const key = consumo.lote_id.toString();
+    consumido.set(key, (consumido.get(key) ?? 0) + Number(consumo.cantidad));
+  }
+  let unidades = 0;
+  let valor = 0;
+  let lotesConSaldo = 0;
+  for (const lote of lotes) {
+    const restante = Math.max(0, Number(lote.cantidad_inicial) - (consumido.get(lote.id.toString()) ?? 0));
+    if (restante <= 0.0001) continue;
+    lotesConSaldo += 1;
+    unidades += restante;
+    valor += restante * Number(lote.costo_unitario);
+  }
+  return {
+    valor: Number(valor.toFixed(4)),
+    unidades: Number(unidades.toFixed(4)),
+    lotes: lotesConSaldo,
+  };
 }

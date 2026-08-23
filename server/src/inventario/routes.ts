@@ -6,7 +6,7 @@ import { inventarioActual, listaCompras, crearConteo } from './service.js';
 import { borradorCompraTicket, borradorConteo, draftDisponible } from './draft.js';
 import { listarLotes, registrarCompra } from './compras.js';
 import { prepararAperturaFifo } from './apertura-fifo.js';
-import { consumirVentasEpos } from './consumo-epos.js';
+import { consumirVentasEpos, costearVentasPendientesEnVivo, estadoFifoEnVivo } from './consumo-epos.js';
 import { actualizarBorradorLineas, cambiarOrigenPagoCompra, confirmarBorradorCompra, crearBorradorCompra, editarCompraConfirmada, listarBorradoresCompra, listarCompras, obtenerCompraConfirmada, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra, validarCapturaCompra } from './compras-rapidas.js';
 
 export const inventarioRouter = Router();
@@ -260,6 +260,25 @@ inventarioRouter.post(
     res.json(await consumirVentasEpos({ negocioId: req.auth!.negocioId, ...body }));
   }),
 );
+
+/** GET /inventario/fifo/live-status — estado del libro FIFO continuo. */
+inventarioRouter.get('/fifo/live-status', asyncHandler(async (req, res) => {
+  res.json(await estadoFifoEnVivo(req.auth!.negocioId));
+}));
+
+/** POST /inventario/fifo/reprocesar — reintenta ventas pendientes/excepciones
+ * sin tocar ventas ya costeadas ni crear consumos duplicados. */
+inventarioRouter.post('/fifo/reprocesar', soloAdmin, asyncHandler(async (req, res) => {
+  const body = z.object({
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+  }).parse(req.body ?? {});
+  res.json(await costearVentasPendientesEnVivo({
+    negocioId: req.auth!.negocioId,
+    from: body.from ? new Date(body.from) : undefined,
+    to: body.to ? new Date(body.to) : undefined,
+  }));
+}));
 
 // --- Fase 7: borrador de conteo asistido por IA (la IA propone, el usuario confirma) ---
 inventarioRouter.get(

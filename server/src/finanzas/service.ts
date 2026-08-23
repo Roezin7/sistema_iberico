@@ -19,6 +19,7 @@ import {
 } from './logic.js';
 import { generarSnapshotEnCierre } from '../patrimonio/service.js';
 import { inventarioActual, crearSnapshotConsolidado, valorSnapshot } from '../inventario/service.js';
+import { valorFifoAlCorte } from '../inventario/consumo-epos.js';
 
 // --- Fechas (semana lunes→domingo) -----------------------------------------
 function lunesDe(fecha: Date): Date {
@@ -230,14 +231,26 @@ async function asegurarInventarioSemanal(negocioId: bigint, semanaId: bigint) {
 
 async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
   const semanal = await asegurarInventarioSemanal(negocioId, semanaId);
-  const movs = await prisma.movimientos.findMany({
-    where: { negocio_id: negocioId, semana_id: semanaId, tipo: 'compra_inventario' },
-    select: { monto: true },
-  });
+  const semana = await prisma.semanas.findUnique({ where: { id: semanaId }, select: { fecha_inicio: true, fecha_fin: true } });
+  if (!semana) throw new HttpError(404, 'Semana no encontrada');
+  const [movs, fifoCorte, consumosPeriodo] = await Promise.all([
+    prisma.movimientos.findMany({
+      where: { negocio_id: negocioId, semana_id: semanaId, tipo: 'compra_inventario' },
+      select: { monto: true },
+    }),
+    valorFifoAlCorte(negocioId, semana.fecha_fin),
+    prisma.inventory_consumptions.aggregate({
+      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin }, epos_venta_id: { not: null } },
+      _sum: { costo_total: true },
+      _count: { _all: true },
+    }),
+  ]);
   const compras = redondear(movs.reduce((a, m) => a + num0(m.monto), 0));
   const apertura = semanal.apertura_valor == null ? null : num0(semanal.apertura_valor);
-  const cierre = semanal.cierre_valor == null ? null : num0(semanal.cierre_valor);
-  const costoVentas = costoVentasPorInventario(apertura, compras, cierre);
+  const cierreRegistrado = semanal.cierre_valor == null ? null : num0(semanal.cierre_valor);
+  const cierre = cierreRegistrado ?? (fifoCorte.lotes ? fifoCorte.valor : null);
+  const costoVentasLedger = consumosPeriodo._count._all > 0 ? num0(consumosPeriodo._sum.costo_total) : null;
+  const costoVentas = costoVentasLedger ?? costoVentasPorInventario(apertura, compras, cierre);
   return {
     apertura_snapshot_id: semanal.apertura_snapshot_id == null ? null : Number(semanal.apertura_snapshot_id),
     cierre_snapshot_id: semanal.cierre_snapshot_id == null ? null : Number(semanal.cierre_snapshot_id),
@@ -245,6 +258,9 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     compras,
     cierre_valor: cierre,
     costo_ventas: costoVentas,
+    costo_ventas_fuente: costoVentasLedger == null ? 'conciliacion_inventario' : 'ledger_fifo_en_vivo',
+    valor_fifo_corte: fifoCorte.valor,
+    unidades_fifo_corte: fifoCorte.unidades,
     estado: cierre == null ? 'pendiente_cierre' : 'cerrado',
     apertura_origen: semanal.apertura_origen,
   };
@@ -289,7 +305,7 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
   const semana = await prisma.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId }, select: { fecha_inicio: true, fecha_fin: true } });
   if (!semana) throw new HttpError(404, 'Semana no encontrada');
 
-  const [productos, aperturaLineas, cierreLineas, comprasLotes, aperturaLotes, ajustesLotes, consumos, consumosAjuste] = await Promise.all([
+  const [productos, aperturaLineas, cierreLineas, comprasLotes, ajustesLotes, lotesLedger, consumos, consumosLedger, consumosAjuste] = await Promise.all([
     prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, unit_cost: true } }),
     prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.apertura_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
     prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.cierre_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
@@ -298,15 +314,22 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
       select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
     }),
     prisma.inventory_lots.findMany({
-      where: { negocio_id: negocioId, ticket_ref: { in: [`APERTURA-FIFO-${semanaId}`, `APERTURA-FIFO-HISTORICO-${semanaId}`] } },
-      select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
-    }),
-    prisma.inventory_lots.findMany({
       where: { negocio_id: negocioId, fuente: 'ajuste_inventario', ticket_ref: { startsWith: `AJUSTE-INVENTARIO-${semanaId}-` } },
       select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
     }),
+    // FIFO es un libro continuo. No lo reiniciamos al cambiar de semana:
+    // todos los lotes recibidos hasta el cierre participan en la existencia
+    // esperada, incluidos los lotes históricos y los que cruzan semanas.
+    prisma.inventory_lots.findMany({
+      where: { negocio_id: negocioId, recibido_at: { lte: semana.fecha_fin }, estado: { in: ['abierto', 'agotado'] } },
+      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true },
+    }),
     prisma.inventory_consumptions.findMany({
       where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin } },
+      select: { product_id: true, lote_id: true, cantidad: true, fuente: true },
+    }),
+    prisma.inventory_consumptions.findMany({
+      where: { negocio_id: negocioId, fecha: { lte: semana.fecha_fin } },
       select: { product_id: true, lote_id: true, cantidad: true, fuente: true },
     }),
     prisma.inventory_consumptions.findMany({
@@ -342,17 +365,19 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     ajustes.set(key, redondearCantidad((ajustes.get(key) ?? 0) - num0(consumo.cantidad)));
   }
   const consumosPorProducto = new Map<string, number>();
-  const consumosPorLote = new Map<string, number>();
   for (const consumo of consumos) {
     const cantidad = num0(consumo.cantidad);
-    const loteKey = consumo.lote_id.toString();
-    consumosPorLote.set(loteKey, redondearCantidad((consumosPorLote.get(loteKey) ?? 0) + cantidad));
     if (consumo.fuente === 'ajuste_inventario') continue;
     const productoKey = consumo.product_id.toString();
     consumosPorProducto.set(productoKey, redondearCantidad((consumosPorProducto.get(productoKey) ?? 0) + cantidad));
   }
+  const consumosLedgerPorLote = new Map<string, number>();
+  for (const consumo of consumosLedger) {
+    const loteKey = consumo.lote_id.toString();
+    consumosLedgerPorLote.set(loteKey, redondearCantidad((consumosLedgerPorLote.get(loteKey) ?? 0) + num0(consumo.cantidad)));
+  }
   const lotesPorProducto = new Map<string, { id: bigint; cantidad: number; costo: number }[]>();
-  for (const lote of [...aperturaLotes, ...comprasLotes, ...ajustesLotes]) {
+  for (const lote of lotesLedger) {
     const key = lote.product_id.toString();
     const lista = lotesPorProducto.get(key) ?? [];
     lista.push({ id: lote.id, cantidad: num0(lote.cantidad_inicial), costo: num0(lote.costo_unitario) });
@@ -360,21 +385,21 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
   }
 
   const productoPorId = new Map(productos.map((p) => [p.id.toString(), p]));
-  const ids = new Set([...iniciales.keys(), ...finales.keys(), ...compras.keys(), ...ajustes.keys(), ...consumosPorProducto.keys()]);
+  const ids = new Set([...iniciales.keys(), ...finales.keys(), ...compras.keys(), ...ajustes.keys(), ...consumosPorProducto.keys(), ...lotesPorProducto.keys()]);
   const filas = [...ids].map((key) => {
     const producto = productoPorId.get(key);
     const inicial = redondearCantidad(iniciales.get(key) ?? 0);
     const comprasRecibidas = redondearCantidad(compras.get(key) ?? 0);
     const ajusteInventario = redondearCantidad(ajustes.get(key) ?? 0);
     const consumo = redondearCantidad(consumosPorProducto.get(key) ?? 0);
-    const esperado = redondearCantidad(inicial + comprasRecibidas + ajusteInventario - consumo);
     const fisico = redondearCantidad(finales.get(key) ?? 0);
-    const diferencia = redondearCantidad(fisico - esperado);
     const lotes = lotesPorProducto.get(key) ?? [];
     const costoCatalogo = producto?.unit_cost == null ? null : num0(producto.unit_cost);
-    const tieneAperturaFifo = lotes.some((lote) => aperturaLotes.some((apertura) => apertura.id === lote.id));
-    const fifoRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosPorLote.get(lote.id.toString()) ?? 0)), 0);
-    const fifoValorRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosPorLote.get(lote.id.toString()) ?? 0)) * lote.costo, 0);
+    const tieneAperturaFifo = lotesLedger.some((lote) => lote.product_id.toString() === key && lote.recibido_at <= semana.fecha_inicio);
+    const fifoRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)), 0);
+    const fifoValorRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)) * lote.costo, 0);
+    const esperado = redondearCantidad(fifoRestante);
+    const diferencia = redondearCantidad(fisico - esperado);
     const costoPonderado = fifoRestante > 0.0001
       ? Math.round((fifoValorRestante / fifoRestante) * 1_000_000) / 1_000_000
       : lotes.length
@@ -857,12 +882,16 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
   // La semana debe tener una apertura congelada antes de registrar su cierre.
   await asegurarInventarioSemanal(negocioId, semanaId);
 
-  const [ubicaciones, banco, invActual] = await Promise.all([
+  const [ubicaciones, banco, invActual, fifoCorte] = await Promise.all([
     prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true } }),
     prisma.ubicaciones_fondos.findFirst({ where: { negocio_id: negocioId, tipo: 'banco' }, orderBy: { id: 'asc' } }),
     inventarioActual(negocioId), // lectura pesada: se hace ANTES de abrir la transacción
+    valorFifoAlCorte(negocioId, semana.fecha_fin),
   ]);
-  const valorInventario = invActual.valor_total;
+  // El cierre contable usa el valor del ledger FIFO en vivo. Si todavía no
+  // hay lotes (por ejemplo, durante el bootstrap inicial), conserva el valor
+  // del conteo físico para no ocultar inventario sin libro.
+  const valorInventario = fifoCorte.lotes > 0 ? fifoCorte.valor : invActual.valor_total;
 
   await prisma.$transaction(async (tx) => {
     const movs = await tx.movimientos.findMany({ where: { semana_id: semanaId } });
