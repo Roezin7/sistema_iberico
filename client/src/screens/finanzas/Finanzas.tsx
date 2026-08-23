@@ -912,6 +912,7 @@ function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number
   const [lineas, setLineas] = useState<CompraDetalleLinea[]>([]);
   const [productos, setProductos] = useState<ProductoCompra[]>([]);
   const [total, setTotal] = useState('');
+  const [fechaRecepcion, setFechaRecepcion] = useState('');
   const [origen, setOrigen] = useState<number | ''>('');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState('');
@@ -925,6 +926,9 @@ function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number
       setCompra(c);
       setLineas(c.lineas);
       setTotal(String(c.total));
+      // La API devuelve una fecha ISO; el editor usa la fecha calendario de la
+      // compra, no la hora/localización del navegador.
+      setFechaRecepcion(c.fecha_recepcion.slice(0, 10));
       setOrigen(c.origen_pago_id ?? '');
       setProductos(p);
     }).catch((e) => setError(e instanceof Error ? e.message : 'No se pudo cargar el ticket.'));
@@ -975,10 +979,11 @@ function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number
   }
 
   async function guardar() {
-    if (!compra || !origen || !lineas.length) return;
+    if (!compra || !origen || !lineas.length || !fechaRecepcion) return;
     setGuardando(true); setError('');
     try {
       await finanzas.editarCompra(compra.id, {
+        fecha_recepcion: fechaRecepcion,
         total: Number(total), origen_pago_id: Number(origen),
         lineas: lineas.map((l) => ({
           ...l,
@@ -1000,7 +1005,7 @@ function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number
     <div className="section-heading"><div><h3>Editar compra vinculada</h3><p className="muted">Las líneas, cantidades, costos y movimientos se actualizan juntos.</p></div><button className="icon-btn" onClick={onClose} aria-label="Cerrar editor">✕</button></div>
     {!compra && !error && <Cargando etiqueta="Cargando ticket…" />}
     {compra && <>
-      <div className="form-grid form-grid--three"><label>Total del ticket<input type="number" min="0" step="0.01" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value ? Number(e.target.value) : '')}>{ref_.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
+      <div className="form-grid form-grid--three"><label>Fecha de recepción<input type="date" value={fechaRecepcion} onChange={(e) => setFechaRecepcion(e.target.value)} /><small className="muted">Define la semana y la fecha del lote FIFO.</small></label><label>Total del ticket<input type="number" min="0" step="0.01" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value ? Number(e.target.value) : '')}>{ref_.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
       <div className="quick-lines">{lineas.map((l, i) => { const producto = productos.find((p) => p.id === l.product_id); const cantidadCalculada = cantidadBaseDesdePresentacion({ cantidadCompra: Number(l.cantidad_fuente), unidadCompra: l.unidad_fuente || l.unidad_compra, contenidoPorPresentacion: Number(l.contenido_compra ?? producto?.contenido_compra), unidadBase: producto?.unidad_base, rendimientoUtil: producto?.rendimiento_util }); const costoCalculado = costoBase(Number(l.importe), cantidadCalculada ?? Number(l.cantidad_base)); return <div className="quick-line" key={l.id ?? `${compra.id}-${i}`}>
         <div className="quick-line__head"><strong>Línea {i + 1}{l.producto ? ` · ${l.producto}` : ''}</strong><button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))} disabled={lineas.length === 1}>Quitar</button></div>
         <input value={l.descripcion_fuente} placeholder="Descripción de la fuente" onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} aria-label={`Descripción línea ${i + 1}`} />
