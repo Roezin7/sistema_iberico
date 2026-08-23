@@ -450,29 +450,34 @@ function CorteConfirmado({ evidencia }: { evidencia: ConciliacionDiaria }) {
 }
 
 function DetalleVentasEpos({ filas }: { filas: EposVenta[] }) {
-  const porProducto = new Map<string, { cantidad: number; venta: number; costo: number; costeadas: boolean; excepciones: number }>();
+  const porProducto = new Map<string, { cantidad: number; venta: number; costo: number; costeadas: boolean; pendientes: number; excepciones: number }>();
   const porMetodo = new Map<string, number>();
   filas.forEach((fila) => {
-    const previo = porProducto.get(fila.producto) ?? { cantidad: 0, venta: 0, costo: 0, costeadas: true, excepciones: 0 };
+    const previo = porProducto.get(fila.producto) ?? { cantidad: 0, venta: 0, costo: 0, costeadas: true, pendientes: 0, excepciones: 0 };
     const costo = fila.costo_fifo ?? 0;
+    const tieneCosto = fila.costo_fifo != null;
+    const esExcepcion = fila.costeo_estado === 'excepcion';
     porProducto.set(fila.producto, {
       cantidad: previo.cantidad + fila.cantidad,
       venta: previo.venta + (fila.venta_neta ?? fila.venta_bruta),
       costo: previo.costo + costo,
-      costeadas: previo.costeadas && fila.costo_fifo != null,
-      excepciones: previo.excepciones + (fila.costeo_estado === 'excepcion' ? 1 : 0),
+      costeadas: previo.costeadas && tieneCosto,
+      pendientes: previo.pendientes + (!tieneCosto && !esExcepcion ? 1 : 0),
+      excepciones: previo.excepciones + (esExcepcion ? 1 : 0),
     });
     porMetodo.set(fila.metodo_pago, (porMetodo.get(fila.metodo_pago) ?? 0) + (fila.venta_neta ?? fila.venta_bruta));
   });
   const productos = [...porProducto.entries()].sort((a, b) => b[1].venta - a[1].venta);
   if (!filas.length) return <div className="info-box info-box--compact"><strong>No hay ventas persistidas para este día.</strong><span className="muted">Importa Epos o revisa el rango de la semana.</span></div>;
+  const productosPendientes = productos.filter(([, dato]) => !dato.costeadas && dato.excepciones === 0).length;
   return <details className="ventas-detalle" open>
     <summary><strong>Detalle de ventas Epos</strong><span className="muted">{filas.length} líneas · {productos.length} productos</span></summary>
     <div className="ventas-detalle__summary">
       {[...porMetodo.entries()].map(([metodo, total]) => <span key={metodo}><small>{metodo}</small><strong>{mxn(total)}</strong></span>)}
     </div>
+    {productosPendientes > 0 && <div className="info-box info-box--compact"><strong>{productosPendientes} producto(s) aún no tienen costo FIFO.</strong><span className="muted">La venta está importada, pero todavía no se aplicó el consumo FIFO. Ejecuta “Revisar costo” y después “Aplicar costo FIFO” en Compras.</span></div>}
     <div className="ventas-detalle__table table-wrap"><table><thead><tr><th>Producto</th><th>Unidades</th><th>Venta</th><th>Costo FIFO</th><th>Estado</th></tr></thead><tbody>
-      {productos.map(([producto, dato]) => <tr key={producto}><td><strong>{producto}</strong></td><td>{dato.cantidad}</td><td>{mxn(dato.venta)}</td><td>{dato.costeadas ? mxn(dato.costo) : 'Pendiente'}</td><td>{dato.excepciones ? <span className="status status--danger">{dato.excepciones} excepción(es)</span> : <span className="status status--ok">Revisado</span>}</td></tr>)}
+      {productos.map(([producto, dato]) => <tr key={producto}><td><strong>{producto}</strong></td><td>{dato.cantidad}</td><td>{mxn(dato.venta)}</td><td>{dato.costeadas ? mxn(dato.costo) : 'Pendiente'}</td><td>{dato.excepciones ? <span className="status status--danger">{dato.excepciones} excepción(es)</span> : dato.costeadas ? <span className="status status--ok">Costeado FIFO</span> : <span className="status status--warning">Pendiente de costeo{dato.pendientes > 1 ? ` (${dato.pendientes} ventas)` : ''}</span>}</td></tr>)}
     </tbody></table></div>
   </details>;
 }

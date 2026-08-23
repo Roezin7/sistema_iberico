@@ -291,6 +291,10 @@ table th {
   background: var(--danger-bg);
   color: var(--danger);
 }
+.status--warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
 .status--cargando {
   background: var(--surface-2);
 }
