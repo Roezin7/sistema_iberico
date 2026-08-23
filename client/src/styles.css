@@ -2046,6 +2046,9 @@ select:disabled {
 .quick-line__numbers input { min-width: 0; width: auto; }
 .quick-pending { display: grid; gap: 1rem; }
 .quick-pending__card { border-color: rgba(220, 167, 69, .45); }
+.quick-pending__meta { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: .75rem; margin: .85rem 0; padding: .75rem; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); }
+.quick-pending__meta label { display: grid; gap: .3rem; color: var(--ink-2); font-size: .78rem; font-weight: 700; }
+@media (max-width: 640px) { .quick-pending__meta { grid-template-columns: 1fr; } }
 .quick-day { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .8rem; }
 .quick-day__row { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-bottom: 1px solid var(--border); }
 .quick-day__row span { display: grid; gap: .15rem; }
