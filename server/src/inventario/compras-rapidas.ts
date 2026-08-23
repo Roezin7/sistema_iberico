@@ -39,7 +39,25 @@ export async function validarCapturaCompra(negocioId: bigint, total: number, lin
     where: { negocio_id: negocioId, id: { in: productIds }, active: true },
     select: { id: true, name: true, unidad_base: true, contenido_compra: true, unidad_compra: true, rendimiento_util: true, product_aliases: { select: { alias: true } } },
   }) : [];
-  return validarDiscrepanciasCompra(total, lineas.map((l) => ({
+  const productoPorId = new Map(productos.map((p) => [p.id.toString(), p]));
+  // La validación de la pantalla debe usar exactamente la misma conversión que
+  // usará la confirmación. Así una línea puede dejar cantidad_base vacía cuando
+  // la presentación del catálogo permite calcularla (p. ej. 1 bolsa de fresas
+  // congeladas = 1,810 g).
+  const lineasNormalizadas = lineas.map((l) => {
+    const producto = l.product_id == null ? null : productoPorId.get(l.product_id.toString());
+    const cantidadBase = l.tipo_linea === 'inventario' && producto
+      ? cantidadBaseDesdePresentacion({
+        cantidadCompra: l.cantidad_fuente,
+        unidadCompra: l.unidad_fuente ?? l.unidad_compra ?? producto.unidad_compra,
+        contenidoPorPresentacion: l.contenido_compra ?? (producto.contenido_compra == null ? null : Number(producto.contenido_compra)),
+        unidadBase: producto.unidad_base,
+        rendimientoUtil: producto.rendimiento_util == null ? 1 : Number(producto.rendimiento_util),
+      })
+      : null;
+    return { ...l, cantidad_base: cantidadBase ?? l.cantidad_base };
+  });
+  return validarDiscrepanciasCompra(total, lineasNormalizadas.map((l) => ({
     tipo_linea: l.tipo_linea,
     importe: Number(l.importe),
     product_id: l.product_id,
@@ -302,8 +320,11 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       : null;
     const totalCompra = compra.total == null ? (totalCalculado && totalCalculado > 0 ? totalCalculado : null) : Number(compra.total);
     if (totalCompra == null) throw new HttpError(400, 'Completa el total de la orden antes de confirmar');
-    if (compra.capture_lines.some((l) => l.tipo_linea === 'pendiente' || (l.tipo_linea === 'inventario' && (!l.product_id || !l.cantidad_base || Number(l.cantidad_base) <= 0)))) {
-      throw new HttpError(400, 'Todas las líneas deben clasificarse y las de inventario deben tener producto y cantidad');
+    // La cantidad base puede venir vacía cuando se deriva de la presentación
+    // del catálogo. La comprobación definitiva se hace después de normalizar
+    // las líneas; las líneas pendientes y sin producto siguen bloqueando aquí.
+    if (compra.capture_lines.some((l) => l.tipo_linea === 'pendiente' || (l.tipo_linea === 'inventario' && !l.product_id))) {
+      throw new HttpError(400, 'Todas las líneas deben clasificarse y las de inventario deben tener producto');
     }
     const origen = await tx.ubicaciones_fondos.findFirst({ where: { id: compra.origen_pago_id, negocio_id: negocioId, activo: true } });
     if (!origen) throw new HttpError(400, 'La ubicación de pago no es válida');
@@ -348,6 +369,9 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
         : null;
       return { ...l, cantidad_base: calculada ?? l.cantidad_base };
     });
+    if (lineasNormalizadas.some((l) => l.tipo_linea === 'inventario' && (!l.cantidad_base || Number(l.cantidad_base) <= 0))) {
+      throw new HttpError(400, 'Todas las líneas de inventario deben tener una cantidad base válida o una presentación que permita calcularla');
+    }
     for (const l of lineasNormalizadas) {
       if (l.cantidad_base !== compra.capture_lines.find((original) => original.id === l.id)?.cantidad_base) {
         await tx.purchase_capture_lines.update({ where: { id: l.id }, data: { cantidad_base: l.cantidad_base } });

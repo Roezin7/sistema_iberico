@@ -24,6 +24,10 @@ function totalDeLineas(lineas: Array<{ importe: number | null | undefined }>) {
   return Math.round((lineas.reduce((s, l) => s + (Number(l.importe) || 0), 0) + Number.EPSILON) * 100) / 100;
 }
 
+function normalizarNombreCompra(value: string) {
+  return value.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
 function finEposExclusivo(fecha: string) {
   const dia = new Date(`${fecha}T12:00:00-06:00`);
   dia.setUTCDate(dia.getUTCDate() + 1);
@@ -342,6 +346,32 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
   const [validacion, setValidacion] = useState<ValidacionCompra | null>(null);
   const [validando, setValidando] = useState(false);
   const [guardando, setGuardando] = useState(false);
+
+  // Si OCR/manual ya clasificó una línea como inventario pero no guardó el
+  // producto, seleccionamos únicamente una coincidencia exacta y única. No
+  // hacemos coincidencias difusas para no enviar una compra al producto errado.
+  useEffect(() => {
+    if (!productos.length) return;
+    setLineas((actuales) => {
+      let cambio = false;
+      const siguientes = actuales.map((linea) => {
+        if (linea.tipo_linea !== 'inventario' || linea.product_id != null) return linea;
+        const nombre = normalizarNombreCompra(linea.descripcion_fuente);
+        const coincidencias = productos.filter((producto) => normalizarNombreCompra(producto.nombre) === nombre);
+        if (coincidencias.length !== 1) return linea;
+        const producto = coincidencias[0];
+        cambio = true;
+        return {
+          ...linea,
+          product_id: producto.id,
+          unidad_fuente: linea.unidad_fuente || producto.unidad_compra || '',
+          unidad_compra: linea.unidad_compra || producto.unidad_compra || '',
+          contenido_compra: linea.contenido_compra || (producto.contenido_compra == null ? null : producto.contenido_compra),
+        };
+      });
+      return cambio ? siguientes : actuales;
+    });
+  }, [productos]);
 
   function editar(i: number, campo: string, valor: unknown) {
     setLineas((v) => v.map((l, idx) => {
