@@ -14,6 +14,7 @@
     "prisma:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
     "migrar:historico": "tsx scripts/migrar-historico.ts",
+    "fifo:repair-opening": "tsx scripts/reparar-costos-apertura-fifo.ts",
     "test": "vitest run"
   },
   "prisma": {

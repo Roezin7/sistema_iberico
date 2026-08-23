@@ -6,6 +6,24 @@ import {
   armarListaCompras,
   type ProductoFaltante,
 } from './logic.js';
+import { costoUnitarioBaseDesdeCatalogo, conversionAperturaDesdeCatalogo } from './apertura-fifo.js';
+
+describe('costo de apertura FIFO', () => {
+  it('normaliza el precio de presentación a la unidad base', () => {
+    expect(costoUnitarioBaseDesdeCatalogo({ costoPresentacion: 75, contenidoCompra: 500 })).toBe(0.15);
+    expect(costoUnitarioBaseDesdeCatalogo({ costoPresentacion: 649, contenidoCompra: 13600 })).toBeCloseTo(0.0477205882, 8);
+  });
+
+  it('aplica rendimiento útil sólo al costo consumible', () => {
+    expect(costoUnitarioBaseDesdeCatalogo({ costoPresentacion: 100, contenidoCompra: 1000, rendimientoUtil: 0.8 })).toBe(0.125);
+  });
+
+  it('convierte presentaciones de apertura a unidad base', () => {
+    expect(conversionAperturaDesdeCatalogo({ cantidadPresentaciones: 4, contenidoCompra: 1000 })).toBe(4000);
+    expect(conversionAperturaDesdeCatalogo({ cantidadPresentaciones: 5, contenidoCompra: 14, modo: 'normal' })).toBe(70);
+    expect(conversionAperturaDesdeCatalogo({ cantidadPresentaciones: 2, contenidoCompra: 1000, rendimientoUtil: 0.8, modo: 'normal' })).toBe(1600);
+  });
+});
 
 describe('totalBaseProducto', () => {
   it('cerveza por unidad en ambas zonas (factor 1): 30 en Local + 48 en Bodega = 78', () => {

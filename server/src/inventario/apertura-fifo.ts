@@ -5,6 +5,26 @@ import { HttpError } from '../middleware/error.js';
 type CriterioCosto = 'catalogo';
 type ModoApertura = 'normal' | 'historico_prueba';
 
+/**
+ * El catálogo conserva el precio y la presentación completa (botella, bolsa,
+ * caja, etc.). El libro FIFO siempre trabaja en la unidad base que consumen
+ * las recetas. La apertura debe convertir tanto el costo como la cantidad:
+ * 3 botellas de 700 ml entran como 2,100 ml a costo por ml.
+ */
+export function costoUnitarioBaseDesdeCatalogo(input: {
+  costoPresentacion: number;
+  contenidoCompra?: number | null;
+  rendimientoUtil?: number | null;
+}) {
+  const costo = Number(input.costoPresentacion);
+  const contenido = Number(input.contenidoCompra ?? 1);
+  const rendimiento = Number(input.rendimientoUtil ?? 1);
+  if (!Number.isFinite(costo) || costo < 0) return null;
+  if (!Number.isFinite(contenido) || contenido <= 0) return null;
+  if (!Number.isFinite(rendimiento) || rendimiento <= 0 || rendimiento > 1) return null;
+  return costo / (contenido * rendimiento);
+}
+
 // Correcciones confirmadas para reconstrucciones históricas. No alteran el
 // catálogo global ni la apertura de la semana activa; se aplican únicamente
 // al snapshot usado por el piloto histórico.
@@ -18,6 +38,25 @@ const CONTENIDO_HISTORICO_CONFIRMADO: Record<string, number> = {
 function round(value: number, digits = 6) {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
+}
+
+export function conversionAperturaDesdeCatalogo(input: {
+  cantidadPresentaciones: number;
+  factor?: number | null;
+  contenidoCompra?: number | null;
+  rendimientoUtil?: number | null;
+  modo?: ModoApertura;
+}) {
+  const cantidad = Number(input.cantidadPresentaciones);
+  const factor = Number(input.factor ?? 1);
+  const contenido = Number(input.contenidoCompra ?? 1);
+  const rendimiento = Number(input.rendimientoUtil ?? 1);
+  if (![cantidad, factor, contenido, rendimiento].every(Number.isFinite)) return null;
+  if (cantidad < 0 || factor <= 0 || contenido <= 0 || rendimiento <= 0 || rendimiento > 1) return null;
+  // El piloto histórico conserva el criterio que se usó al reconstruirlo;
+  // la operación normal sí descuenta el rendimiento útil del catálogo.
+  const factorBase = factor * contenido * (input.modo === 'historico_prueba' ? 1 : rendimiento);
+  return round(cantidad * factorBase, 4);
 }
 
 /**
@@ -80,7 +119,7 @@ export async function prepararAperturaFifo(input: {
     const productIds = [...new Set(lineas.map((l) => l.product_id.toString()))].map(BigInt);
     const productos = await tx.products.findMany({
       where: { negocio_id: input.negocioId, id: { in: productIds }, active: true },
-      select: { id: true, name: true, unit_cost: true, unidad_base: true, contenido_compra: true },
+      select: { id: true, name: true, unit_cost: true, unidad_base: true, contenido_compra: true, rendimiento_util: true },
     });
     const porId = new Map(productos.map((p) => [p.id.toString(), p]));
     const cantidades = new Map<string, number>();
@@ -124,19 +163,35 @@ export async function prepararAperturaFifo(input: {
         faltantesCosto.push({ product_id: Number(key), producto: producto?.name ?? `Producto ${key}`, cantidad });
         continue;
       }
-      // En la prueba histórica el snapshot conserva cantidades de compra
-      // (bolsas, botellas, paquetes). Se convierten a la unidad base del
-      // catálogo para que recetas en g/ml/pieza consuman correctamente. La
-      // apertura normal conserva el comportamiento histórico vigente.
+      // Tanto la prueba histórica como la operación normal guardan el conteo
+      // físico en presentaciones (botellas, bolsas, cajas). El FIFO debe
+      // recibir unidades base para que las recetas en g/ml/pieza consuman sin
+      // inflar costos ni producir excepciones falsas.
       const contenidoHistorico = CONTENIDO_HISTORICO_CONFIRMADO[key] ?? (producto?.contenido_compra == null ? null : Number(producto.contenido_compra));
-      const contenido = modo === 'historico_prueba' && producto?.unidad_base && contenidoHistorico != null
-        ? contenidoHistorico
-        : 1;
+      const contenido = producto?.unidad_base && contenidoHistorico != null ? contenidoHistorico : 1;
       if (!Number.isFinite(contenido) || contenido <= 0) {
         faltantesCosto.push({ product_id: Number(key), producto: producto?.name ?? `Producto ${key}`, cantidad });
         continue;
       }
-      lotes.push({ product_id: BigInt(key), cantidad: round(cantidad * contenido, 4), costo: round(costo / contenido, 6) });
+      const costoBase = modo === 'historico_prueba'
+        ? costo / contenido
+        : costoUnitarioBaseDesdeCatalogo({ costoPresentacion: costo, contenidoCompra: contenido, rendimientoUtil: producto?.rendimiento_util == null ? 1 : Number(producto.rendimiento_util) });
+      if (costoBase == null) {
+        faltantesCosto.push({ product_id: Number(key), producto: producto?.name ?? `Producto ${key}`, cantidad });
+        continue;
+      }
+      const cantidadBase = conversionAperturaDesdeCatalogo({
+        cantidadPresentaciones: cantidad,
+        factor: 1,
+        contenidoCompra: contenido,
+        rendimientoUtil: producto?.rendimiento_util == null ? 1 : Number(producto.rendimiento_util),
+        modo,
+      });
+      if (cantidadBase == null) {
+        faltantesCosto.push({ product_id: Number(key), producto: producto?.name ?? `Producto ${key}`, cantidad });
+        continue;
+      }
+      lotes.push({ product_id: BigInt(key), cantidad: cantidadBase, costo: round(costoBase, 6) });
     }
     if (faltantesCosto.length) {
       throw new HttpError(409, `Falta costo de catálogo para ${faltantesCosto.map((f) => f.producto).join(', ')}`);
