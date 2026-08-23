@@ -5,6 +5,7 @@ import { num } from '../lib/num.js';
 import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { costoLinea } from './costeo.js';
+import { consumirFIFO } from '../inventario/fifo.js';
 
 export const recetasRouter = Router();
 recetasRouter.use(requireAuth);
@@ -103,27 +104,79 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
     where: { negocio_id: req.auth!.negocioId, activo: true },
     include: {
       recetas: {
-        orderBy: { version: 'desc' }, take: 1,
+        where: { estado: 'validada' }, orderBy: { version: 'desc' }, take: 1,
         include: { lineas: { include: { products: { select: { name: true, unit_cost: true, unidad_base: true, contenido_compra: true, rendimiento_util: true } } } } },
       },
     },
   });
+
+  // El costo operativo vigente se calcula sobre los lotes FIFO abiertos. Es
+  // una lectura pura: no consume lotes ni modifica recetas. El costo estático
+  // del catálogo se conserva como referencia histórica/configuración.
+  const productIds = [...new Set(productos.flatMap((p) => p.recetas[0]?.estado === 'validada'
+    ? p.recetas[0].lineas.map((l) => l.product_id.toString())
+    : []))].map(BigInt);
+  const lotes = productIds.length ? await prisma.inventory_lots.findMany({
+    where: {
+      negocio_id: req.auth!.negocioId,
+      product_id: { in: productIds },
+      estado: 'abierto',
+      cantidad_restante: { gt: 0 },
+      fuente: { not: 'historico_prueba' },
+    },
+    orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
+    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
+  }) : [];
+  const lotesPorProducto = new Map<string, typeof lotes>();
+  for (const lote of lotes) {
+    const lista = lotesPorProducto.get(lote.product_id.toString()) ?? [];
+    lista.push(lote);
+    lotesPorProducto.set(lote.product_id.toString(), lista);
+  }
+
   const items = productos.map((p) => {
     const receta = p.recetas[0];
     const lineas = receta?.lineas.map((l) => {
       const costeo = costoLinea(Number(l.cantidad), l.unidad, { unitCost: num(l.products.unit_cost), unidadBase: l.products.unidad_base, contenidoCompra: num(l.products.contenido_compra), rendimientoUtil: num(l.products.rendimiento_util) });
-      return { producto: l.products.name, cantidad: Number(l.cantidad), unidad: l.unidad, cantidad_base: costeo.cantidadBase, unidad_base: costeo.unidadBase, costo_unitario_base: costeo.costoUnitarioBase, costo: costeo.costoEstimado, falta_configuracion: costeo.faltaConfiguracion, nota: l.nota };
+      const cantidadBase = costeo.cantidadBase;
+      const lotesProducto = lotesPorProducto.get(l.product_id.toString()) ?? [];
+      const fifo = cantidadBase != null && costeo.unidadBase
+        ? consumirFIFO(lotesProducto.map((lote) => ({
+          id: Number(lote.id), recibidoAt: lote.recibido_at.toISOString().slice(0, 10),
+          cantidadRestante: Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
+        })), cantidadBase)
+        : null;
+      const fifoDisponible = fifo != null && fifo.faltante <= 0.0001;
+      return {
+        producto: l.products.name, cantidad: Number(l.cantidad), unidad: l.unidad,
+        cantidad_base: cantidadBase, unidad_base: costeo.unidadBase,
+        costo_unitario_base: costeo.costoUnitarioBase, costo: costeo.costoEstimado,
+        costo_fifo: fifoDisponible ? fifo.costoTotal : null,
+        falta_fifo: fifo && !fifoDisponible ? `Inventario FIFO insuficiente: faltan ${fifo.faltante} ${costeo.unidadBase ?? ''}`.trim() : null,
+        falta_configuracion: costeo.faltaConfiguracion, nota: l.nota,
+      };
     }) ?? [];
     const costoCompleto = lineas.length > 0 && lineas.every((l) => l.costo != null && l.falta_configuracion.length === 0);
     const costo = costoCompleto ? lineas.reduce((total, l) => total + (l.costo ?? 0), 0) : null;
+    const costoFifoCompleto = receta?.estado === 'validada' && lineas.length > 0 && lineas.every((l) => l.costo_fifo != null && l.falta_configuracion.length === 0);
+    const costoFifo = costoFifoCompleto ? lineas.reduce((total, l) => total + (l.costo_fifo ?? 0), 0) : null;
     const precio = num(p.precio_venta);
     const margen = costo != null && precio != null ? precio - costo : null;
-    return { id: Number(p.id), nombre: p.nombre, seccion: seccionMenu(p.nombre), orden: ORDEN_NORMALIZADO.get(normalizarMenu(p.nombre)) ?? 9999, precio_venta: precio, costo_receta: costo, margen_unitario: margen, food_cost_pct: costo != null && precio && precio > 0 ? (costo / precio) * 100 : null, receta_id: receta ? Number(receta.id) : null, version: receta?.version ?? null, estado: receta?.estado ?? 'sin_receta', completa: !!receta && lineas.length > 0 && lineas.every((l) => l.falta_configuracion.length === 0), lineas };
+    const margenFifo = costoFifo != null && precio != null ? precio - costoFifo : null;
+    return {
+      id: Number(p.id), nombre: p.nombre, seccion: seccionMenu(p.nombre), orden: ORDEN_NORMALIZADO.get(normalizarMenu(p.nombre)) ?? 9999,
+      precio_venta: precio, costo_receta: costo, margen_unitario: margen,
+      food_cost_pct: costo != null && precio && precio > 0 ? (costo / precio) * 100 : null,
+      costo_fifo_actual: costoFifo, margen_fifo_actual: margenFifo,
+      food_cost_fifo_pct: costoFifo != null && precio && precio > 0 ? (costoFifo / precio) * 100 : null,
+      fifo_disponible: costoFifoCompleto, receta_id: receta ? Number(receta.id) : null, version: receta?.version ?? null,
+      estado: receta?.estado ?? 'sin_receta', completa: !!receta && lineas.length > 0 && lineas.every((l) => l.falta_configuracion.length === 0), lineas,
+    };
   }).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre, 'es'));
-  const costeados = items.filter((i) => i.costo_receta != null);
-  const priced = items.filter((i) => i.food_cost_pct != null);
+  const costeados = items.filter((i) => i.costo_fifo_actual != null || i.costo_receta != null);
+  const priced = items.filter((i) => i.food_cost_fifo_pct != null || i.food_cost_pct != null);
   const sections = [...new Set(items.map((i) => i.seccion))];
-  res.json({ fuente: 'Catálogo de insumos y receta vigente', moneda: 'MXN', generado_at: new Date().toISOString(), resumen: { productos: items.length, costeados: costeados.length, pendientes: items.length - costeados.length, food_cost_promedio: priced.length ? priced.reduce((s, i) => s + (i.food_cost_pct ?? 0), 0) / priced.length : null, margen_promedio: priced.length ? priced.reduce((s, i) => s + (i.margen_unitario ?? 0), 0) / priced.length : null }, secciones: sections, productos: items });
+  res.json({ fuente: 'Lotes FIFO abiertos + receta validada (costo actual)', moneda: 'MXN', generado_at: new Date().toISOString(), resumen: { productos: items.length, costeados: costeados.length, pendientes: items.length - costeados.length, food_cost_promedio: priced.length ? priced.reduce((s, i) => s + (i.food_cost_fifo_pct ?? i.food_cost_pct ?? 0), 0) / priced.length : null, margen_promedio: priced.length ? priced.reduce((s, i) => s + (i.margen_fifo_actual ?? i.margen_unitario ?? 0), 0) / priced.length : null }, secciones: sections, productos: items });
 }));
 
 /** GET /recetas — menú, versiones y líneas; solo datos del negocio autenticado. */

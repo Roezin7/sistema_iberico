@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   finanzas, epos, mxn, TIPOS, type Referencias, type Semana, type Resumen, type FilaCuadre,
   type Movimiento, type TipoMov, type DiaFila, type ConciliacionDiaria, type EposVenta, type CompraDetalle, type CompraDetalleLinea,
+  type CosteoVentaPreview,
 } from './api';
 import { Icono } from '../../icons';
 import { descargarCSV } from '../../csv';
@@ -258,6 +259,7 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
   const [eposNota, setEposNota] = useState('');
   const [eposCorte, setEposCorte] = useState<Awaited<ReturnType<typeof epos.syncDaily>> | null>(null);
   const [ventasDetalle, setVentasDetalle] = useState<EposVenta[]>([]);
+  const [costeoPreview, setCosteoPreview] = useState<Map<number, CosteoVentaPreview>>(new Map());
   const [verVentas, setVerVentas] = useState(false);
   const [cargandoVentas, setCargandoVentas] = useState(false);
   const [correccionManual, setCorreccionManual] = useState(false);
@@ -316,7 +318,17 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
     try {
       const desde = `${dia.fecha}T00:00:00-06:00`;
       const hasta = `${sumarDias(dia.fecha, 1)}T00:00:00-06:00`;
-      setVentasDetalle(await epos.ventas(desde, hasta));
+      const ventas = await epos.ventas(desde, hasta);
+      setVentasDetalle(ventas);
+      // Vista previa pura: calcula el costo con los lotes abiertos sin
+      // consumirlos. Así ventas muestra lo que ya está aplicado y lo que
+      // puede aplicarse, sin pedir una nueva validación de la receta.
+      try {
+        const preview = await epos.costeoPreview(desde, hasta);
+        setCosteoPreview(new Map(preview.detalle.map((detalle) => [detalle.venta_id, detalle])));
+      } catch {
+        setCosteoPreview(new Map());
+      }
       setVerVentas(true);
     } catch (e) { error(e instanceof Error ? e.message : 'No se pudo cargar el detalle de ventas'); }
     finally { setCargandoVentas(false); }
@@ -401,7 +413,7 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
           </div>
         )}
         {conciliacion && <CorteConfirmado evidencia={conciliacion} />}
-        {verVentas && <DetalleVentasEpos filas={ventasDetalle} />}
+        {verVentas && <DetalleVentasEpos filas={ventasDetalle} preview={costeoPreview} />}
       </>}
       <div className="dia-section muted">Compras y egresos del día</div>
       {(dia.gasto_itemizado > 0 || dia.compra_inventario > 0) && (
@@ -449,35 +461,46 @@ function CorteConfirmado({ evidencia }: { evidencia: ConciliacionDiaria }) {
   </details>;
 }
 
-function DetalleVentasEpos({ filas }: { filas: EposVenta[] }) {
-  const porProducto = new Map<string, { cantidad: number; venta: number; costo: number; costeadas: boolean; pendientes: number; excepciones: number }>();
+function DetalleVentasEpos({ filas, preview }: { filas: EposVenta[]; preview: Map<number, CosteoVentaPreview> }) {
+  const porProducto = new Map<string, { cantidad: number; venta: number; costo: number; aplicadas: number; disponibles: number; pendientes: number; excepciones: number }>();
   const porMetodo = new Map<string, number>();
   filas.forEach((fila) => {
-    const previo = porProducto.get(fila.producto) ?? { cantidad: 0, venta: 0, costo: 0, costeadas: true, pendientes: 0, excepciones: 0 };
-    const costo = fila.costo_fifo ?? 0;
-    const tieneCosto = fila.costo_fifo != null;
-    const esExcepcion = fila.costeo_estado === 'excepcion';
+    const previo = porProducto.get(fila.producto) ?? { cantidad: 0, venta: 0, costo: 0, aplicadas: 0, disponibles: 0, pendientes: 0, excepciones: 0 };
+    const vista = preview.get(fila.id);
+    const aplicado = fila.costo_fifo != null || fila.costeo_estado === 'costeada';
+    const disponible = !aplicado && vista?.estado === 'costeable';
+    const esExcepcion = fila.costeo_estado === 'excepcion' || vista?.estado === 'excepcion';
+    const esPendiente = !aplicado && !disponible && !esExcepcion;
+    const costo = fila.costo_fifo ?? (disponible ? vista?.costo_fifo ?? 0 : 0);
     porProducto.set(fila.producto, {
       cantidad: previo.cantidad + fila.cantidad,
       venta: previo.venta + (fila.venta_neta ?? fila.venta_bruta),
       costo: previo.costo + costo,
-      costeadas: previo.costeadas && tieneCosto,
-      pendientes: previo.pendientes + (!tieneCosto && !esExcepcion ? 1 : 0),
+      aplicadas: previo.aplicadas + (aplicado ? 1 : 0),
+      disponibles: previo.disponibles + (disponible ? 1 : 0),
+      pendientes: previo.pendientes + (esPendiente ? 1 : 0),
       excepciones: previo.excepciones + (esExcepcion ? 1 : 0),
     });
     porMetodo.set(fila.metodo_pago, (porMetodo.get(fila.metodo_pago) ?? 0) + (fila.venta_neta ?? fila.venta_bruta));
   });
   const productos = [...porProducto.entries()].sort((a, b) => b[1].venta - a[1].venta);
   if (!filas.length) return <div className="info-box info-box--compact"><strong>No hay ventas persistidas para este día.</strong><span className="muted">Importa Epos o revisa el rango de la semana.</span></div>;
-  const productosPendientes = productos.filter(([, dato]) => !dato.costeadas && dato.excepciones === 0).length;
+  const productosDisponibles = productos.filter(([, dato]) => dato.disponibles > 0).length;
+  const excepcionesReales = productos.filter(([, dato]) => dato.excepciones > 0).length;
   return <details className="ventas-detalle" open>
     <summary><strong>Detalle de ventas Epos</strong><span className="muted">{filas.length} líneas · {productos.length} productos</span></summary>
     <div className="ventas-detalle__summary">
       {[...porMetodo.entries()].map(([metodo, total]) => <span key={metodo}><small>{metodo}</small><strong>{mxn(total)}</strong></span>)}
     </div>
-    {productosPendientes > 0 && <div className="info-box info-box--compact"><strong>{productosPendientes} producto(s) aún no tienen costo FIFO.</strong><span className="muted">La venta está importada, pero todavía no se aplicó el consumo FIFO. Ejecuta “Revisar costo” y después “Aplicar costo FIFO” en Compras.</span></div>}
+    {productosDisponibles > 0 && <div className="info-box info-box--compact"><strong>{productosDisponibles} producto(s) tienen costo FIFO disponible.</strong><span className="muted">El costo se puede aplicar desde Compras; esta vista previa no descuenta inventario.</span></div>}
+    {excepcionesReales > 0 && <div className="info-box info-box--compact"><strong>{excepcionesReales} producto(s) tienen una excepción real.</strong><span className="muted">Sólo se muestran aquí productos sin mapeo Epos o con inventario FIFO insuficiente.</span></div>}
     <div className="ventas-detalle__table table-wrap"><table><thead><tr><th>Producto</th><th>Unidades</th><th>Venta</th><th>Costo FIFO</th><th>Estado</th></tr></thead><tbody>
-      {productos.map(([producto, dato]) => <tr key={producto}><td><strong>{producto}</strong></td><td>{dato.cantidad}</td><td>{mxn(dato.venta)}</td><td>{dato.costeadas ? mxn(dato.costo) : 'Pendiente'}</td><td>{dato.excepciones ? <span className="status status--danger">{dato.excepciones} excepción(es)</span> : dato.costeadas ? <span className="status status--ok">Costeado FIFO</span> : <span className="status status--warning">Pendiente de costeo{dato.pendientes > 1 ? ` (${dato.pendientes} ventas)` : ''}</span>}</td></tr>)}
+      {productos.map(([producto, dato]) => <tr key={producto}><td><strong>{producto}</strong></td><td>{dato.cantidad}</td><td>{mxn(dato.venta)}</td><td>{dato.costo > 0 ? mxn(dato.costo) : '—'}</td><td><div className="ventas-detalle__statuses">
+        {dato.aplicadas > 0 && <span className="status status--ok">Costo aplicado · {dato.aplicadas}</span>}
+        {dato.disponibles > 0 && <span className="status status--info">Costo disponible · {dato.disponibles}</span>}
+        {dato.excepciones > 0 && <span className="status status--danger">Excepción real · {dato.excepciones}</span>}
+        {dato.pendientes > 0 && <span className="status status--warning">Pendiente de configuración · {dato.pendientes}</span>}
+      </div></td></tr>)}
     </tbody></table></div>
   </details>;
 }

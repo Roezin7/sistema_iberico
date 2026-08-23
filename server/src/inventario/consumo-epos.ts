@@ -8,7 +8,7 @@ import { normalizarNombreEpos } from '../epos/mapeo-menu.js';
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
 interface PlanConsumo {
-  estado: 'costeable' | 'excepcion' | 'ya_costeada';
+  estado: 'costeable' | 'excepcion' | 'pendiente' | 'ya_costeada';
   error?: string;
   costoTotal: number;
   consumos: { productId: bigint; loteId: bigint; cantidad: number; costoUnitario: number; costoTotal: number }[];
@@ -81,8 +81,11 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
     : (await client.productos_menu.findMany({ where: { negocio_id: negocioId, activo: true }, include: includeReceta })).find((candidate) => normalizarNombreEpos(candidate.nombre) === normalizarNombreEpos(venta.producto_nombre)) ?? null);
   if (!menu) return { estado: 'excepcion', error: `Producto Epos sin mapeo: ${venta.producto_nombre}`, costoTotal: 0, consumos: [] };
   const receta = menu.recetas[0];
-  if (!receta) return { estado: 'excepcion', error: `Sin receta validada: ${menu.nombre}`, costoTotal: 0, consumos: [] };
-  if (!receta.lineas.length) return { estado: 'excepcion', error: `Receta sin ingredientes: ${menu.nombre}`, costoTotal: 0, consumos: [] };
+  // Una receta todavía no validada es un pendiente de configuración, no una
+  // excepción operativa. Las excepciones deben reservarse para un mapeo
+  // inexistente o una existencia FIFO realmente insuficiente.
+  if (!receta) return { estado: 'pendiente', error: `Receta validada pendiente: ${menu.nombre}`, costoTotal: 0, consumos: [] };
+  if (!receta.lineas.length) return { estado: 'pendiente', error: `Receta sin ingredientes: ${menu.nombre}`, costoTotal: 0, consumos: [] };
 
   const cantidadVendida = Number(venta.cantidad);
   if (!Number.isFinite(cantidadVendida) || cantidadVendida <= 0) return { estado: 'excepcion', error: `Cantidad inválida en venta: ${menu.nombre}`, costoTotal: 0, consumos: [] };
@@ -92,7 +95,7 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
     const unidadBase = linea.products.unidad_base;
     const cantidadBase = unidadBase ? convertirCantidad(Number(linea.cantidad) * cantidadVendida, linea.unidad, unidadBase) : null;
     if (cantidadBase == null) {
-      return { estado: 'excepcion', error: `Unidad incompatible en ${menu.nombre}: ${linea.products.name} (${linea.unidad} → ${unidadBase ?? 'sin unidad'})`, costoTotal: 0, consumos: [] };
+      return { estado: 'pendiente', error: `Unidad pendiente en ${menu.nombre}: ${linea.products.name} (${linea.unidad} → ${unidadBase ?? 'sin unidad'})`, costoTotal: 0, consumos: [] };
     }
     const lotes = context
       ? context.lotsByProduct.get(linea.product_id.toString()) ?? []
@@ -162,15 +165,28 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
   const from = new Date(input.from);
   const to = new Date(input.to);
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) throw new HttpError(400, 'Periodo inválido');
-  const ventas = await prisma.epos_ventas.findMany({ where: { negocio_id: input.negocioId, fecha: { gte: from, lt: to } }, orderBy: [{ fecha: 'asc' }, { id: 'asc' }] });
-  const resultado = { periodo: { from: input.from, to: input.to }, confirmar: input.confirmar, ventas: ventas.length, costeadas: 0, excepciones: 0, ya_costeadas: 0, costo_fifo: 0, detalle: [] as Record<string, unknown>[] };
+  // Igual que el detalle de ventas, el costeo debe respetar el periodo
+  // operativo de la importación. Así no se pierden tickets después de
+  // medianoche que pertenecen al cierre del día anterior.
+  const importaciones = await prisma.epos_importaciones.findMany({
+    where: { negocio_id: input.negocioId, periodo_desde: from, periodo_hasta: to },
+    select: { id: true },
+  });
+  const ventas = await prisma.epos_ventas.findMany({
+    where: {
+      negocio_id: input.negocioId,
+      ...(importaciones.length ? { importacion_id: { in: importaciones.map((row) => row.id) } } : { fecha: { gte: from, lt: to } }),
+    },
+    orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
+  });
+  const resultado = { periodo: { from: input.from, to: input.to }, confirmar: input.confirmar, ventas: ventas.length, costeadas: 0, excepciones: 0, pendientes: 0, ya_costeadas: 0, costo_fifo: 0, detalle: [] as Record<string, unknown>[] };
   const modo = input.modo ?? 'normal';
   const context = await cargarContexto(prisma, input.negocioId, ventas, modo);
   const planes = [] as { venta: typeof ventas[number]; plan: PlanConsumo }[];
   for (const venta of ventas) {
     const plan = await planificar(prisma, input.negocioId, venta, context);
     planes.push({ venta, plan });
-    if (plan.estado === 'costeable') aplicarPlanEnMemoria(context, plan);
+      if (plan.estado === 'costeable') aplicarPlanEnMemoria(context, plan);
   }
 
   if (input.confirmar) {
@@ -233,7 +249,8 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
   for (const { venta, plan } of planes) {
     if (plan.estado === 'costeable') { resultado.costeadas += 1; resultado.costo_fifo += plan.costoTotal; }
     else if (plan.estado === 'ya_costeada') resultado.ya_costeadas += 1;
-    else resultado.excepciones += 1;
+    else if (plan.estado === 'excepcion') resultado.excepciones += 1;
+    else resultado.pendientes += 1;
     resultado.detalle.push({ venta_id: Number(venta.id), producto: venta.producto_nombre, estado: plan.estado, costo_fifo: plan.costoTotal, error: plan.error ?? null });
   }
   resultado.costo_fifo = Number(resultado.costo_fifo.toFixed(4));

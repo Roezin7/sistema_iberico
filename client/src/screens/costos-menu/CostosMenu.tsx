@@ -11,6 +11,8 @@ type Linea = {
   unidad_base: string | null;
   costo_unitario_base: number | null;
   costo: number | null;
+  costo_fifo: number | null;
+  falta_fifo: string | null;
   falta_configuracion: string[];
   nota: string | null;
 };
@@ -24,6 +26,10 @@ type ProductoCosto = {
   costo_receta: number | null;
   margen_unitario: number | null;
   food_cost_pct: number | null;
+  costo_fifo_actual: number | null;
+  margen_fifo_actual: number | null;
+  food_cost_fifo_pct: number | null;
+  fifo_disponible: boolean;
   receta_id: number | null;
   version: number | null;
   estado: string;
@@ -93,7 +99,7 @@ export default function CostosMenu() {
             <Icono name="trending" size={24} className="ttl-icon" />
             <h1>Costos del menú</h1>
           </div>
-          <p className="muted">Costo teórico por receta vigente, ordenado como la carta.</p>
+          <p className="muted">Costo operativo FIFO por receta vigente, ordenado como la carta.</p>
         </div>
         <div className="menu-costos-actions">
           <button className="btn-secondary" onClick={() => window.print()}><Icono name="file" size={17} /> Imprimir / PDF</button>
@@ -108,7 +114,7 @@ export default function CostosMenu() {
             <div>
               <span className="eyebrow">Vista ejecutiva · {data.moneda}</span>
               <h2>Rentabilidad del menú</h2>
-              <p>Una lectura rápida de precio, costo de receta, margen y food cost para cada producto. Las cifras se basan en la receta y el catálogo actuales; el FIFO histórico se consulta por separado en Compras.</p>
+              <p>Una lectura rápida de precio, costo FIFO disponible, margen y food cost. El costo base de receta queda como referencia; el costo operativo usa los lotes FIFO abiertos y se actualiza al recibir nuevas compras.</p>
             </div>
             <div className="menu-costos-source"><Icono name="checkCircle" size={18} /> {data.fuente}</div>
           </section>
@@ -157,9 +163,9 @@ function ProductCard({ product }: { product: ProductoCosto }) {
         <strong className="menu-costos-card__price">{money(product.precio_venta)}</strong>
       </div>
       <div className="menu-costos-metrics">
-        <div className="menu-costos-metric"><span>Costo receta</span><strong>{money(product.costo_receta)}</strong></div>
-        <div className="menu-costos-metric"><span>Margen unitario</span><strong>{money(product.margen_unitario)}</strong></div>
-        <div className="menu-costos-metric"><span>Food cost</span><strong>{percent(product.food_cost_pct)}</strong></div>
+        <div className="menu-costos-metric"><span>Costo FIFO actual</span><strong>{money(product.costo_fifo_actual ?? product.costo_receta)}</strong><small>{product.fifo_disponible ? 'lotes disponibles' : 'sin lote suficiente'}</small></div>
+        <div className="menu-costos-metric"><span>Margen unitario</span><strong>{money(product.margen_fifo_actual ?? product.margen_unitario)}</strong><small>{product.costo_fifo_actual != null ? 'calculado con FIFO' : 'costo base'}</small></div>
+        <div className="menu-costos-metric"><span>Food cost</span><strong>{percent(product.food_cost_fifo_pct ?? product.food_cost_pct)}</strong><small>{product.costo_fifo_actual != null ? 'costo FIFO' : 'costo base'}</small></div>
       </div>
       <details className="menu-costos-detail">
         <summary>Ver desglose <Icono name="chevron" size={15} /></summary>
@@ -168,11 +174,12 @@ function ProductCard({ product }: { product: ProductoCosto }) {
             {product.lineas.map((line, index) => (
               <div className="menu-costos-line" key={`${line.producto}-${index}`}>
                 <span><strong>{line.producto}</strong><small>{line.cantidad} {line.unidad}{line.nota ? ` · ${line.nota}` : ''}</small></span>
-                <strong>{money(line.costo)}</strong>
+                <strong>{money(line.costo_fifo ?? line.costo)}</strong>
               </div>
             ))}
           </div>
         ) : <p className="muted">No hay receta vigente capturada.</p>}
+        {product.costo_fifo_actual == null && product.completa && <div className="menu-costos-warning"><Icono name="alertTriangle" size={15} /> El costo FIFO no está disponible para todos los ingredientes; se muestra el costo base de receta.</div>}
         {!product.completa && <div className="menu-costos-warning"><Icono name="alertTriangle" size={15} /> Configuración pendiente: {product.lineas.flatMap((line) => line.falta_configuracion).filter((value, index, list) => list.indexOf(value) === index).join(', ') || 'receta o insumos'}</div>}
       </details>
     </article>

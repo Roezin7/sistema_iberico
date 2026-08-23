@@ -82,6 +82,26 @@ export interface EposVenta {
   costeo_estado: string; costeo_error: string | null;
 }
 
+export interface CosteoVentaPreview {
+  venta_id: number;
+  producto: string;
+  estado: 'costeable' | 'excepcion' | 'pendiente' | 'ya_costeada' | string;
+  costo_fifo: number;
+  error: string | null;
+}
+
+export interface CosteoVentasPreview {
+  periodo: { from: string; to: string };
+  confirmar: false;
+  ventas: number;
+  costeadas: number;
+  excepciones: number;
+  pendientes: number;
+  ya_costeadas: number;
+  costo_fifo: number;
+  detalle: CosteoVentaPreview[];
+}
+
 export interface ConciliacionDiaria {
   id: number; fecha: string; estado: string;
   epos: { ventas: number; efectivo: number; tarjeta: number; otros: number };
@@ -141,6 +161,7 @@ export interface CompraDetalle {
 export const epos = {
   syncDaily: (fecha: string) => api<EposCorteDiario>('/epos/sync-daily', { method: 'POST', body: { fecha } }),
   ventas: (from: string, to: string) => api<EposVenta[]>(`/epos/sales?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  costeoPreview: (from: string, to: string) => api<CosteoVentasPreview>('/inventario/consumo-epos', { method: 'POST', body: { from, to, confirmar: false } }),
   conciliaciones: (semanaId: number) => api<ConciliacionDiaria[]>(`/epos/conciliaciones-diarias?semana_id=${semanaId}`),
   confirmarConciliacion: (body: {
     semana_id: number; fecha: string;

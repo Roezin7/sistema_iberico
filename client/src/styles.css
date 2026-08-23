@@ -295,6 +295,10 @@ table th {
   background: var(--warning-bg);
   color: var(--warning);
 }
+.status--info {
+  background: var(--info-bg, rgba(56, 189, 248, .12));
+  color: var(--info, #38bdf8);
+}
 .status--cargando {
   background: var(--surface-2);
 }
@@ -1213,6 +1217,8 @@ select:disabled {
 .ventas-detalle__summary small { color: var(--ink-3); }
 .ventas-detalle__table { padding: 0 .8rem .8rem; }
 .ventas-detalle__table table { min-width: 620px; }
+.ventas-detalle__statuses { display: flex; flex-wrap: wrap; gap: .35rem; }
+.ventas-detalle__statuses .status { padding: .3rem .5rem; font-size: .78rem; white-space: nowrap; }
 
 /* ---------- 11. TAREAS ---------- */
 .task-row {
