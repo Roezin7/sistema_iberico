@@ -127,6 +127,7 @@
 .epos-evidence__methods { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.55rem; }
 .epos-evidence__methods span { display: grid; gap: 0.12rem; }
 .epos-evidence__note { margin: 0.65rem 0 0; }
+.epos-metodo-mixto__actions { display: flex; gap: .5rem; margin-top: .55rem; flex-wrap: wrap; }
 .text-danger { color: var(--danger); }
 .exception-list { border-top: 1px solid var(--border); padding-top: 0.8rem; }
 .exception-list h3 { margin: 0 0 0.5rem; font-size: 0.95rem; }

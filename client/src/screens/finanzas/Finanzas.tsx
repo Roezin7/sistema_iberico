@@ -32,6 +32,28 @@ function esDiaOperativo(fecha: string) {
   return weekday === 0 || weekday === 5 || weekday === 6;
 }
 
+type MetodoMixto = 'cash' | 'card';
+
+function claveMetodoEpos(metodo: string) {
+  return metodo.trim().toLowerCase().replace(/[\s_-]/g, '');
+}
+
+function esMetodoMixtoEpos(metodo: string) {
+  const clave = claveMetodoEpos(metodo);
+  return clave.includes('cash') && clave.includes('card');
+}
+
+function resumirMetodosEpos(metodos: { metodo: string; total: number }[]) {
+  return metodos.reduce((resumen, item) => {
+    const clave = claveMetodoEpos(item.metodo);
+    if (clave === 'cash') resumen.efectivo += item.total;
+    else if (clave === 'card') resumen.tarjeta += item.total;
+    else if (esMetodoMixtoEpos(item.metodo)) resumen.mixto += item.total;
+    else resumen.noReconocido += item.total;
+    return resumen;
+  }, { efectivo: 0, tarjeta: 0, mixto: 0, noReconocido: 0 });
+}
+
 export default function Finanzas() {
   const [ref, setRef] = useState<Referencias | null>(null);
   const [saldosFijados, setSaldosFijados] = useState<boolean | null>(null);
@@ -258,6 +280,8 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
   const [consultandoEpos, setConsultandoEpos] = useState(false);
   const [eposNota, setEposNota] = useState('');
   const [eposCorte, setEposCorte] = useState<Awaited<ReturnType<typeof epos.syncDaily>> | null>(null);
+  const [eposMetodos, setEposMetodos] = useState({ efectivo: 0, tarjeta: 0, mixto: 0, noReconocido: 0 });
+  const [eposMetodoMixto, setEposMetodoMixto] = useState<MetodoMixto | null>(null);
   const [ventasDetalle, setVentasDetalle] = useState<EposVenta[]>([]);
   const [costeoPreview, setCosteoPreview] = useState<Map<number, CosteoVentaPreview>>(new Map());
   const [verVentas, setVerVentas] = useState(false);
@@ -298,15 +322,18 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
   async function consultarEpos() {
     setConsultandoEpos(true); setEposNota('');
     try {
-    const corte = await epos.syncDaily(dia.fecha);
+      const corte = await epos.syncDaily(dia.fecha);
+      const metodos = resumirMetodosEpos(corte.bookkeeping.metodos_pago);
       setEposCorte(corte);
-      const metodo = (nombre: string) => corte.bookkeeping.metodos_pago.find((item) => item.metodo.toLowerCase() === nombre.toLowerCase())?.total ?? 0;
-      const otros = corte.bookkeeping.metodos_pago
-        .filter((item) => !['cash', 'card'].includes(item.metodo.toLowerCase()))
-        .reduce((total, item) => total + item.total, 0);
-      setEfectivo(String(metodo('Cash')));
-      setTarjeta(String(metodo('Card')));
-      setEposNota(otros ? `Importado: ${mxn(corte.bookkeeping.ventas)} · otros métodos ${mxn(otros)} · revisa y confirma` : `Importado: ${mxn(corte.bookkeeping.ventas)} · revisa y confirma`);
+      setEposMetodos(metodos);
+      setEposMetodoMixto(null);
+      setEfectivo(String(metodos.efectivo));
+      setTarjeta(String(metodos.tarjeta));
+      const avisos = [
+        metodos.mixto > 0 ? `${mxn(metodos.mixto)} aparece como Card/Cash y debe clasificarse` : '',
+        metodos.noReconocido > 0 ? `${mxn(metodos.noReconocido)} con método Epos no reconocido` : '',
+      ].filter(Boolean);
+      setEposNota(`Importado: ${mxn(corte.bookkeeping.ventas)} · ${avisos.length ? `${avisos.join(' · ')} · ` : ''}revisa y confirma`);
       await cargarVentasDetalle();
     } catch (e) {
       error(e instanceof Error ? e.message : 'No se pudo consultar Epos');
@@ -336,6 +363,10 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
 
   async function confirmarCorte() {
     if (!eposCorte) return;
+    if (eposMetodos.mixto > 0 && !eposMetodoMixto) {
+      setEposNota(`Clasifica ${mxn(eposMetodos.mixto)} de Card/Cash como efectivo o tarjeta antes de confirmar.`);
+      return;
+    }
     try {
       // La confirmación es el punto único que convierte la revisión del corte
       // en el registro diario financiero. El botón manual sigue disponible
@@ -344,22 +375,24 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
         fecha: dia.fecha, venta_efectivo: n(efectivo), venta_tarjeta: n(tarjeta),
         propina_tarjeta: n(propina), gasto_efectivo: n(gasto), sueldos: n(sueldos),
       });
-      const otrosEpos = eposCorte.bookkeeping.metodos_pago
-        .filter((m) => !['cash', 'card'].includes(m.metodo.toLowerCase()))
-        .reduce((a, m) => a + m.total, 0);
+      const efectivoEpos = eposMetodos.efectivo + (eposMetodoMixto === 'cash' ? eposMetodos.mixto : 0);
+      const tarjetaEpos = eposMetodos.tarjeta + (eposMetodoMixto === 'card' ? eposMetodos.mixto : 0);
+      const noReconocidoEpos = eposMetodos.noReconocido;
+      const clasificacion = eposMetodos.mixto > 0 ? `Card/Cash clasificado como ${eposMetodoMixto === 'cash' ? 'efectivo' : 'tarjeta'}` : '';
+      const notaFinal = [eposNota, clasificacion, noReconocidoEpos > 0 ? `Método Epos no reconocido: ${mxn(noReconocidoEpos)}` : ''].filter(Boolean).join(' · ');
       await epos.confirmarConciliacion({
         semana_id: semana.id,
         fecha: dia.fecha,
         epos: {
           ventas: eposCorte.bookkeeping.ventas,
-          efectivo: eposCorte.bookkeeping.metodos_pago.find((m) => m.metodo.toLowerCase() === 'cash')?.total ?? 0,
-          tarjeta: eposCorte.bookkeeping.metodos_pago.find((m) => m.metodo.toLowerCase() === 'card')?.total ?? 0,
-          otros: eposCorte.bookkeeping.metodos_pago.filter((m) => !['cash', 'card'].includes(m.metodo.toLowerCase())).reduce((a, m) => a + m.total, 0),
+          efectivo: efectivoEpos,
+          tarjeta: tarjetaEpos,
+          otros: noReconocidoEpos,
         },
-        confirmado: { ventas: n(efectivo) + n(tarjeta) + n(propina) + otrosEpos, efectivo: n(efectivo), tarjeta: n(tarjeta), otros: otrosEpos },
+        confirmado: { ventas: n(efectivo) + n(tarjeta) + n(propina), efectivo: n(efectivo), tarjeta: n(tarjeta), otros: noReconocidoEpos },
         cuentas_abiertas: n(cuentasAbiertas),
         excepciones: [],
-        notas: eposNota || undefined,
+        notas: notaFinal || undefined,
       });
       setEposNota('Corte confirmado y guardado como evidencia.');
       setEposCorte(null);
@@ -388,8 +421,9 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
         <div className="dia-inputs">
           {campo('💵', 'Efectivo', efectivo, setEfectivo, !abierta || (!!eposCorte && !correccionManual) || (!!corteConfirmado && !correccionManual))}
           {campo('💳', 'Tarjeta', tarjeta, setTarjeta, !abierta || (!!eposCorte && !correccionManual) || (!!corteConfirmado && !correccionManual))}
-          {campo('🎁', 'Propina', propina, setPropina, !abierta || (!!eposCorte && !correccionManual) || (!!corteConfirmado && !correccionManual))}
+          {campo('🎁', 'Propina (manual)', propina, setPropina, !abierta || (!!corteConfirmado && !correccionManual))}
         </div>
+        <small className="muted">La propina no viene de Epos; captúrala aquí sólo si aparece en el corte de la terminal.</small>
         {abierta && (
           <div style={{ marginTop: '0.6rem' }}>
             <button
@@ -405,15 +439,24 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
             {eposNota && <small className="muted" style={{ display: 'block', marginTop: '0.4rem' }}>{eposNota}</small>}
             {eposCorte && <button className="link-btn" style={{ marginTop: '0.45rem' }} onClick={() => setCorreccionManual((v) => !v)}>{correccionManual ? 'Ocultar corrección manual' : 'Corregir manualmente'}</button>}
             {eposCorte && <>
+              {eposMetodos.mixto > 0 && <div className="info-box info-box--compact epos-metodo-mixto">
+                <strong>Clasifica el importe Card/Cash</strong>
+                <span className="muted">Epos no indica si estos {mxn(eposMetodos.mixto)} fueron efectivo o tarjeta.</span>
+                <div className="epos-metodo-mixto__actions">
+                  <button className={eposMetodoMixto === 'cash' ? 'btn-primary' : 'btn-secondary'} onClick={() => { setEposMetodoMixto('cash'); setEfectivo(String(eposMetodos.efectivo + eposMetodos.mixto)); setTarjeta(String(eposMetodos.tarjeta)); }}>Efectivo</button>
+                  <button className={eposMetodoMixto === 'card' ? 'btn-primary' : 'btn-secondary'} onClick={() => { setEposMetodoMixto('card'); setEfectivo(String(eposMetodos.efectivo)); setTarjeta(String(eposMetodos.tarjeta + eposMetodos.mixto)); }}>Tarjeta</button>
+                </div>
+              </div>}
+              {eposMetodos.noReconocido > 0 && <div className="info-box info-box--compact"><strong>Hay métodos Epos no reconocidos por {mxn(eposMetodos.noReconocido)}.</strong><span className="muted">Revisa el origen antes de confirmar; no se asignarán silenciosamente a efectivo o tarjeta.</span></div>}
               <label className="inline-field">Cuentas abiertas al cierre
                 <input type="number" min="0" step="1" value={cuentasAbiertas} onChange={(e) => setCuentasAbiertas(e.target.value)} />
               </label>
-              <button className="btn-primary" style={{ marginTop: '0.55rem' }} onClick={() => void confirmarCorte()}>Confirmar corte y guardar</button>
+              <button className="btn-primary" style={{ marginTop: '0.55rem' }} disabled={eposMetodos.mixto > 0 && !eposMetodoMixto} onClick={() => void confirmarCorte()}>Confirmar corte y guardar</button>
             </>}
           </div>
         )}
-        {conciliacion && <CorteConfirmado evidencia={conciliacion} />}
-        {verVentas && <DetalleVentasEpos filas={ventasDetalle} preview={costeoPreview} />}
+        {conciliacion && <CorteConfirmado evidencia={conciliacion} propina={n(propina)} />}
+        {verVentas && <DetalleVentasEpos filas={ventasDetalle} preview={costeoPreview} metodoMixto={eposMetodoMixto} />}
       </>}
       <div className="dia-section muted">Compras y egresos del día</div>
       {(dia.gasto_itemizado > 0 || dia.compra_inventario > 0) && (
@@ -436,8 +479,10 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
   );
 }
 
-function CorteConfirmado({ evidencia }: { evidencia: ConciliacionDiaria }) {
-  const diferencia = evidencia.confirmado.ventas - evidencia.epos.ventas;
+function CorteConfirmado({ evidencia, propina }: { evidencia: ConciliacionDiaria; propina: number }) {
+  // Epos no reporta la propina como venta. La excluimos de la comparación para
+  // no marcar una diferencia falsa cuando el corte sí la capturó manualmente.
+  const diferencia = evidencia.confirmado.ventas - propina - evidencia.epos.ventas;
   const dinero = (value: number) => mxn(value);
   return <details className="epos-evidence">
     <summary><strong>Evidencia del corte confirmado</strong><span className="muted">{evidencia.confirmado_at ? new Date(evidencia.confirmado_at).toLocaleString('es-MX') : 'sin sello de hora'}</span></summary>
@@ -451,17 +496,17 @@ function CorteConfirmado({ evidencia }: { evidencia: ConciliacionDiaria }) {
     <div className="epos-evidence__methods">
       <span><small>Epos · efectivo</small><strong>{dinero(evidencia.epos.efectivo)}</strong></span>
       <span><small>Epos · tarjeta</small><strong>{dinero(evidencia.epos.tarjeta)}</strong></span>
-      <span><small>Epos · otros</small><strong>{dinero(evidencia.epos.otros)}</strong></span>
+      <span><small>Epos · no clasificado</small><strong>{dinero(evidencia.epos.otros)}</strong></span>
       <span><small>Confirmado · efectivo</small><strong>{dinero(evidencia.confirmado.efectivo)}</strong></span>
       <span><small>Confirmado · tarjeta</small><strong>{dinero(evidencia.confirmado.tarjeta)}</strong></span>
-      <span><small>Confirmado · otros</small><strong>{dinero(evidencia.confirmado.otros)}</strong></span>
+      <span><small>Confirmado · no clasificado</small><strong>{dinero(evidencia.confirmado.otros)}</strong></span>
     </div>
     {evidencia.notas && <p className="muted epos-evidence__note">{evidencia.notas}</p>}
     {evidencia.excepciones.length > 0 && <p className="text-danger epos-evidence__note">{evidencia.excepciones.length} excepción(es) registrada(s) para revisión.</p>}
   </details>;
 }
 
-function DetalleVentasEpos({ filas, preview }: { filas: EposVenta[]; preview: Map<number, CosteoVentaPreview> }) {
+function DetalleVentasEpos({ filas, preview, metodoMixto }: { filas: EposVenta[]; preview: Map<number, CosteoVentaPreview>; metodoMixto: MetodoMixto | null }) {
   const porProducto = new Map<string, { cantidad: number; venta: number; costo: number; aplicadas: number; disponibles: number; pendientes: number; excepciones: number }>();
   const porMetodo = new Map<string, number>();
   filas.forEach((fila) => {
@@ -484,7 +529,10 @@ function DetalleVentasEpos({ filas, preview }: { filas: EposVenta[]; preview: Ma
       pendientes: previo.pendientes + (esPendiente ? 1 : 0),
       excepciones: previo.excepciones + (esExcepcion ? 1 : 0),
     });
-    porMetodo.set(fila.metodo_pago, (porMetodo.get(fila.metodo_pago) ?? 0) + (fila.venta_neta ?? fila.venta_bruta));
+    const metodoVisible = esMetodoMixtoEpos(fila.metodo_pago)
+      ? (metodoMixto === 'cash' ? 'Efectivo' : metodoMixto === 'card' ? 'Tarjeta' : 'Card/Cash · clasificar')
+      : fila.metodo_pago;
+    porMetodo.set(metodoVisible, (porMetodo.get(metodoVisible) ?? 0) + (fila.venta_neta ?? fila.venta_bruta));
   });
   const productos = [...porProducto.entries()].sort((a, b) => b[1].venta - a[1].venta);
   if (!filas.length) return <div className="info-box info-box--compact"><strong>No hay ventas persistidas para este día.</strong><span className="muted">Importa Epos o revisa el rango de la semana.</span></div>;
