@@ -86,7 +86,8 @@ export interface ConciliacionDiaria {
   id: number; fecha: string; estado: string;
   epos: { ventas: number; efectivo: number; tarjeta: number; otros: number };
   confirmado: { ventas: number; efectivo: number; tarjeta: number; otros: number };
-  cuentas_abiertas: number; excepciones: unknown[]; notas: string | null; confirmado_at: string | null;
+  cuentas_abiertas: number; excepciones: unknown[]; notas: string | null;
+  usuario_id: number | null; confirmado_at: string | null;
 }
 
 export const finanzas = {
@@ -112,7 +113,8 @@ export const finanzas = {
   editarCompra: (id: number, body: Record<string, unknown>) => api(`/inventario/compras/${id}`, { method: 'PATCH', body }),
   borrarMovimiento: (id: number) => api(`/finanzas/movimientos/${id}`, { method: 'DELETE' }),
   crearArqueo: (body: Record<string, unknown>) => api('/finanzas/arqueos', { method: 'POST', body }),
-  cerrar: (id: number) => api<Resumen>(`/finanzas/semanas/${id}/cerrar`, { method: 'POST', body: {} }),
+  cerrar: (id: number, opciones?: { confirmar_excepciones?: boolean }) =>
+    api<Resumen>(`/finanzas/semanas/${id}/cerrar`, { method: 'POST', body: opciones ?? {} }),
   reabrir: (id: number) => api<Semana>(`/finanzas/semanas/${id}/reabrir`, { method: 'POST', body: {} }),
 };
 
@@ -128,7 +130,7 @@ export interface CorreccionInventario {
 
 export interface CompraDetalleLinea {
   id: number | null; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente';
-  descripcion_fuente: string; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null;
+  descripcion_fuente: string; cantidad_fuente?: number | null; unidad_fuente?: string | null; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null;
   costo_unitario: number | null; importe: number; confianza: number | null; notas: string | null;
 }
 export interface CompraDetalle {

@@ -826,9 +826,33 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
 // ---------------------------------------------------------------------------
 //  Cierre de semana
 // ---------------------------------------------------------------------------
-export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaId: bigint) {
+export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaId: bigint, confirmarExcepciones = false) {
   const semana = await getSemanaAbierta(negocioId, semanaId);
   if (semana.estado === 'cerrada') throw new HttpError(409, 'La semana ya está cerrada');
+
+  // El cierre no debe ocultar ventas que no pudieron convertirse en consumo
+  // FIFO. Permitimos continuar únicamente después de una confirmación explícita
+  // para que la excepción quede visible y no se interprete como margen real.
+  const finExclusivo = new Date(semana.fecha_fin);
+  finExclusivo.setUTCDate(finExclusivo.getUTCDate() + 1);
+  const excepcionesCosteo = await prisma.epos_ventas.findMany({
+    where: {
+      negocio_id: negocioId,
+      fecha: { gte: semana.fecha_inicio, lt: finExclusivo },
+      costeo_estado: 'excepcion',
+    },
+    select: { id: true, producto_nombre: true, cantidad: true, costeo_error: true },
+    orderBy: { fecha: 'asc' },
+    take: 100,
+  });
+  if (excepcionesCosteo.length && !confirmarExcepciones) {
+    throw new HttpError(409, `Hay ${excepcionesCosteo.length} excepciones de costeo pendientes antes de cerrar la semana`, {
+      tipo: 'excepciones_costeo',
+      total: excepcionesCosteo.length,
+      ventas: excepcionesCosteo.map((fila) => ({ id: Number(fila.id), producto: fila.producto_nombre, cantidad: Number(fila.cantidad), error: fila.costeo_error })),
+      instruccion: 'Revisa el mapeo y las recetas; si aceptas cerrar, confirma explícitamente las excepciones.',
+    });
+  }
 
   // La semana debe tener una apertura congelada antes de registrar su cierre.
   await asegurarInventarioSemanal(negocioId, semanaId);

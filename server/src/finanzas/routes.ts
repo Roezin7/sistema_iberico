@@ -49,7 +49,8 @@ finanzasRouter.post('/semanas', asyncHandler(async (req, res) => {
 
 finanzasRouter.post('/semanas/:id/cerrar', asyncHandler(async (req, res) => {
   const semanaId = BigInt(id.parse(req.params.id));
-  res.json(await svc.cerrarSemana(req.auth!.negocioId, req.auth!.usuarioId, semanaId));
+  const body = z.object({ confirmar_excepciones: z.boolean().optional().default(false) }).parse(req.body ?? {});
+  res.json(await svc.cerrarSemana(req.auth!.negocioId, req.auth!.usuarioId, semanaId, body.confirmar_excepciones));
 }));
 
 finanzasRouter.post('/semanas/:id/reabrir', asyncHandler(async (req, res) => {

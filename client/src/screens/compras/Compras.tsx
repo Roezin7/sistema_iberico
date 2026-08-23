@@ -4,8 +4,9 @@ import { api } from '../../api';
 import { Icono } from '../../icons';
 import { useAuth } from '../../auth';
 import { Cargando } from '../../ui/Cargando';
+import { cantidadBaseDesdePresentacion, conversionCompraTexto, costoBase, formatoCantidad, presentacionTexto } from './fifo-form';
 
-interface Producto { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null }
+interface Producto { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null; rendimiento_util?: number | null }
 interface Lote { id: number; producto: string; unidad_base: string | null; recibido_at: string; cantidad_inicial: number; cantidad_restante: number; costo_unitario: number; estado: string; ticket_ref: string | null }
 interface ConsumoResult { confirmar: boolean; ventas: number; costeadas: number; excepciones: number; ya_costeadas: number; costo_fifo: number; detalle: { venta_id: number; producto: string; estado: string; costo_fifo: number; error: string | null }[] }
 interface ExceptionRow { venta_id: number; fecha: string; producto: string; cantidad: number; error: string }
@@ -33,7 +34,6 @@ export default function Compras() {
   const volverAFinanzas = parametros.get('return') === 'finanzas';
   const [tab, setTab] = useState<'tickets' | 'lotes' | 'epos' | 'pendientes'>('tickets');
   const [productos, setProductos] = useState<Producto[]>([]);
-  const [ubicaciones, setUbicaciones] = useState<RefCompra['ubicaciones']>([]);
   const [lotes, setLotes] = useState<Lote[]>([]);
   const [mensaje, setMensaje] = useState('');
   const [from, setFrom] = useState(hoy);
@@ -68,8 +68,8 @@ export default function Compras() {
   async function cargar() {
     setCargandoCompras(true);
     try {
-      const [p, l, pend, tickets, refs] = await Promise.all([api<Producto[]>('/catalogo/products'), api<Lote[]>('/inventario/lotes'), api<Pendiente[]>('/inventario/compras/pendientes'), api<CompraDia[]>('/inventario/compras'), api<RefCompra>('/inventario/compras/referencias')]);
-      setProductos(p); setLotes(l); setPendientes(pend); setCompras(tickets); setUbicaciones(refs.ubicaciones);
+      const [p, l, pend, tickets] = await Promise.all([api<Producto[]>('/catalogo/products'), api<Lote[]>('/inventario/lotes'), api<Pendiente[]>('/inventario/compras/pendientes'), api<CompraDia[]>('/inventario/compras')]);
+      setProductos(p); setLotes(l); setPendientes(pend); setCompras(tickets);
     } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo cargar el inventario.'); }
     finally { setCargandoCompras(false); }
   }
@@ -108,7 +108,7 @@ export default function Compras() {
     {esAdmin && tab === 'tickets' && <Tickets compras={comprasSemana} cargando={cargandoCompras} />}
     {esAdmin && tab === 'lotes' && <Lotes lotes={lotesSemana} />}
     {esAdmin && tab === 'epos' && <EposPanel from={from} setFrom={setFrom} to={to} setTo={setTo} preview={preview} consultando={consultando} consultar={consultarEpos} />}
-    {esAdmin && tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={productosOrdenados} ubicaciones={ubicaciones} onChange={() => void cargar()} />}
+    {esAdmin && tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={productosOrdenados} onChange={() => void cargar()} />}
   </div>;
 }
 
@@ -155,7 +155,26 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
     finally { setLeyendo(false); }
   }
 
-  function editar(i: number, campo: keyof LineaRapida, valor: string | number | null) { setLineas((v) => v.map((l, idx) => idx === i ? { ...l, [campo]: valor } : l)); }
+  function editar(i: number, campo: keyof LineaRapida, valor: string | number | null) {
+    setLineas((v) => v.map((l, idx) => {
+      if (idx !== i) return l;
+      const siguiente = { ...l, [campo]: valor };
+      if (campo === 'product_id') {
+        const producto = refs?.productos.find((p) => p.id === Number(valor));
+        if (producto) {
+          siguiente.unidad_fuente = producto.unidad_compra ?? siguiente.unidad_fuente;
+          siguiente.unidad_compra = producto.unidad_compra ?? siguiente.unidad_compra;
+          siguiente.contenido_compra = producto.contenido_compra == null ? siguiente.contenido_compra : String(producto.contenido_compra);
+        }
+      }
+      if (campo === 'cantidad_fuente' || campo === 'unidad_fuente' || campo === 'unidad_compra' || campo === 'contenido_compra' || campo === 'product_id') {
+        const producto = refs?.productos.find((p) => p.id === Number(siguiente.product_id));
+        const base = cantidadBaseDesdePresentacion({ cantidadCompra: Number(siguiente.cantidad_fuente), unidadCompra: siguiente.unidad_fuente || siguiente.unidad_compra, contenidoPorPresentacion: Number(siguiente.contenido_compra), unidadBase: producto?.unidad_base, rendimientoUtil: producto?.rendimiento_util });
+        if (base != null) siguiente.cantidad_base = String(base);
+      }
+      return siguiente;
+    }));
+  }
   async function guardar() {
     const validas = lineas.filter((l) => l.descripcion_fuente.trim() && Number(l.importe) >= 0);
     if (!fecha || (modo === 'ticket' && (!total.trim() || !origen || !Number.isFinite(Number(total)))) || !validas.length) { setMensaje(modo === 'orden_manuscrita' ? 'Completa fecha y al menos una línea. El total y el pago pueden definirse durante la revisión.' : 'Completa fecha, total, forma de pago y al menos una línea.'); return; }
@@ -174,7 +193,26 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
     {foto && <img className="ticket-preview" src={foto.data} alt="Vista previa del ticket" />}
     {mensaje && <div className="info-box" role="status">{mensaje}</div>}
     <div className="quick-purchase__section-label">Datos de la fuente</div><div className="form-grid form-grid--three"><label>Fecha<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></label><label>Proveedor<input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej. Costco o proveedor local" /></label><label>Ticket / folio<input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="Opcional" /></label><label>Total {modo === 'orden_manuscrita' && '(opcional)'}<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde {modo === 'orden_manuscrita' && '(se define al confirmar)'}<select value={origen} onChange={(e) => setOrigen(e.target.value)} disabled={cargandoRefs}><option value="">{cargandoRefs ? 'Cargando…' : 'Seleccionar…'}</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
-    <div className="quick-lines">{lineas.map((l, i) => <div className="quick-line" key={i}><div className="quick-line__head"><strong>Línea {i + 1}</strong>{l.confianza != null && <span className="muted">sugerencia {Math.round(l.confianza * 100)}%</span>}</div><input placeholder="Descripción de la fuente" value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} /><select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value as LineaRapida['tipo_linea'])}><option value="pendiente">Pendiente de clasificar</option><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option></select>{l.tipo_linea === 'inventario' && <select value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Producto…</option>{refs?.productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {p.unidad_base ?? 'sin unidad'}</option>)}</select>}<div className="quick-line__numbers"><input type="number" min="0" step="any" placeholder={modo === 'orden_manuscrita' ? 'Cantidad fuente' : 'Cantidad base'} value={l.cantidad_fuente} onChange={(e) => editar(i, 'cantidad_fuente', e.target.value)} /><input placeholder={modo === 'orden_manuscrita' ? 'Unidad (kg, pz…)' : 'Unidad de compra'} value={modo === 'orden_manuscrita' ? l.unidad_fuente : l.unidad_compra} onChange={(e) => editar(i, modo === 'orden_manuscrita' ? 'unidad_fuente' : 'unidad_compra', e.target.value)} /><input type="number" min="0" step="any" placeholder={modo === 'orden_manuscrita' ? 'Cantidad base convertida' : 'Cantidad base'} value={l.cantidad_base} onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /><input type="number" min="0" step="0.01" placeholder="Importe" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></div>{lineas.length > 1 && <button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))}>Quitar</button>}</div>)}</div>
+    <div className="quick-lines">{lineas.map((l, i) => {
+      const producto = refs?.productos.find((p) => p.id === l.product_id);
+      const cantidadCalculada = cantidadBaseDesdePresentacion({ cantidadCompra: Number(l.cantidad_fuente), unidadCompra: l.unidad_fuente || l.unidad_compra, contenidoPorPresentacion: Number(l.contenido_compra), unidadBase: producto?.unidad_base, rendimientoUtil: producto?.rendimiento_util });
+      const costoCalculado = costoBase(Number(l.importe), cantidadCalculada ?? Number(l.cantidad_base));
+      return <div className="quick-line" key={i}><div className="quick-line__head"><strong>Línea {i + 1}</strong>{l.confianza != null && <span className="muted">sugerencia {Math.round(l.confianza * 100)}%</span>}</div>
+        <input placeholder="Descripción de la fuente" value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} />
+        <select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value as LineaRapida['tipo_linea'])}><option value="pendiente">Pendiente de clasificar</option><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option></select>
+        {l.tipo_linea === 'inventario' && <><select value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Producto…</option>{refs?.productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {p.unidad_base ?? 'sin unidad'}</option>)}</select><small className="quick-line__presentation">{presentacionTexto(producto)}</small><small className="fifo-entry-conversion">Conversión automática: {conversionCompraTexto(producto)}</small></>}
+        {l.tipo_linea === 'inventario' && <><div className="fifo-entry-help">Captura lo que viene en el ticket. FIFO guardará el total en la unidad base. Ejemplo: <strong>2 piezas × 500 g = 1,000 g</strong>.</div>
+        <div className="quick-line__numbers fifo-entry-fields">
+          <label>Cantidad comprada <small className="fifo-entry-label-help">número del ticket</small><input type="number" min="0" step="any" value={l.cantidad_fuente} placeholder="Ej. 2" onChange={(e) => editar(i, 'cantidad_fuente', e.target.value)} /></label>
+          <label>Unidad de compra<input placeholder="pz, caja, botella…" value={modo === 'orden_manuscrita' ? l.unidad_fuente : l.unidad_compra} onChange={(e) => editar(i, modo === 'orden_manuscrita' ? 'unidad_fuente' : 'unidad_compra', e.target.value)} /></label>
+          <label>Contenido por unidad ({producto?.unidad_base ?? 'unidad base'}) <small className="fifo-entry-label-help">por presentación, no el total</small><input type="number" min="0" step="any" value={l.contenido_compra} placeholder="Ej. 500" onChange={(e) => editar(i, 'contenido_compra', e.target.value)} /></label>
+          <label>Total base {cantidadCalculada != null && <small>(automático)</small>}<input type="number" min="0" step="any" value={cantidadCalculada ?? l.cantidad_base} readOnly={cantidadCalculada != null} placeholder="Se calcula al completar la presentación" onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /></label>
+          <label>Importe del ticket<input type="number" min="0" step="0.01" placeholder="Ej. 146" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></label>
+        </div>{cantidadCalculada != null && <small className="fifo-entry-result">FIFO registrará {formatoCantidad(cantidadCalculada)} {producto?.unidad_base ?? 'unidades base'} · costo base {costoCalculado == null ? '—' : mxn(costoCalculado)}</small>}</>}
+        {l.tipo_linea === 'gasto' && <label className="fifo-expense-amount">Importe del gasto<input type="number" min="0" step="0.01" placeholder="Ej. 146" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></label>}
+        {lineas.length > 1 && <button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))}>Quitar</button>}
+      </div>;
+    })}</div>
     <div className="sticky-action"><button className="btn-secondary" onClick={() => setLineas((v) => [...v, { product_id: null, tipo_linea: 'pendiente', descripcion_fuente: '', cantidad_fuente: '', unidad_fuente: '', cantidad_base: '', unidad_compra: '', contenido_compra: '', costo_unitario: '', importe: '', confianza: null }])}>Agregar línea</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Enviando…' : 'Enviar a revisión'}</button></div>
     <div className="info-box quick-purchase__single-source"><strong>Registro único:</strong> después de enviar, revisa y confirma el ticket en la pestaña <button className="link-btn" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>Revisión</button>. Una compra confirmada aparece automáticamente en FIFO, el registro de operaciones y el cierre del día.</div>
   </section>;
@@ -187,7 +225,6 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
  */
 export function RegistroComprasPanel({ semana, onChange }: { semana: Semana; onChange: () => void }) {
   const [productos, setProductos] = useState<Producto[]>([]);
-  const [ubicaciones, setUbicaciones] = useState<RefCompra['ubicaciones']>([]);
   const [lotes, setLotes] = useState<Lote[]>([]);
   const [pendientes, setPendientes] = useState<Pendiente[]>([]);
   const [compras, setCompras] = useState<CompraDia[]>([]);
@@ -202,14 +239,13 @@ export function RegistroComprasPanel({ semana, onChange }: { semana: Semana; onC
   async function cargar() {
     setCargando(true);
     try {
-      const [p, l, pend, tickets, refs] = await Promise.all([
+      const [p, l, pend, tickets] = await Promise.all([
         api<Producto[]>('/catalogo/products'),
         api<Lote[]>('/inventario/lotes'),
         api<Pendiente[]>('/inventario/compras/pendientes'),
         api<CompraDia[]>('/inventario/compras'),
-        api<RefCompra>('/inventario/compras/referencias'),
       ]);
-      setProductos(p); setLotes(l); setPendientes(pend); setCompras(tickets); setUbicaciones(refs.ubicaciones);
+      setProductos(p); setLotes(l); setPendientes(pend); setCompras(tickets);
       if (pend.filter((x) => x.fecha_recepcion >= semana.fecha_inicio && x.fecha_recepcion <= semana.fecha_fin).length > 0) setTab('pendientes');
     } catch (e) {
       setMensaje(e instanceof Error ? e.message : 'No se pudo cargar el registro de compras.');
@@ -234,34 +270,53 @@ export function RegistroComprasPanel({ semana, onChange }: { semana: Semana; onC
       <button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => setTab('lotes')}>Lotes FIFO ({lotesSemana.length})</button>
     </nav>
     {cargando ? <section className="card"><Cargando etiqueta="Cargando compras y lotes…" /></section> : <>
-      {tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={[...productos].sort((a, b) => a.nombre.localeCompare(b.nombre))} ubicaciones={ubicaciones} onChange={() => { void cargar(); onChange(); }} />}
+      {tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={[...productos].sort((a, b) => a.nombre.localeCompare(b.nombre))} onChange={() => { void cargar(); onChange(); }} />}
       {tab === 'tickets' && <Tickets compras={comprasSemana} cargando={false} />}
       {tab === 'lotes' && <Lotes lotes={lotesSemana} />}
     </>}
   </section>;
 }
 
-function Pendientes({ filas, productos, ubicaciones, onChange }: { filas: Pendiente[]; productos: Producto[]; ubicaciones: RefCompra['ubicaciones']; onChange: () => void }) {
+function Pendientes({ filas, productos, onChange }: { filas: Pendiente[]; productos: Producto[]; onChange: () => void }) {
   if (!filas.length) return <div className="empty-state"><strong>No hay compras pendientes</strong><p>Las capturas nuevas aparecerán aquí para revisión.</p></div>;
-  return <section className="quick-pending">{filas.map((f) => <PendienteCard key={f.id} fila={f} productos={productos} ubicaciones={ubicaciones} onChange={onChange} />)}</section>;
+  return <section className="quick-pending">{filas.map((f) => <PendienteCard key={f.id} fila={f} productos={productos} onChange={onChange} />)}</section>;
 }
 
-function PendienteCard({ fila, productos, ubicaciones, onChange }: { fila: Pendiente; productos: Producto[]; ubicaciones: RefCompra['ubicaciones']; onChange: () => void }) {
+function PendienteCard({ fila, productos, onChange }: { fila: Pendiente; productos: Producto[]; onChange: () => void }) {
   const [lineas, setLineas] = useState(fila.lineas);
-  const [total, setTotal] = useState(fila.total == null ? '' : String(fila.total));
-  const [origen, setOrigen] = useState(fila.origen_pago_id == null ? '' : String(fila.origen_pago_id));
+  const [total] = useState(fila.total == null ? '' : String(fila.total));
+  const [origen] = useState(fila.origen_pago_id == null ? '' : String(fila.origen_pago_id));
   const [foto, setFoto] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState('');
   const [validacion, setValidacion] = useState<ValidacionCompra | null>(null);
   const [validando, setValidando] = useState(false);
-  const editar = (i: number, campo: string, valor: unknown) => setLineas((v) => v.map((l, idx) => idx === i ? { ...l, [campo]: valor } : l));
+  function editar(i: number, campo: string, valor: unknown) {
+    setLineas((v) => v.map((l, idx) => {
+      if (idx !== i) return l;
+      const siguiente = { ...l, [campo]: valor };
+      if (campo === 'product_id') {
+        const producto = productos.find((p) => p.id === Number(valor));
+        if (producto) {
+          siguiente.unidad_fuente = producto.unidad_compra ?? siguiente.unidad_fuente;
+          siguiente.unidad_compra = producto.unidad_compra ?? siguiente.unidad_compra;
+          siguiente.contenido_compra = producto.contenido_compra ?? siguiente.contenido_compra;
+        }
+      }
+      if (campo === 'cantidad_fuente' || campo === 'unidad_fuente' || campo === 'unidad_compra' || campo === 'contenido_compra' || campo === 'product_id') {
+        const producto = productos.find((p) => p.id === Number(siguiente.product_id));
+        const base = cantidadBaseDesdePresentacion({ cantidadCompra: Number(siguiente.cantidad_fuente), unidadCompra: siguiente.unidad_fuente || siguiente.unidad_compra, contenidoPorPresentacion: Number(siguiente.contenido_compra ?? producto?.contenido_compra), unidadBase: producto?.unidad_base, rendimientoUtil: producto?.rendimiento_util });
+        if (base != null) siguiente.cantidad_base = base;
+      }
+      return siguiente;
+    }));
+  }
   async function guardarLineas() { await api(`/inventario/compras/${fila.id}/lineas`, { method: 'PUT', body: { total: total.trim() ? Number(total) : null, lineas: lineas.map((l) => ({ ...l, product_id: l.product_id ? Number(l.product_id) : null, cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente || null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) })) } }); }
   function payloadLineas() { return lineas.map((l) => ({ ...l, product_id: l.product_id ? Number(l.product_id) : null, cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente || null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) })); }
   async function validar() { if (!total.trim() || !Number.isFinite(Number(total))) { setMensaje('Completa el total de la orden manuscrita antes de validar.'); return null; } setValidando(true); try { const r = await api<ValidacionCompra>('/inventario/compras/validar', { method: 'POST', body: { total: Number(total), lineas: payloadLineas() } }); setValidacion(r); setMensaje(r.errores.length ? 'Corrige los errores antes de confirmar.' : r.advertencias.length ? 'Hay advertencias; puedes confirmarlas después de revisarlas.' : 'Validación correcta.'); return r; } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo validar la compra.'); return null; } finally { setValidando(false); } }
   async function confirmar() { try { if (!origen) { setMensaje('Selecciona el origen del pago antes de confirmar.'); return; } await api(`/inventario/compras/${fila.id}/pago`, { method: 'PATCH', body: { origen_pago_id: Number(origen) } }); const r = await validar(); if (!r || r.errores.length) return; await guardarLineas(); const confirmada = await api<{ discrepancias?: ValidacionCompra['advertencias'] }>(`/inventario/compras/${fila.id}/confirmar`, { method: 'POST', body: {} }); setMensaje(confirmada.discrepancias?.length ? `Compra confirmada con ${confirmada.discrepancias.length} advertencia(s) registrada(s).` : 'Compra confirmada: FIFO y cierre actualizados.'); onChange(); } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo confirmar'); } }
   async function rechazar() { const nota = window.prompt('Motivo del rechazo') || ''; await api(`/inventario/compras/${fila.id}/rechazar`, { method: 'POST', body: { nota } }); onChange(); }
   async function verFoto() { const r = await api<{ mime: string; data: string }>(`/inventario/compras/${fila.id}/foto`); setFoto(`data:${r.mime};base64,${r.data}`); }
-  return <article className="card quick-pending__card"><div className="section-heading"><div><h2>{fila.proveedor || 'Compra sin proveedor'}</h2><p className="muted">{fila.fecha_recepcion} · {fila.fuente === 'orden_manuscrita' ? 'orden manuscrita' : (fila.ticket_ref || 'sin folio')} · {fila.total == null ? 'total pendiente' : mxn(fila.total)}</p></div>{fila.foto && <button className="btn-secondary" onClick={() => void verFoto()}>Ver fuente</button>}</div>{fila.fuente === 'orden_manuscrita' && <div className="info-box">Orden manuscrita: confirma cantidades, unidades, conversiones, precios y total antes de crear FIFO.</div>}{fila.notas && <div className="info-box">{fila.notas}</div>}{foto && <img className="ticket-preview" src={foto} alt="Fuente original" />}<div className="quick-lines">{lineas.map((l, i) => <div className="quick-line" key={l.id}><strong>{l.descripcion_fuente}</strong>{(l.cantidad_fuente != null || l.unidad_fuente) && <small className="muted">Fuente: {l.cantidad_fuente ?? '—'} {l.unidad_fuente ?? ''}</small>}<select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value)}><option value="pendiente">Pendiente</option><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option></select>{l.tipo_linea === 'inventario' && <select value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Producto…</option>{productos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select>}<div className="quick-line__numbers"><input type="number" min="0" step="any" value={l.cantidad_base ?? ''} placeholder="Cantidad base convertida" onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /><input value={l.unidad_compra ?? ''} placeholder="Unidad de compra" onChange={(e) => editar(i, 'unidad_compra', e.target.value)} /><input type="number" min="0" step="0.01" value={l.importe} placeholder="Importe" onChange={(e) => editar(i, 'importe', e.target.value)} /></div></div>)}</div>{validacion && <div className="info-box">{validacion.errores.length > 0 && <div><strong>Errores</strong>{validacion.errores.map((d) => <div key={`${d.codigo}-${d.linea ?? ''}`}>[{d.codigo}] {d.mensaje}</div>)}</div>}{validacion.advertencias.length > 0 && <div><strong>Advertencias</strong>{validacion.advertencias.map((d) => <div key={`${d.codigo}-${d.linea ?? ''}`}>[{d.codigo}] {d.mensaje}</div>)}</div>}</div>}{mensaje && <div className="info-box">{mensaje}</div>}<div className="sticky-action"><button className="btn-secondary" disabled={validando} onClick={() => void validar()}>{validando ? 'Validando…' : 'Validar discrepancias'}</button><button className="btn-secondary" onClick={() => void rechazar()}>Rechazar</button><button className="btn-primary" onClick={() => void confirmar()}>Guardar y confirmar</button></div></article>;
+  return <article className="card quick-pending__card"><div className="section-heading"><div><h2>{fila.proveedor || 'Compra sin proveedor'}</h2><p className="muted">{fila.fecha_recepcion} · {fila.fuente === 'orden_manuscrita' ? 'orden manuscrita' : (fila.ticket_ref || 'sin folio')} · {fila.total == null ? 'total pendiente' : mxn(fila.total)}</p></div>{fila.foto && <button className="btn-secondary" onClick={() => void verFoto()}>Ver fuente</button>}</div>{fila.fuente === 'orden_manuscrita' && <div className="info-box">Captura lo que viene en la orden: cantidad comprada y presentación. FIFO calculará el total en gramos, mililitros o piezas.</div>}{fila.notas && <div className="info-box">{fila.notas}</div>}{foto && <img className="ticket-preview" src={foto} alt="Fuente original" />}<div className="quick-lines">{lineas.map((l, i) => { const producto = productos.find((p) => p.id === l.product_id); const cantidadCalculada = cantidadBaseDesdePresentacion({ cantidadCompra: Number(l.cantidad_fuente), unidadCompra: l.unidad_fuente || l.unidad_compra, contenidoPorPresentacion: Number(l.contenido_compra ?? producto?.contenido_compra), unidadBase: producto?.unidad_base }); const costoCalculado = costoBase(Number(l.importe), cantidadCalculada ?? Number(l.cantidad_base)); return <div className="quick-line" key={l.id}><div className="quick-line__head"><strong>Línea {i + 1} · {l.descripcion_fuente}</strong>{l.confianza != null && <span className="muted">sugerencia {Math.round(l.confianza * 100)}%</span>}</div><select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value)}><option value="pendiente">Pendiente</option><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option></select>{l.tipo_linea === 'inventario' && <select value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Producto…</option>{productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {p.unidad_base ?? 'sin unidad'}</option>)}</select>}{l.tipo_linea === 'inventario' && <><small className="quick-line__presentation">{presentacionTexto(producto)}</small><div className="fifo-entry-help">Ejemplo: <strong>2 piezas × 500 g = 1,000 g</strong>. Captura primero la compra; el total base se calcula solo.</div><div className="quick-line__numbers fifo-entry-fields"><label>Cantidad comprada<input type="number" min="0" step="any" value={l.cantidad_fuente ?? ''} placeholder="Ej. 2" onChange={(e) => editar(i, 'cantidad_fuente', e.target.value)} /></label><label>Unidad de compra<input value={l.unidad_fuente ?? l.unidad_compra ?? ''} placeholder="pz, caja, botella…" onChange={(e) => editar(i, 'unidad_fuente', e.target.value)} /></label><label>Contenido por unidad ({producto?.unidad_base ?? 'unidad base'})<input type="number" min="0" step="any" value={l.contenido_compra ?? producto?.contenido_compra ?? ''} placeholder="Ej. 500" onChange={(e) => editar(i, 'contenido_compra', e.target.value)} /></label><label>Total base {cantidadCalculada != null && <small>(calculado)</small>}<input type="number" min="0" step="any" value={cantidadCalculada ?? l.cantidad_base ?? ''} readOnly={cantidadCalculada != null} placeholder="Captura si no hay presentación" onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /></label><label>Importe del ticket<input type="number" min="0" step="0.01" value={l.importe} placeholder="Ej. 146" onChange={(e) => editar(i, 'importe', e.target.value)} /></label></div>{cantidadCalculada != null && <small className="fifo-entry-result">FIFO registrará {formatoCantidad(cantidadCalculada)} {producto?.unidad_base ?? 'unidades base'} · costo base {costoCalculado == null ? '—' : mxn(costoCalculado)}</small>}</>}{l.tipo_linea === 'gasto' && <label className="fifo-expense-amount">Importe del gasto<input type="number" min="0" step="0.01" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></label>}</div>; })}</div>{validacion && <div className="info-box">{validacion.errores.length > 0 && <div><strong>Errores</strong>{validacion.errores.map((d) => <div key={`${d.codigo}-${d.linea ?? ''}`}>[{d.codigo}] {d.mensaje}</div>)}</div>}{validacion.advertencias.length > 0 && <div><strong>Advertencias</strong>{validacion.advertencias.map((d) => <div key={`${d.codigo}-${d.linea ?? ''}`}>[{d.codigo}] {d.mensaje}</div>)}</div>}</div>}{mensaje && <div className="info-box">{mensaje}</div>}<div className="sticky-action"><button className="btn-secondary" disabled={validando} onClick={() => void validar()}>{validando ? 'Validando…' : 'Validar discrepancias'}</button><button className="btn-secondary" onClick={() => void rechazar()}>Rechazar</button><button className="btn-primary" onClick={() => void confirmar()}>Guardar y confirmar</button></div></article>;
 }
 
 function fechaCompra(fecha: string) {

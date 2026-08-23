@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { resumirCompra, validarDiscrepanciasCompra } from './compras-rapidas-logic.js';
+import { cantidadBaseDesdePresentacion, resumirCompra, validarDiscrepanciasCompra } from './compras-rapidas-logic.js';
+
+describe('conversiones de presentación FIFO', () => {
+  it('convierte 5 kg de limón en 70 piezas usando el rendimiento configurado', () => {
+    expect(cantidadBaseDesdePresentacion({
+      cantidadCompra: 5, unidadCompra: 'kg', contenidoPorPresentacion: 14, unidadBase: 'pieza', rendimientoUtil: 1,
+    })).toBe(70);
+  });
+
+  it('aplica el rendimiento útil cuando la presentación tiene merma', () => {
+    expect(cantidadBaseDesdePresentacion({
+      cantidadCompra: 2, unidadCompra: 'kg', contenidoPorPresentacion: 1000, unidadBase: 'g', rendimientoUtil: 0.8,
+    })).toBe(1600);
+  });
+});
 
 describe('resumen de tickets de compra', () => {
   it('cuadra una compra sólo de inventario', () => {

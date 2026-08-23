@@ -21,6 +21,7 @@ export interface ProductoReglaCompra {
   unidad_base?: string | null;
   contenido_compra?: number | null;
   unidad_compra?: string | null;
+  rendimiento_util?: number | null;
   aliases?: string[];
 }
 
@@ -69,6 +70,28 @@ function normalizarUnidad(value?: string | null) {
   if (/^(pieza|piezas|pz|pzas|unidad|unidades|ud)$/.test(unidad)) return 'pieza';
   if (/^(l|litro|litros)$/.test(unidad)) return 'l';
   return unidad;
+}
+
+/** Convierte la presentación capturada a la unidad base del catálogo. */
+export function cantidadBaseDesdePresentacion(input: {
+  cantidadCompra?: number | null;
+  unidadCompra?: string | null;
+  contenidoPorPresentacion?: number | null;
+  unidadBase?: string | null;
+  rendimientoUtil?: number | null;
+}) {
+  const cantidad = Number(input.cantidadCompra);
+  if (!Number.isFinite(cantidad) || cantidad <= 0) return null;
+  const contenido = Number(input.contenidoPorPresentacion);
+  const rendimiento = Number(input.rendimientoUtil ?? 1);
+  const factor = Number.isFinite(rendimiento) && rendimiento > 0 && rendimiento <= 1 ? rendimiento : 1;
+  if (Number.isFinite(contenido) && contenido > 0) return cantidad * contenido * factor;
+  const origen = normalizarUnidad(input.unidadCompra);
+  const destino = normalizarUnidad(input.unidadBase);
+  if (origen === destino) return cantidad;
+  if (origen === 'kg' && destino === 'g') return cantidad * 1000;
+  if (origen === 'l' && destino === 'ml') return cantidad * 1000;
+  return null;
 }
 
 // Alias de proveedor que históricamente han provocado errores al capturar tickets.

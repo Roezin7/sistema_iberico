@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../auth';
 import { Icono } from '../icons';
-import { api } from '../api';
+import { finanzas, epos, mxn, type ConciliacionDiaria, type DiaFila, type Resumen, type Semana } from './finanzas/api';
 
 interface Modulo {
   clave: string;
@@ -29,21 +29,58 @@ function saludo() {
 
 export default function Home() {
   const { usuario } = useAuth();
-  const [semana, setSemana] = useState<{ etiqueta: string; estado: string } | null>(null);
+  const [estado, setEstado] = useState<{
+    semana: Semana | null;
+    dia: DiaFila | null;
+    conciliacion: ConciliacionDiaria | null;
+    resumen: Resumen | null;
+    cargando: boolean;
+    error: string;
+  }>({ semana: null, dia: null, conciliacion: null, resumen: null, cargando: true, error: '' });
+
+  const hoyMx = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+  const weekdayMx = new Date(`${hoyMx}T12:00:00`).getDay();
+  const operativo = weekdayMx === 0 || weekdayMx === 5 || weekdayMx === 6;
+
   useEffect(() => {
     if (!usuario || usuario.rol !== 'admin') return;
-    api<{ etiqueta: string; estado: string }>('/finanzas/semanas/actual')
-      .then(setSemana)
-      .catch(() => setSemana(null));
-  }, [usuario]);
+    let activo = true;
+    setEstado((prev) => ({ ...prev, cargando: true, error: '' }));
+    void finanzas.semanaActual()
+      .then(async (semana) => {
+        if (!semana) return { semana: null, dia: null, conciliacion: null, resumen: null };
+        const [dias, resumen, conciliaciones] = await Promise.all([
+          finanzas.dias(semana.id),
+          finanzas.resumen(semana.id),
+          epos.conciliaciones(semana.id).catch(() => []),
+        ]);
+        return {
+          semana,
+          dia: dias.dias.find((dia) => dia.fecha === hoyMx) ?? null,
+          conciliacion: conciliaciones.find((c) => c.fecha === hoyMx) ?? null,
+          resumen,
+        };
+      })
+      .then((data) => {
+        if (activo) setEstado({ ...data, cargando: false, error: '' });
+      })
+      .catch((error) => {
+        if (activo) setEstado((prev) => ({ ...prev, cargando: false, error: error instanceof Error ? error.message : 'No se pudo cargar el estado de hoy' }));
+      });
+    return () => { activo = false; };
+  }, [usuario, hoyMx]);
 
   if (!usuario) return null;
 
   const visibles = MODULOS.filter((m) => !m.soloAdmin || usuario.rol === 'admin');
-  const hoy = new Date();
-  const dia = hoy.getDay();
-  const operativo = dia === 0 || dia === 5 || dia === 6;
-  const estadoHoy = operativo ? 'Día operativo' : 'Sin operación del bar';
+  const { semana, dia, conciliacion, resumen } = estado;
+  const estadoHoy = operativo ? (conciliacion ? 'Corte confirmado' : 'Corte pendiente') : 'Sin operación del bar';
+  const siguienteAccion = !operativo
+    ? 'Revisar inventario y preparar la operación del fin de semana.'
+    : conciliacion
+      ? resumen?.inventario.estado === 'pendiente_cierre' ? 'Revisar compras y preparar el inventario de cierre.' : 'Revisar el detalle de ventas y excepciones.'
+      : 'Importar las ventas de Epos, revisar métodos de pago y confirmar el corte.';
+  const accionRuta = operativo ? '/finanzas' : '/inventario';
 
   return (
     <div className="page">
@@ -59,22 +96,29 @@ export default function Home() {
           <span className="eyebrow">Hoy</span>
           <h2>{estadoHoy}</h2>
           <p className="muted">
-            {operativo
-              ? 'Importa el corte de Epos, revisa las excepciones y confirma antes de cerrar el día.'
-              : 'No se crean cortes ni tareas de venta. Usa este tiempo para compras, recetas o administración.'}
+            {estado.error || siguienteAccion}
           </p>
         </div>
         {usuario.rol === 'admin' && (
           <div className="operating-brief__meta">
             <span className={semana?.estado === 'cerrada' ? 'badge-ok' : 'badge-neutral'}>
-              {semana ? `${semana.etiqueta} · ${semana.estado}` : 'Semana actual'}
+              {estado.cargando ? 'Cargando estado…' : semana ? `${semana.etiqueta} · ${semana.estado}` : 'Semana actual'}
             </span>
-            <Link className="btn-primary" to={operativo ? '/finanzas' : '/inventario'}>
-              {operativo ? 'Abrir cierre de hoy' : 'Revisar inventario'}
+            <Link className="btn-primary" to={accionRuta}>
+              {operativo ? (conciliacion ? 'Abrir operación de hoy' : 'Abrir cierre de hoy') : 'Revisar inventario'}
             </Link>
           </div>
         )}
       </section>
+
+      {usuario.rol === 'admin' && !estado.cargando && semana && (
+        <section className="summary-grid home-today-summary" aria-label="Estado operativo de hoy">
+          <div><small>Día</small><strong>{dia?.dia ?? hoyMx.slice(5)}</strong><span>{operativo ? 'Viernes a domingo' : 'Sin ventas regulares'}</span></div>
+          <div><small>Ventas registradas</small><strong>{dia ? mxn(dia.total_ventas) : '—'}</strong><span>{conciliacion ? 'Corte confirmado' : 'Según captura diaria'}</span></div>
+          <div><small>Compras de la semana</small><strong>{resumen ? mxn(resumen.compras_inventario) : '—'}</strong><span>Tickets y lotes FIFO</span></div>
+          <div><small>Inventario</small><strong>{resumen?.inventario.estado === 'cerrado' ? 'Cerrado' : 'Pendiente'}</strong><span>{resumen?.inventario.estado === 'cerrado' ? 'Disponible para consulta' : 'Requiere cierre físico'}</span></div>
+        </section>
+      )}
 
       <div className="section-heading">
         <div>
