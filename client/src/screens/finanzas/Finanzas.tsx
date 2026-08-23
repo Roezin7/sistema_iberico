@@ -469,7 +469,10 @@ function DetalleVentasEpos({ filas, preview }: { filas: EposVenta[]; preview: Ma
     const vista = preview.get(fila.id);
     const aplicado = fila.costo_fifo != null || fila.costeo_estado === 'costeada';
     const disponible = !aplicado && vista?.estado === 'costeable';
-    const esExcepcion = fila.costeo_estado === 'excepcion' || vista?.estado === 'excepcion';
+    // La vista previa es la fuente actual de clasificación. Esto evita que
+    // una excepción histórica (por ejemplo, una receta que ya fue validada)
+    // siga apareciendo como excepción real.
+    const esExcepcion = vista ? vista.estado === 'excepcion' : fila.costeo_estado === 'excepcion';
     const esPendiente = !aplicado && !disponible && !esExcepcion;
     const costo = fila.costo_fifo ?? (disponible ? vista?.costo_fifo ?? 0 : 0);
     porProducto.set(fila.producto, {

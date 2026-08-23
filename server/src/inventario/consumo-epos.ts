@@ -192,6 +192,7 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
   if (input.confirmar) {
     const costeables = planes.filter(({ plan }) => plan.estado === 'costeable');
     const excepciones = planes.filter(({ plan }) => plan.estado === 'excepcion');
+    const pendientes = planes.filter(({ plan }) => plan.estado === 'pendiente');
     const lotes = new Map<string, number>();
     for (const { plan } of costeables) {
       for (const consumo of plan.consumos) lotes.set(consumo.loteId.toString(), (lotes.get(consumo.loteId.toString()) ?? 0) + consumo.cantidad);
@@ -239,6 +240,17 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
         const values = excepciones.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::text)`).join(',');
         await tx.$executeRawUnsafe(
           `UPDATE epos_ventas AS e SET costeo_estado = 'excepcion', costeo_error = v.error
+           FROM (VALUES ${values}) AS v(id, error) WHERE e.id = v.id AND e.negocio_id = $${params.length + 1}::bigint`,
+          ...params, input.negocioId.toString(),
+        );
+      }
+      // Limpia estados antiguos que se marcaron como excepción antes de que
+      // distinguiéramos configuración pendiente de una excepción real.
+      if (pendientes.length) {
+        const params = pendientes.flatMap(({ venta, plan }) => [venta.id.toString(), plan.error ?? 'Pendiente de configuración']);
+        const values = pendientes.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::text)`).join(',');
+        await tx.$executeRawUnsafe(
+          `UPDATE epos_ventas AS e SET costeo_estado = 'pendiente', costeo_error = v.error
            FROM (VALUES ${values}) AS v(id, error) WHERE e.id = v.id AND e.negocio_id = $${params.length + 1}::bigint`,
           ...params, input.negocioId.toString(),
         );
