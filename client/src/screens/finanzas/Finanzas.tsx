@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   finanzas, epos, mxn, TIPOS, type Referencias, type Semana, type Resumen, type FilaCuadre,
   type Movimiento, type TipoMov, type DiaFila, type ConciliacionDiaria, type EposVenta, type CompraDetalle, type CompraDetalleLinea,
@@ -10,7 +11,6 @@ import { useConfirm } from '../../ui/ConfirmProvider';
 import { useToast } from '../../ui/ToastProvider';
 import { Cargando } from '../../ui/Cargando';
 import { api } from '../../api';
-import { RegistroComprasPanel } from '../compras/Compras';
 import { cantidadBaseDesdePresentacion, conversionCompraTexto, costoBase, formatoCantidad, presentacionTexto } from '../compras/fifo-form';
 
 interface ProductoCompra { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null; rendimiento_util?: number | null }
@@ -191,7 +191,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
       <nav className="tabs" aria-label="Flujo semanal">
         <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Operación diaria</button>
         <button className={tab === 'resumen' ? 'tab tab--on' : 'tab'} onClick={() => setTab('resumen')}>Resumen</button>
-        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Compras</button>
+        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Compras y tickets</button>
         <button className={tab === 'cuadre' ? 'tab tab--on' : 'tab'} onClick={() => setTab('cuadre')}>Cuadre</button>
       </nav>
 
@@ -854,21 +854,24 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
   return (
     <>
       <section className="info-box unified-operations-intro">
-        <strong>Compras</strong>
-        <p className="muted">Captura cada compra una sola vez. Al confirmarla se crea el lote FIFO y el movimiento financiero; el historial de operaciones se consulta abajo.</p>
+        <div>
+          <strong>Una sola entrada para compras y tickets</strong>
+          <p className="muted">Registra la compra desde la pantalla de Compras y tickets. Al confirmarla se crean juntos el lote FIFO y el movimiento financiero.</p>
+        </div>
+        <Link className="btn-primary" to={`/compras?semana=${semana.id}&fecha=${semana.fecha_inicio}&return=finanzas`}>Abrir Compras y tickets</Link>
       </section>
       {semana.estado === 'abierta' && <details className="operation-adjustment">
-        <summary><strong>Añadir ajuste manual</strong><span className="muted">Solo para correcciones, transferencias o movimientos que no provienen de un ticket</span></summary>
+        <summary><strong>Corrección administrativa</strong><span className="muted">Sólo para transferencias o ajustes que no provienen de un ticket</span></summary>
         <FormMovimiento ref_={ref_} semana={semana} onSaved={onChange} />
       </details>}
-      {movs.length > 0 && (
-        <button className="btn-secondary" style={{ marginTop: '0.75rem' }} onClick={exportar}>Exportar registro</button>
-      )}
-      <RegistroComprasPanel semana={semana} onChange={onChange} />
-      <h3 className="section-title" style={{ marginTop: '1.25rem' }}>Historial de operaciones</h3>
-      <ul className="conteo-list" style={{ marginTop: '1rem' }}>
-        {movs.length === 0 && <li className="muted" style={{ padding: '1rem' }}>Sin operaciones registradas aún.</li>}
-        {movs.map((m) => (
+      <details className="operation-history" style={{ marginTop: '1rem' }}>
+        <summary><strong>Auditoría financiera</strong><span className="muted">Historial de movimientos generados y correcciones</span></summary>
+        {movs.length > 0 && (
+          <button className="btn-secondary" style={{ margin: '0.75rem 0' }} onClick={exportar}>Exportar registro</button>
+        )}
+        <ul className="conteo-list" style={{ marginTop: '0.5rem' }}>
+          {movs.length === 0 && <li className="muted" style={{ padding: '1rem' }}>Sin operaciones registradas aún.</li>}
+          {movs.map((m) => (
           <li key={m.id} className="conteo-row operation-row">
             {editando === m.id ? <div className="conteo-info operation-row__editor" style={{ display: 'grid', gap: '0.4rem' }}>
               <strong>Editar {TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
@@ -900,8 +903,9 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
             )}
             </div>
           </li>
-        ))}
-      </ul>
+          ))}
+        </ul>
+      </details>
       {compraEditando != null && <CompraEditorV2 compraId={compraEditando} ref_={ref_} onClose={() => setCompraEditando(null)} onSaved={() => { setCompraEditando(null); onChange(); }} />}
     </>
   );

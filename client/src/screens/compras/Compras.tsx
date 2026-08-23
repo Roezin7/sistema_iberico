@@ -39,6 +39,7 @@ export default function Compras() {
   const esAdmin = usuario?.rol === 'admin';
   const parametros = new URLSearchParams(window.location.search);
   const fechaInicial = parametros.get('fecha') || hoy;
+  const semanaInicial = Number(parametros.get('semana'));
   const volverAFinanzas = parametros.get('return') === 'finanzas';
   const [tab, setTab] = useState<'tickets' | 'lotes' | 'epos' | 'pendientes'>('tickets');
   const [productos, setProductos] = useState<Producto[]>([]);
@@ -65,7 +66,7 @@ export default function Compras() {
     if (!esAdmin) return;
     setCargandoSemanas(true);
     api<Semana[]>('/finanzas/semanas')
-      .then((filas) => { setSemanas(filas); setSemanaId((prev) => prev ?? filas.find((s) => s.estado === 'abierta')?.id ?? filas[0]?.id ?? null); })
+      .then((filas) => { setSemanas(filas); setSemanaId((prev) => prev ?? (Number.isFinite(semanaInicial) && semanaInicial > 0 ? semanaInicial : null) ?? filas.find((s) => s.estado === 'abierta')?.id ?? filas[0]?.id ?? null); })
       .catch((e) => setMensaje(e instanceof Error ? e.message : 'No se pudieron cargar las semanas.'))
       .finally(() => setCargandoSemanas(false));
   }, [esAdmin]);
@@ -102,14 +103,15 @@ export default function Compras() {
   }
 
   return <div className="page compras-page">
-    <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Compras</h1></div><p className="muted">Captura → revisa → confirma. Una compra confirmada actualiza FIFO y el movimiento financiero.</p>{volverAFinanzas && <Link className="inline-link" to="/finanzas">← Volver a Operación</Link>}</header>
+    <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Compras y tickets</h1></div><p className="muted">Registra una compra una sola vez. Un supervisor la revisará antes de actualizar inventario.</p>{volverAFinanzas && <Link className="inline-link" to="/finanzas">← Volver a Operación</Link>}</header>
+    {!esAdmin && <div className="info-box purchase-operator-note"><strong>Para registrar una compra</strong><span>Sube la foto, confirma fecha y forma de pago y envíala a revisión. No necesitas calcular FIFO.</span></div>}
     {esAdmin && <div className="compras-weekbar"><label>Semana de consulta<select value={semanaId ?? ''} onChange={(e) => setSemanaId(Number(e.target.value))} disabled={cargandoSemanas || !semanas.length}><option value="">{cargandoSemanas ? 'Cargando semanas…' : 'Seleccionar semana'}</option>{semanas.map((s) => <option key={s.id} value={s.id}>{s.etiqueta}{s.estado === 'cerrada' ? ' · cerrada' : ' · abierta'}</option>)}</select></label>{semana && <span className={`status status--${semana.estado === 'abierta' ? 'ok' : 'cargando'}`}>{semana.estado === 'abierta' ? 'Semana abierta' : 'Semana cerrada'}</span>}</div>}
-    <CapturaRapida fechaInicial={fechaInicial} onSaved={() => { if (esAdmin) void cargar(); }} />
+    <CapturaRapida key={semana?.id ?? fechaInicial} fechaInicial={semana?.fecha_inicio ?? fechaInicial} onSaved={() => { if (esAdmin) void cargar(); }} />
     {esAdmin && <nav className="tabs">
-      <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('tickets'); void cargarTickets(); }}>Tickets</button>
-      <button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('lotes'); void cargar(); }}>Lotes FIFO</button>
-      <button className={tab === 'epos' ? 'tab tab--on' : 'tab'} onClick={() => setTab('epos')}>Costeo FIFO</button>
-      <button className={tab === 'pendientes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('pendientes'); void cargar(); }}>Revisión {pendientesSemana.length ? `(${pendientesSemana.length})` : ''}</button>
+      <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('tickets'); void cargarTickets(); }}>Historial</button>
+      <button className={tab === 'pendientes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('pendientes'); void cargar(); }}>Pendientes {pendientesSemana.length ? `(${pendientesSemana.length})` : ''}</button>
+      <button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('lotes'); void cargar(); }}>Costos por lote</button>
+      <button className={tab === 'epos' ? 'tab tab--on' : 'tab'} onClick={() => setTab('epos')}>Aplicar costo a ventas</button>
     </nav>}
     {mensaje && <div className="info-box" role="status">{mensaje}</div>}
     {esAdmin && semana && <ResumenSemana semana={semana} compras={comprasSemana} lotes={lotesSemana} />}
@@ -157,7 +159,13 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
     try {
       const r = await api<{ proveedor: string | null; fecha: string | null; total: number | null; lineas: Array<{ descripcion_fuente: string; product_id: number | null; cantidad: number | null; unidad_fuente: string | null; costo_unitario: number | null; importe: number; confianza: 'alta' | 'media' | 'baja' }> }>('/inventario/compras/rapidas/ocr', { method: 'POST', body: { imagen_base64: foto.data, imagen_tipo: foto.mime, modo } });
       if (r.proveedor) setProveedor(r.proveedor); if (r.fecha && /^\d{4}-\d{2}-\d{2}$/.test(r.fecha)) setFecha(r.fecha); if (r.total != null) setTotal(String(r.total));
-      setLineas(r.lineas.map((l) => ({ product_id: l.product_id, tipo_linea: modo === 'orden_manuscrita' ? 'pendiente' : l.product_id != null && l.confianza === 'alta' ? 'inventario' : 'pendiente', descripcion_fuente: l.descripcion_fuente, cantidad_fuente: l.cantidad == null ? '' : String(l.cantidad), unidad_fuente: l.unidad_fuente ?? '', cantidad_base: modo === 'orden_manuscrita' ? '' : l.cantidad == null ? '' : String(l.cantidad), unidad_compra: '', contenido_compra: '', costo_unitario: l.costo_unitario == null ? '' : String(l.costo_unitario), importe: String(l.importe), confianza: l.confianza === 'alta' ? 0.95 : l.confianza === 'media' ? 0.7 : 0.3 })));
+      setLineas(r.lineas.map((l) => {
+        const producto = l.product_id == null ? undefined : refs?.productos.find((p) => p.id === l.product_id);
+        const unidadFuente = l.unidad_fuente ?? producto?.unidad_compra ?? '';
+        const contenido = producto?.contenido_compra == null ? '' : String(producto.contenido_compra);
+        const base = modo === 'orden_manuscrita' ? null : cantidadBaseDesdePresentacion({ cantidadCompra: Number(l.cantidad), unidadCompra: unidadFuente, contenidoPorPresentacion: Number(producto?.contenido_compra), unidadBase: producto?.unidad_base, rendimientoUtil: producto?.rendimiento_util });
+        return { product_id: l.product_id, tipo_linea: modo === 'orden_manuscrita' ? 'pendiente' : l.product_id != null && l.confianza === 'alta' ? 'inventario' : 'pendiente', descripcion_fuente: l.descripcion_fuente, cantidad_fuente: l.cantidad == null ? '' : String(l.cantidad), unidad_fuente: unidadFuente, cantidad_base: base == null ? (modo === 'orden_manuscrita' ? '' : l.cantidad == null ? '' : String(l.cantidad)) : String(base), unidad_compra: producto?.unidad_compra ?? '', contenido_compra: contenido, costo_unitario: l.costo_unitario == null ? '' : String(l.costo_unitario), importe: String(l.importe), confianza: l.confianza === 'alta' ? 0.95 : l.confianza === 'media' ? 0.7 : 0.3 };
+      }));
       setMensaje(modo === 'orden_manuscrita' ? 'Orden manuscrita leída. Confirma unidad, conversión y precio antes de clasificar.' : 'Ticket leído. Revisa cada línea y clasifica lo que no sea inventario.');
     } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo leer el ticket; puedes capturarlo manualmente.'); }
     finally { setLeyendo(false); }
@@ -194,35 +202,37 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
     finally { setGuardando(false); }
   }
 
-  return <section className="card quick-purchase" aria-labelledby="captura-compra-titulo"><div className="quick-purchase__intro"><span className="quick-purchase__step">1</span><div><h2 id="captura-compra-titulo">Capturar compra</h2><p className="muted">Foto de la fuente → revisa líneas → envía a revisión.</p></div></div>
-    <div className="quick-purchase__mode"><strong>Fuente</strong><button className={modo === 'ticket' ? 'tab tab--on' : 'tab'} onClick={() => setModo('ticket')}>Ticket</button><button className={modo === 'orden_manuscrita' ? 'tab tab--on' : 'tab'} onClick={() => setModo('orden_manuscrita')}>Orden manual</button><span className="muted">{modo === 'orden_manuscrita' ? 'La cantidad y el precio se revisan después.' : 'La foto propone los datos; tú los confirmas.'}</span></div>
+  return <section className="card quick-purchase" aria-labelledby="captura-compra-titulo"><div className="quick-purchase__intro"><span className="quick-purchase__step">1</span><div><h2 id="captura-compra-titulo">Registrar compra</h2><p className="muted">Sube la foto, revisa los datos y envíala a revisión.</p></div></div>
+    <div className="quick-purchase__mode"><strong>Tipo de comprobante</strong><button className={modo === 'ticket' ? 'tab tab--on' : 'tab'} onClick={() => setModo('ticket')}>Ticket</button><button className={modo === 'orden_manuscrita' ? 'tab tab--on' : 'tab'} onClick={() => setModo('orden_manuscrita')}>Orden manual</button><span className="muted">{modo === 'orden_manuscrita' ? 'El supervisor completará lo que falte.' : 'La foto sólo propone datos; siempre se revisa antes de confirmar.'}</span></div>
     <div className="quick-purchase__actions"><label className="btn-primary file-button">📷 Foto de {modo === 'orden_manuscrita' ? 'la orden' : 'ticket'}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic" capture="environment" onChange={(e) => fotoSeleccionada(e.target.files?.[0])} /></label><button className="btn-secondary" onClick={() => void leerTicket()} disabled={!foto || leyendo}>{leyendo ? 'Leyendo…' : 'Leer fuente'}</button></div>
     {cargandoRefs && <div className="quick-purchase__loading"><Cargando etiqueta="Preparando captura de compras…" /></div>}
     {foto && <img className="ticket-preview" src={foto.data} alt="Vista previa del ticket" />}
     {mensaje && <div className="info-box" role="status">{mensaje}</div>}
-    <div className="quick-purchase__section-label">Datos de la fuente</div><div className="form-grid form-grid--three"><label>Fecha<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></label><label>Proveedor<input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej. Costco o proveedor local" /></label><label>Ticket / folio<input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="Opcional" /></label><label>Total {modo === 'orden_manuscrita' && '(opcional)'}<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde {modo === 'orden_manuscrita' && '(se define al confirmar)'}<select value={origen} onChange={(e) => setOrigen(e.target.value)} disabled={cargandoRefs}><option value="">{cargandoRefs ? 'Cargando…' : 'Seleccionar…'}</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
+    <div className="quick-purchase__section-label">Datos básicos</div><div className="form-grid form-grid--three"><label>Fecha de compra<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></label><label>Proveedor<input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej. Costco o proveedor local" /></label><label>Folio <small className="muted">opcional</small><input value={ticket} onChange={(e) => setTicket(e.target.value)} placeholder="Folio del ticket" /></label><label>Total {modo === 'orden_manuscrita' && <small className="muted">opcional</small>}<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} placeholder="0.00" /></label><label>¿Cómo se pagó? <select value={origen} onChange={(e) => setOrigen(e.target.value)} disabled={cargandoRefs}><option value="">{cargandoRefs ? 'Cargando…' : 'Seleccionar…'}</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
     <div className="quick-lines">{lineas.map((l, i) => {
       const producto = refs?.productos.find((p) => p.id === l.product_id);
       const cantidadCalculada = cantidadBaseDesdePresentacion({ cantidadCompra: Number(l.cantidad_fuente), unidadCompra: l.unidad_fuente || l.unidad_compra, contenidoPorPresentacion: Number(l.contenido_compra), unidadBase: producto?.unidad_base, rendimientoUtil: producto?.rendimiento_util });
       const costoCalculado = costoBase(Number(l.importe), cantidadCalculada ?? Number(l.cantidad_base));
       return <div className="quick-line" key={i}><div className="quick-line__head"><strong>Línea {i + 1}</strong>{l.confianza != null && <span className="muted">sugerencia {Math.round(l.confianza * 100)}%</span>}</div>
         <input placeholder="Descripción de la fuente" value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} />
-        <select aria-label="Tipo de línea" value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value as LineaRapida['tipo_linea'])}><option value="pendiente">Revisar después</option><option value="inventario">Producto para inventario (FIFO)</option><option value="gasto">Gasto operativo (sin inventario)</option></select>
+        <select aria-label="Destino de la línea" value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value as LineaRapida['tipo_linea'])}><option value="pendiente">Necesita revisión</option><option value="inventario">Entra a inventario</option><option value="gasto">Es un gasto</option></select>
         {l.tipo_linea === 'inventario' && <><select aria-label="Producto de inventario" value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Selecciona producto…</option>{refs?.productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {p.unidad_base ?? 'sin unidad'}</option>)}</select><small className="quick-line__presentation">{presentacionTexto(producto)}</small><small className="fifo-entry-conversion">Conversión automática: {conversionCompraTexto(producto)}</small></>}
-        {l.tipo_linea === 'inventario' && <><div className="fifo-entry-help">Captura lo que viene en el ticket. FIFO guardará el total en la unidad base. Ejemplo: <strong>2 piezas × 500 g = 1,000 g</strong>.</div>
-        <div className="quick-line__numbers fifo-entry-fields">
-          <label>Cantidad comprada <small className="fifo-entry-label-help">número del ticket</small><input type="number" min="0" step="any" value={l.cantidad_fuente} placeholder="Ej. 2" onChange={(e) => editar(i, 'cantidad_fuente', e.target.value)} /></label>
-          <label>Unidad de compra<input placeholder="pz, caja, botella…" value={modo === 'orden_manuscrita' ? l.unidad_fuente : l.unidad_compra} onChange={(e) => editar(i, modo === 'orden_manuscrita' ? 'unidad_fuente' : 'unidad_compra', e.target.value)} /></label>
-          <label>Contenido por unidad ({producto?.unidad_base ?? 'unidad base'}) <small className="fifo-entry-label-help">por presentación, no el total</small><input type="number" min="0" step="any" value={l.contenido_compra} placeholder="Ej. 500" onChange={(e) => editar(i, 'contenido_compra', e.target.value)} /></label>
-          <label>Total base {cantidadCalculada != null && <small>(automático)</small>}<input type="number" min="0" step="any" value={cantidadCalculada ?? l.cantidad_base} readOnly={cantidadCalculada != null} placeholder="Se calcula al completar la presentación" onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /></label>
+        {l.tipo_linea === 'inventario' && <><div className="fifo-entry-help">Captura la cantidad tal como aparece en el ticket. La presentación configurada se convertirá automáticamente.</div>
+        <div className="quick-line__numbers quick-line__numbers--simple fifo-entry-fields">
+          <label>Cantidad comprada <small className="fifo-entry-label-help">lo que dice el ticket</small><input type="number" min="0" step="any" value={l.cantidad_fuente} placeholder="Ej. 2" onChange={(e) => editar(i, 'cantidad_fuente', e.target.value)} /></label>
           <label>Importe del ticket<input type="number" min="0" step="0.01" placeholder="Ej. 146" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></label>
-        </div>{cantidadCalculada != null && <small className="fifo-entry-result">Se agregará a FIFO: <strong>{formatoCantidad(cantidadCalculada)} {producto?.unidad_base ?? 'unidades base'}</strong> · costo {costoCalculado == null ? '—' : mxn(costoCalculado)}</small>}</>}
+        </div>
+        <details className="fifo-advanced"><summary>Revisar presentación <small>sólo si no coincide con el catálogo</small></summary><div className="quick-line__numbers fifo-entry-fields">
+          <label>Unidad de compra<input placeholder="pz, caja, botella…" value={modo === 'orden_manuscrita' ? l.unidad_fuente : l.unidad_compra} onChange={(e) => editar(i, modo === 'orden_manuscrita' ? 'unidad_fuente' : 'unidad_compra', e.target.value)} /></label>
+          <label>Contenido por unidad ({producto?.unidad_base ?? 'unidad base'})<input type="number" min="0" step="any" value={l.contenido_compra} placeholder="Ej. 500" onChange={(e) => editar(i, 'contenido_compra', e.target.value)} /></label>
+          <label>Total en unidad base {cantidadCalculada != null && <small>(automático)</small>}<input type="number" min="0" step="any" value={cantidadCalculada ?? l.cantidad_base} readOnly={cantidadCalculada != null} placeholder="Se calcula solo" onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /></label>
+        </div>{cantidadCalculada != null && <small className="fifo-entry-result">Se agregará a inventario: <strong>{formatoCantidad(cantidadCalculada)} {producto?.unidad_base ?? 'unidades base'}</strong> · costo {costoCalculado == null ? '—' : mxn(costoCalculado)}</small>}</details></>}
         {l.tipo_linea === 'gasto' && <label className="fifo-expense-amount">Importe del gasto<input type="number" min="0" step="0.01" placeholder="Ej. 146" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></label>}
         {lineas.length > 1 && <button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))}>Quitar</button>}
       </div>;
     })}</div>
     <div className="sticky-action"><button className="btn-secondary" onClick={() => setLineas((v) => [...v, { product_id: null, tipo_linea: 'pendiente', descripcion_fuente: '', cantidad_fuente: '', unidad_fuente: '', cantidad_base: '', unidad_compra: '', contenido_compra: '', costo_unitario: '', importe: '', confianza: null }])}>Agregar línea</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Enviando…' : 'Enviar a revisión'}</button></div>
-    <div className="info-box quick-purchase__single-source"><strong>Siguiente paso:</strong> envía la captura y ábrela en <button className="link-btn" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>Revisión</button>. Nada entra a FIFO ni a caja hasta confirmar.</div>
+    <div className="info-box quick-purchase__single-source"><strong>Después:</strong> un supervisor revisará el ticket. Nada entra a inventario ni a finanzas hasta confirmarlo.</div>
   </section>;
 }
 
@@ -264,19 +274,19 @@ export function RegistroComprasPanel({ semana, onChange }: { semana: Semana; onC
 
   return <section className="unified-purchases" aria-labelledby="compras-titulo">
     <div className="section-heading unified-purchases__heading">
-      <div><h2 id="compras-titulo">Compras de la semana</h2><p className="muted">Un ticket, un flujo: captura, revisión y confirmación. FIFO y el movimiento financiero se generan juntos.</p></div>
+      <div><h2 id="compras-titulo">Compras de la semana</h2><p className="muted">Cada ticket se captura una vez. Al confirmarlo, inventario y finanzas se actualizan juntos.</p></div>
       <span className={`status status--${semana.estado === 'abierta' ? 'ok' : 'cargando'}`}>{semana.estado === 'abierta' ? 'Captura abierta' : 'Consulta histórica'}</span>
     </div>
-    <div className="purchase-flow-guide" aria-label="Flujo de compras"><span><strong>1</strong> Captura</span><span><strong>2</strong> Revisa</span><span><strong>3</strong> Confirma</span></div>
+    <div className="purchase-flow-guide" aria-label="Flujo de compras"><span><strong>1</strong> Registrar</span><span><strong>2</strong> Revisar</span><span><strong>3</strong> Confirmar</span></div>
     {semana.estado === 'abierta' && <details className="operation-capture" open={pendientesSemana.length === 0}>
-      <summary><strong>Nueva compra</strong><span className="muted">Foto → revisar → confirmar</span></summary>
+      <summary><strong>Registrar compra</strong><span className="muted">Toma una foto o captura los datos</span></summary>
       <div className="operation-capture__body"><CapturaRapida key={semana.id} fechaInicial={semana.fecha_inicio} onSaved={() => { void cargar(); onChange(); }} /></div>
     </details>}
     {mensaje && <div className="info-box" role="status">{mensaje}</div>}
     <nav className="tabs unified-purchases__tabs" aria-label="Compras de la semana">
-      <button className={tab === 'pendientes' ? 'tab tab--on' : 'tab'} onClick={() => setTab('pendientes')}>Revisión {pendientesSemana.length ? `(${pendientesSemana.length})` : ''}</button>
+      <button className={tab === 'pendientes' ? 'tab tab--on' : 'tab'} onClick={() => setTab('pendientes')}>Pendientes {pendientesSemana.length ? `(${pendientesSemana.length})` : ''}</button>
       <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => setTab('tickets')}>Historial ({comprasSemana.length})</button>
-      <button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => setTab('lotes')}>FIFO ({lotesSemana.length})</button>
+      <button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => setTab('lotes')}>Costos por lote ({lotesSemana.length})</button>
     </nav>
     {cargando ? <section className="card"><Cargando etiqueta="Cargando compras y lotes…" /></section> : <>
       {tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={[...productos].sort((a, b) => a.nombre.localeCompare(b.nombre))} onChange={() => { void cargar(); onChange(); }} />}
@@ -443,8 +453,8 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
   }
 
   return <article className="card quick-pending__card">
-    <div className="section-heading"><div><h2>{fila.proveedor || 'Compra sin proveedor'}</h2><p className="muted">{fila.fecha_recepcion} · {fila.fuente === 'orden_manuscrita' ? 'orden manuscrita' : (fila.ticket_ref || 'sin folio')} · {fila.total == null ? (fila.fuente === 'orden_manuscrita' ? 'total pendiente' : `${mxn(totalDeLineas(lineas))} · total calculado`) : mxn(fila.total)}</p></div>{fila.foto && <button className="btn-secondary" onClick={() => void verFoto()}>Ver fuente</button>}</div>
-    <div className="quick-pending__meta"><label>Total de la compra<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} placeholder="Ej. 1,282.10" />{fila.total == null && fila.fuente !== 'orden_manuscrita' && <small className="muted">Calculado con la suma de las líneas del ticket.</small>}</label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value)}><option value="">Seleccionar…</option>{ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
+    <div className="section-heading"><div><h2>{fila.proveedor || 'Compra sin proveedor'}</h2><p className="muted">{fila.fecha_recepcion} · {fila.fuente === 'orden_manuscrita' ? 'orden manuscrita' : (fila.ticket_ref || 'sin folio')} · {fila.total == null ? (fila.fuente === 'orden_manuscrita' ? 'total pendiente' : `${mxn(totalDeLineas(lineas))} · total calculado`) : mxn(fila.total)}</p><span className="status status--cargando">Pendiente de revisión</span></div>{fila.foto && <button className="btn-secondary" onClick={() => void verFoto()}>Ver ticket</button>}</div>
+    <div className="quick-pending__meta"><label>Total de la compra<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} placeholder="Ej. 1,282.10" />{fila.total == null && fila.fuente !== 'orden_manuscrita' && <small className="muted">Calculado con la suma de las líneas del ticket.</small>}</label><label>¿Cómo se pagó?<select value={origen} onChange={(e) => setOrigen(e.target.value)}><option value="">Seleccionar…</option>{ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
     {fila.fuente === 'orden_manuscrita' && <div className="info-box">Captura cantidad y presentación. FIFO calculará el total en gramos, mililitros o piezas.</div>}
     {fila.notas && <div className="info-box">{fila.notas}</div>}
     {foto && <img className="ticket-preview" src={foto} alt="Fuente original" />}
@@ -470,6 +480,13 @@ function fechaCompra(fecha: string) {
   return new Date(`${fecha}T12:00:00`).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+function estadoCompraTexto(estado: string) {
+  if (estado === 'confirmada') return 'Confirmada';
+  if (estado === 'rechazada') return 'Rechazada';
+  if (estado === 'pendiente') return 'Pendiente de revisión';
+  return estado;
+}
+
 function ResumenSemana({ semana, compras, lotes }: { semana: Semana; compras: CompraDia[]; lotes: Lote[] }) {
   const totalCompras = compras.reduce((s, c) => s + c.total, 0);
   const totalFifo = lotes.reduce((s, l) => s + l.cantidad_inicial * l.costo_unitario, 0);
@@ -492,7 +509,7 @@ function Tickets({ compras, cargando }: { compras: CompraDia[]; cargando: boolea
     <div className="ticket-list">{Array.from(porDia.entries()).map(([fecha, filas]) => <section className="ticket-day" key={fecha}>
       <div className="ticket-day__head"><strong>{fechaCompra(fecha)}</strong><span>{filas.length} {filas.length === 1 ? 'ticket' : 'tickets'}</span></div>
       {filas.map((c) => <details className="ticket-card" key={c.id}>
-        <summary><span><strong>{c.proveedor || 'Compra sin proveedor'}</strong><small>{c.ticket_ref || 'Sin folio'} · {c.estado}</small></span><span><strong>{mxn(c.total)}</strong><small>{c.origen_pago || 'Pago no registrado'}</small></span></summary>
+        <summary><span><strong>{c.proveedor || 'Compra sin proveedor'}</strong><small>{c.ticket_ref || 'Sin folio'} · {estadoCompraTexto(c.estado)}</small></span><span><strong>{mxn(c.total)}</strong><small>{c.origen_pago || 'Pago no registrado'}</small></span></summary>
         <div className="ticket-lines">{c.lineas.length ? c.lineas.map((linea, i) => <div className="ticket-line" key={`${c.id}-${i}`}><span><small>{linea.tipo === 'gasto' ? 'Gasto' : 'Inventario'}</small>{linea.producto}</span><strong>{mxn(linea.importe)}</strong></div>) : <p className="muted">Este ticket no tiene líneas detalladas.</p>}{c.foto && <TicketSource purchaseId={c.id} />}</div>
       </details>)}
     </section>)}</div>

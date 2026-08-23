@@ -93,12 +93,19 @@
 .info-box { background: var(--info-bg); border: 1px solid var(--info); color: var(--ink); border-radius: var(--r-card); padding: 0.8rem 1rem; margin-bottom: 1rem; }
 .unified-operations-intro { display: grid; gap: .28rem; margin-top: .9rem; border-color: color-mix(in srgb, var(--brand) 42%, var(--border)); background: color-mix(in srgb, var(--brand) 8%, var(--surface)); }
 .unified-operations-intro p { margin: 0; max-width: 70rem; line-height: 1.45; }
+.unified-operations-intro .btn-primary { justify-self: start; margin-top: .3rem; }
 .operation-adjustment { margin: .8rem 0 1rem; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface); }
 .operation-adjustment summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: .65rem; padding: .8rem 1rem; cursor: pointer; list-style: none; }
 .operation-adjustment summary::-webkit-details-marker { display: none; }
 .operation-adjustment summary::before { content: '＋'; color: var(--accent); font-weight: 800; }
 .operation-adjustment[open] summary::before { content: '−'; }
 .operation-adjustment .form-mov { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.operation-history { margin: 0; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface); }
+.operation-history summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: .65rem; padding: .8rem 1rem; cursor: pointer; list-style: none; }
+.operation-history summary::-webkit-details-marker { display: none; }
+.operation-history summary::before { content: '＋'; color: var(--ink-3); font-weight: 800; }
+.operation-history[open] summary::before { content: '−'; }
+.operation-history > .conteo-list { border-top: 1px solid var(--border); margin: 0 !important; padding: .25rem .75rem .75rem; }
 .operation-capture { margin: .8rem 0 1rem; border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border)); border-radius: var(--r-card); background: var(--surface); }
 .operation-capture summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: .65rem; padding: .8rem 1rem; cursor: pointer; list-style: none; }
 .operation-capture summary::-webkit-details-marker { display: none; }
@@ -2064,6 +2071,7 @@ select:disabled {
 .fifo-entry-result { grid-column: 1 / -1; color: var(--accent); font-weight: 600; }
 .fifo-expense-amount { max-width: 18rem; margin-top: .5rem; }
 .quick-line__numbers { display: grid; grid-template-columns: repeat(5, minmax(90px, 1fr)); gap: .4rem; width: 100%; grid-column: 1 / -1; }
+.quick-line__numbers--simple { grid-template-columns: repeat(2, minmax(150px, 1fr)); }
 .quick-line__numbers input { min-width: 0; width: auto; }
 .quick-pending { display: grid; gap: 1rem; }
 .quick-pending__card { border-color: rgba(220, 167, 69, .45); }
@@ -2111,6 +2119,7 @@ select:disabled {
   .quick-purchase__actions > * { flex: 1 1 45%; justify-content: center; }
   .quick-line { grid-template-columns: 1fr; }
   .quick-line__numbers { width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-line__numbers--simple { grid-template-columns: 1fr; }
   .quick-line__numbers input { width: auto; }
   .quick-line .btn-ghost { justify-self: start; }
   .quick-day__row { align-items: flex-start; }

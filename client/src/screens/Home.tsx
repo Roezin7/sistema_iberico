@@ -14,6 +14,7 @@ interface Modulo {
 }
 
 const MODULOS: Modulo[] = [
+  { clave: 'compras', titulo: 'Registrar compra', icono: 'package', desc: 'Tickets, gastos y revisión', ruta: '/compras' },
   { clave: 'inventario', titulo: 'Inventario', icono: 'package', desc: 'Conteos y lista de compras', ruta: '/inventario' },
   { clave: 'finanzas', titulo: 'Operación', icono: 'wallet', desc: 'Ventas, compras, egresos y cuadre', ruta: '/finanzas', soloAdmin: true },
   { clave: 'patrimonio', titulo: 'Patrimonio', icono: 'trending', desc: 'Tendencia y snapshots', ruta: '/patrimonio', soloAdmin: true },
