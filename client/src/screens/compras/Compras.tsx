@@ -20,6 +20,10 @@ export interface Semana { id: number; etiqueta: string; fecha_inicio: string; fe
 const mxn = (n: number) => n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 const hoy = new Date().toISOString().slice(0, 10);
 
+function totalDeLineas(lineas: Array<{ importe: number | null | undefined }>) {
+  return Math.round((lineas.reduce((s, l) => s + (Number(l.importe) || 0), 0) + Number.EPSILON) * 100) / 100;
+}
+
 function finEposExclusivo(fecha: string) {
   const dia = new Date(`${fecha}T12:00:00-06:00`);
   dia.setUTCDate(dia.getUTCDate() + 1);
@@ -330,7 +334,8 @@ export function PendienteCard({ fila, productos, onChange }: { fila: Pendiente; 
 
 function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pendiente; productos: Producto[]; ubicaciones: RefCompra['ubicaciones']; onChange: () => void }) {
   const [lineas, setLineas] = useState(fila.lineas);
-  const [total, setTotal] = useState(fila.total == null ? '' : String(fila.total));
+  const totalInicial = fila.total == null && fila.fuente !== 'orden_manuscrita' ? totalDeLineas(fila.lineas) : fila.total;
+  const [total, setTotal] = useState(totalInicial == null ? '' : String(totalInicial));
   const [origen, setOrigen] = useState(fila.origen_pago_id == null ? '' : String(fila.origen_pago_id));
   const [foto, setFoto] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState('');
@@ -364,52 +369,41 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
     return lineas.map((l) => ({ ...l, product_id: l.product_id ? Number(l.product_id) : null, cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente || null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) }));
   }
 
-  async function guardarLineas() {
-    await api(`/inventario/compras/${fila.id}/lineas`, { method: 'PUT', body: { total: total.trim() ? Number(total) : null, lineas: payloadLineas() } });
+  function totalParaValidar() {
+    const elegido = total.trim() ? Number(total) : (fila.fuente !== 'orden_manuscrita' ? totalDeLineas(lineas) : null);
+    return Number.isFinite(elegido) && elegido != null && elegido >= 0 ? elegido : null;
   }
 
-  async function guardarCambios() {
-    setGuardando(true); setMensaje('');
-    try {
-      await guardarLineas();
-      if (origen) await api(`/inventario/compras/${fila.id}/pago`, { method: 'PATCH', body: { origen_pago_id: Number(origen) } });
-      setMensaje('Cambios guardados. La compra sigue pendiente hasta confirmarla.');
-      onChange();
-    } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudieron guardar los cambios.'); }
-    finally { setGuardando(false); }
+  async function guardarLineas(totalCompra: number) {
+    await api(`/inventario/compras/${fila.id}/lineas`, { method: 'PUT', body: { total: totalCompra, lineas: payloadLineas() } });
   }
 
-  async function validar() {
-    if (!total.trim() || !Number.isFinite(Number(total))) { setMensaje('Completa el total antes de validar.'); return null; }
+  async function validar(totalCompra = totalParaValidar()) {
+    if (totalCompra == null) { setMensaje('Completa el total antes de validar.'); return null; }
     setValidando(true);
     try {
-      const r = await api<ValidacionCompra>('/inventario/compras/validar', { method: 'POST', body: { total: Number(total), lineas: payloadLineas() } });
+      const r = await api<ValidacionCompra>('/inventario/compras/validar', { method: 'POST', body: { total: totalCompra, lineas: payloadLineas() } });
       setValidacion(r); setMensaje(r.errores.length ? 'Corrige los errores antes de confirmar.' : r.advertencias.length ? 'Hay advertencias; puedes confirmarlas después de revisarlas.' : 'Validación correcta.');
       return r;
     } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo validar la compra.'); return null; }
     finally { setValidando(false); }
   }
 
-  async function confirmar() {
+  async function guardarYValidar() {
+    const totalCompra = totalParaValidar();
     if (!origen) { setMensaje('Selecciona el origen del pago antes de confirmar.'); return; }
-    if (!total.trim() || !Number.isFinite(Number(total))) { setMensaje('Completa el total antes de confirmar.'); return; }
+    if (totalCompra == null) { setMensaje('Completa el total antes de validar.'); return; }
     setGuardando(true); setMensaje('');
     try {
-      const r = await validar();
-      if (!r || r.errores.length) return;
-      await guardarLineas();
+      await guardarLineas(totalCompra);
       await api(`/inventario/compras/${fila.id}/pago`, { method: 'PATCH', body: { origen_pago_id: Number(origen) } });
+      const r = await validar(totalCompra);
+      if (!r || r.errores.length) return;
       const confirmada = await api<{ discrepancias?: ValidacionCompra['advertencias'] }>(`/inventario/compras/${fila.id}/confirmar`, { method: 'POST', body: {} });
       setMensaje(confirmada.discrepancias?.length ? `Compra confirmada con ${confirmada.discrepancias.length} advertencia(s) registrada(s).` : 'Compra confirmada: FIFO y cierre actualizados.');
       onChange();
     } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo confirmar'); }
     finally { setGuardando(false); }
-  }
-
-  async function rechazar() {
-    const nota = window.prompt('Motivo del rechazo') || '';
-    try { await api(`/inventario/compras/${fila.id}/rechazar`, { method: 'POST', body: { nota } }); onChange(); }
-    catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo rechazar la compra.'); }
   }
 
   async function verFoto() {
@@ -418,8 +412,8 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
   }
 
   return <article className="card quick-pending__card">
-    <div className="section-heading"><div><h2>{fila.proveedor || 'Compra sin proveedor'}</h2><p className="muted">{fila.fecha_recepcion} · {fila.fuente === 'orden_manuscrita' ? 'orden manuscrita' : (fila.ticket_ref || 'sin folio')} · {fila.total == null ? 'total pendiente' : mxn(fila.total)}</p></div>{fila.foto && <button className="btn-secondary" onClick={() => void verFoto()}>Ver fuente</button>}</div>
-    <div className="quick-pending__meta"><label>Total de la compra<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} placeholder="Ej. 1,282.10" /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value)}><option value="">Seleccionar…</option>{ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
+    <div className="section-heading"><div><h2>{fila.proveedor || 'Compra sin proveedor'}</h2><p className="muted">{fila.fecha_recepcion} · {fila.fuente === 'orden_manuscrita' ? 'orden manuscrita' : (fila.ticket_ref || 'sin folio')} · {fila.total == null ? (fila.fuente === 'orden_manuscrita' ? 'total pendiente' : `${mxn(totalDeLineas(lineas))} · total calculado`) : mxn(fila.total)}</p></div>{fila.foto && <button className="btn-secondary" onClick={() => void verFoto()}>Ver fuente</button>}</div>
+    <div className="quick-pending__meta"><label>Total de la compra<input type="number" min="0" step="0.01" inputMode="decimal" value={total} onChange={(e) => setTotal(e.target.value)} placeholder="Ej. 1,282.10" />{fila.total == null && fila.fuente !== 'orden_manuscrita' && <small className="muted">Calculado con la suma de las líneas del ticket.</small>}</label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value)}><option value="">Seleccionar…</option>{ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
     {fila.fuente === 'orden_manuscrita' && <div className="info-box">Captura cantidad y presentación. FIFO calculará el total en gramos, mililitros o piezas.</div>}
     {fila.notas && <div className="info-box">{fila.notas}</div>}
     {foto && <img className="ticket-preview" src={foto} alt="Fuente original" />}
@@ -437,7 +431,7 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
     })}</div>
     {validacion && <div className="info-box">{validacion.errores.length > 0 && <div><strong>Errores</strong>{validacion.errores.map((d) => <div key={`${d.codigo}-${d.linea ?? ''}`}>[{d.codigo}] {d.mensaje}</div>)}</div>}{validacion.advertencias.length > 0 && <div><strong>Advertencias</strong>{validacion.advertencias.map((d) => <div key={`${d.codigo}-${d.linea ?? ''}`}>[{d.codigo}] {d.mensaje}</div>)}</div>}</div>}
     {mensaje && <div className="info-box">{mensaje}</div>}
-    <div className="sticky-action"><button className="btn-secondary" disabled={validando || guardando} onClick={() => void validar()}>{validando ? 'Validando…' : 'Validar discrepancias'}</button><button className="btn-secondary" disabled={guardando} onClick={() => void rechazar()}>Rechazar</button><button className="btn-secondary" disabled={guardando} onClick={() => void guardarCambios()}>{guardando ? 'Guardando…' : 'Guardar cambios'}</button><button className="btn-primary" disabled={validando || guardando} onClick={() => void confirmar()}>{guardando ? 'Confirmando…' : 'Guardar y confirmar'}</button></div>
+    <div className="sticky-action"><button className="btn-primary" disabled={validando || guardando} onClick={() => void guardarYValidar()}>{guardando ? 'Guardando y validando…' : 'Guardar y validar compra'}</button></div>
   </article>;
 }
 

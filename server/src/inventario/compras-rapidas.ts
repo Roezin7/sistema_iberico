@@ -65,6 +65,10 @@ function fechaUTC(fecha: string): Date {
   return value;
 }
 
+function totalDeLineasCapturadas(lineas: Array<{ importe: unknown }>) {
+  return Math.round((lineas.reduce((s, l) => s + (Number(l.importe) || 0), 0) + Number.EPSILON) * 100) / 100;
+}
+
 function validarFoto(data?: string | null, mime?: string | null) {
   if (!data) return null;
   if (!mime || !/^image\/(jpeg|png|webp|heic)$/i.test(mime)) throw new HttpError(400, 'Formato de foto no soportado');
@@ -289,7 +293,15 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     const compra = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId, estado: 'confirmando' }, include: { capture_lines: true } });
     if (!compra) throw new HttpError(409, 'No se pudo reservar la compra para confirmación');
     if (!compra.origen_pago_id) throw new HttpError(400, 'Selecciona de dónde salió el pago antes de confirmar');
-    if (compra.total == null) throw new HttpError(400, 'Completa el total de la orden antes de confirmar');
+    // Los tickets leídos por OCR pueden conservar el total vacío aunque sus líneas
+    // ya estén completas. En ese caso el total verificable es la suma del recibo.
+    // Las órdenes manuscritas siguen exigiendo captura explícita porque no son un
+    // recibo fiscal completo.
+    const totalCalculado = compra.total == null && compra.fuente !== 'orden_manuscrita'
+      ? totalDeLineasCapturadas(compra.capture_lines)
+      : null;
+    const totalCompra = compra.total == null ? (totalCalculado && totalCalculado > 0 ? totalCalculado : null) : Number(compra.total);
+    if (totalCompra == null) throw new HttpError(400, 'Completa el total de la orden antes de confirmar');
     if (compra.capture_lines.some((l) => l.tipo_linea === 'pendiente' || (l.tipo_linea === 'inventario' && (!l.product_id || !l.cantidad_base || Number(l.cantidad_base) <= 0)))) {
       throw new HttpError(400, 'Todas las líneas deben clasificarse y las de inventario deben tener producto y cantidad');
     }
@@ -299,7 +311,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     if (!semana) throw new HttpError(409, 'No existe una semana abierta para la fecha del ticket');
     if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana del ticket está cerrada');
 
-    const total = Number(compra.total ?? 0);
+    const total = totalCompra;
     const inventory = compra.capture_lines.filter((l) => l.tipo_linea === 'inventario');
     const gastos = compra.capture_lines.filter((l) => l.tipo_linea === 'gasto');
     const resumen = resumirCompra(total, compra.capture_lines.map((l) => ({ tipo_linea: l.tipo_linea as 'inventario' | 'gasto' | 'pendiente', importe: Number(l.importe) })));
@@ -378,7 +390,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     if (gastoTotal > 0) {
       await tx.movimientos.create({ data: { negocio_id: negocioId, semana_id: semana.id, fecha: compra.fecha_recepcion, tipo: 'gasto', monto: gastoTotal, ubicacion_origen_id: origen.id, categoria_id: categoria?.id ?? null, facturado, descripcion: `Compra ticket ${compra.ticket_ref ?? compra.id}${gastos.length ? ' · gasto operativo' : ' · diferencia no itemizada'}`, usuario_id: usuarioId, compra_id: compra.id } });
     }
-    await tx.purchases.update({ where: { id: compra.id }, data: { estado: 'confirmada', notas: notasCompra, confirmada_por: usuarioId, confirmada_at: new Date() } });
+    await tx.purchases.update({ where: { id: compra.id }, data: { total, estado: 'confirmada', notas: notasCompra, confirmada_por: usuarioId, confirmada_at: new Date() } });
     return { purchase_id: Number(compra.id), estado: 'confirmada', inventario: inventarioTotal, gasto: gastoTotal, movimientos: (inventarioTotal > 0 ? 1 : 0) + (gastoTotal > 0 ? 1 : 0), discrepancias: validacion.advertencias };
   });
 }
