@@ -45,14 +45,13 @@ type ModoCosteo = 'normal' | 'historico_prueba';
 
 /**
  * El modo histórico limita deliberadamente el costeo al libro del piloto.
- * El modo normal, en cambio, es continuo: todos los lotes reales (incluidos
- * los recibidos durante la reconstrucción inicial) pasan a las semanas
- * siguientes por su saldo restante.
+ * El modo normal usa el libro operativo y excluye los lotes de reconstrucción
+ * histórica para evitar contar dos veces el mismo inventario de apertura.
  */
 function filtroFuenteFifo(modo: ModoCosteo) {
   return modo === 'historico_prueba'
     ? { fuente: 'historico_prueba' as const }
-    : {};
+    : { fuente: { not: 'historico_prueba' as const } };
 }
 
 function fechaISO(value: Date) {

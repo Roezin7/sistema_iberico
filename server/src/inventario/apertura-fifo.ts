@@ -142,6 +142,9 @@ export async function prepararAperturaFifo(input: {
           recibido_at: { lte: semana.fecha_inicio },
           estado: 'abierto',
           cantidad_restante: { gt: 0 },
+          // Los lotes históricos del piloto no bloquean la creación del lote
+          // operativo correspondiente al snapshot físico de apertura.
+          fuente: { not: 'historico_prueba' },
         },
         select: { product_id: true },
       })
