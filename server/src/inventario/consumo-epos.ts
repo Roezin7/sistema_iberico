@@ -43,6 +43,16 @@ type PlanContext = {
 
 type ModoCosteo = 'normal' | 'historico_prueba';
 
+/**
+ * El costeo histórico es un libro de prueba aislado. Nunca debe contaminar
+ * el FIFO operativo ni el estado de inventario que ve el cierre actual.
+ */
+function filtroFuenteFifo(modo: ModoCosteo) {
+  return modo === 'historico_prueba'
+    ? { fuente: 'historico_prueba' as const }
+    : { fuente: { not: 'historico_prueba' as const } };
+}
+
 function fechaISO(value: Date) {
   return value.toISOString().slice(0, 10);
 }
@@ -108,7 +118,7 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
     const lotes = context
       ? (context.lotsByProduct.get(linea.product_id.toString()) ?? []).filter((lote) => lote.recibido_at <= finDelDia(venta.fecha))
       : await client.inventory_lots.findMany({
-        where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 }, recibido_at: { lte: finDelDia(venta.fecha) } },
+        where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 }, recibido_at: { lte: finDelDia(venta.fecha) }, ...filtroFuenteFifo('normal') },
         orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
         select: { id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
       });
@@ -143,6 +153,7 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
       product_id: { in: productIds },
       estado: 'abierto',
       cantidad_restante: { gt: 0 },
+      ...filtroFuenteFifo(modo),
     },
     orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
     select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
@@ -322,7 +333,7 @@ export async function costearVentasPendientesEnVivo(input: {
 export async function estadoFifoEnVivo(negocioId: bigint) {
   const [lotes, pendientes, excepciones] = await Promise.all([
     prisma.inventory_lots.findMany({
-      where: { negocio_id: negocioId, estado: 'abierto', cantidad_restante: { gt: 0 } },
+      where: { negocio_id: negocioId, estado: 'abierto', cantidad_restante: { gt: 0 }, ...filtroFuenteFifo('normal') },
       select: { cantidad_restante: true, costo_unitario: true },
     }),
     prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: 'pendiente' } }),
@@ -344,12 +355,13 @@ export async function estadoFifoEnVivo(negocioId: bigint) {
  * y el ledger inmutable de consumos para que una semana posterior no borre ni
  * reinicie la existencia de las semanas anteriores.
  */
-export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date) {
+export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date, modo: ModoCosteo = 'normal') {
   const lotes = await prisma.inventory_lots.findMany({
     where: {
       negocio_id: negocioId,
       recibido_at: { lte: fechaCorte },
       estado: { in: ['abierto', 'agotado'] },
+      ...filtroFuenteFifo(modo),
     },
     select: { id: true, cantidad_inicial: true, costo_unitario: true },
   });
