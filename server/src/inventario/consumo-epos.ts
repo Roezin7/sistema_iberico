@@ -30,9 +30,11 @@ type CachedMenu = {
 
 type CachedLot = {
   id: bigint;
+  product_id?: bigint;
   recibido_at: Date;
   cantidad_restante: Prisma.Decimal;
   costo_unitario: Prisma.Decimal;
+  fuente: string;
 };
 
 type PlanContext = {
@@ -45,13 +47,14 @@ type ModoCosteo = 'normal' | 'historico_prueba';
 
 /**
  * El modo histórico limita deliberadamente el costeo al libro del piloto.
- * El modo normal usa el libro operativo y excluye los lotes de reconstrucción
- * histórica para evitar contar dos veces el mismo inventario de apertura.
+ * En modo normal, si existe un lote operativo para el producto se usa ese
+ * libro; si no, se conserva el saldo histórico para no crear faltantes
+ * artificiales cuando el snapshot omitió una línea.
  */
-function filtroFuenteFifo(modo: ModoCosteo) {
-  return modo === 'historico_prueba'
-    ? { fuente: 'historico_prueba' as const }
-    : { fuente: { not: 'historico_prueba' as const } };
+function seleccionarLotesOperativos<T extends { fuente: string }>(lotes: T[], modo: ModoCosteo = 'normal') {
+  if (modo === 'historico_prueba') return lotes.filter((lote) => lote.fuente === 'historico_prueba');
+  const vivos = lotes.filter((lote) => lote.fuente !== 'historico_prueba');
+  return vivos.length ? vivos : lotes;
 }
 
 function fechaISO(value: Date) {
@@ -117,12 +120,12 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
     // que una compra capturada con fecha futura tape artificialmente un faltante
     // histórico cuando el costeo se reintenta en vivo.
     const lotes = context
-      ? (context.lotsByProduct.get(linea.product_id.toString()) ?? []).filter((lote) => lote.recibido_at <= finDelDia(venta.fecha))
-      : await client.inventory_lots.findMany({
-        where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 }, recibido_at: { lte: finDelDia(venta.fecha) }, ...filtroFuenteFifo('normal') },
+      ? seleccionarLotesOperativos((context.lotsByProduct.get(linea.product_id.toString()) ?? []).filter((lote) => lote.recibido_at <= finDelDia(venta.fecha)))
+      : seleccionarLotesOperativos(await client.inventory_lots.findMany({
+        where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 }, recibido_at: { lte: finDelDia(venta.fecha) } },
         orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
-        select: { id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
-      });
+        select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true },
+      }));
     const resultado = consumirFIFO(lotes.map((lote) => ({
       id: Number(lote.id), recibidoAt: fechaISO(lote.recibido_at), cantidadRestante: Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
     })), cantidadBase);
@@ -154,10 +157,9 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
       product_id: { in: productIds },
       estado: 'abierto',
       cantidad_restante: { gt: 0 },
-      ...filtroFuenteFifo(modo),
     },
     orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
-    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
+    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true },
   }) : [];
   const consumed = await client.inventory_consumptions.findMany({
     where: { negocio_id: negocioId, epos_venta_id: { in: ventas.map((venta) => venta.id) } },
@@ -169,6 +171,7 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
     list.push(lot);
     lotsByProduct.set(lot.product_id.toString(), list);
   }
+  for (const [key, list] of lotsByProduct) lotsByProduct.set(key, seleccionarLotesOperativos(list, modo));
   return { menus, lotsByProduct, consumedVentaIds: new Set(consumed.flatMap((row) => row.epos_venta_id == null ? [] : [row.epos_venta_id.toString()])) };
 }
 
@@ -334,16 +337,18 @@ export async function costearVentasPendientesEnVivo(input: {
 export async function estadoFifoEnVivo(negocioId: bigint) {
   const [lotes, pendientes, excepciones] = await Promise.all([
     prisma.inventory_lots.findMany({
-      where: { negocio_id: negocioId, estado: 'abierto', cantidad_restante: { gt: 0 }, ...filtroFuenteFifo('normal') },
-      select: { cantidad_restante: true, costo_unitario: true },
+      where: { negocio_id: negocioId, estado: 'abierto', cantidad_restante: { gt: 0 } },
+      select: { product_id: true, cantidad_restante: true, costo_unitario: true, fuente: true },
     }),
     prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: 'pendiente' } }),
     prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: 'excepcion' } }),
   ]);
-  const valor = lotes.reduce((sum, lote) => sum + Number(lote.cantidad_restante) * Number(lote.costo_unitario), 0);
+  const seleccionados = [...new Set(lotes.map((lote) => lote.product_id.toString()))]
+    .flatMap((productId) => seleccionarLotesOperativos(lotes.filter((lote) => lote.product_id.toString() === productId)));
+  const valor = seleccionados.reduce((sum, lote) => sum + Number(lote.cantidad_restante) * Number(lote.costo_unitario), 0);
   return {
-    lotes_abiertos: lotes.length,
-    unidades_base_abiertas: lotes.reduce((sum, lote) => sum + Number(lote.cantidad_restante), 0),
+    lotes_abiertos: seleccionados.length,
+    unidades_base_abiertas: seleccionados.reduce((sum, lote) => sum + Number(lote.cantidad_restante), 0),
     valor_fifo_abierto: Number(valor.toFixed(4)),
     ventas_pendientes: pendientes,
     ventas_excepcion: excepciones,
@@ -362,13 +367,15 @@ export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date, modo
       negocio_id: negocioId,
       recibido_at: { lte: fechaCorte },
       estado: { in: ['abierto', 'agotado'] },
-      ...filtroFuenteFifo(modo),
+      ...(modo === 'historico_prueba' ? { fuente: 'historico_prueba' as const } : {}),
     },
-    select: { id: true, cantidad_inicial: true, costo_unitario: true },
+    select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true, fuente: true },
   });
-  if (!lotes.length) return { valor: 0, unidades: 0, lotes: 0 };
+  const lotesSeleccionados = [...new Set(lotes.map((lote) => lote.product_id.toString()))]
+    .flatMap((productId) => seleccionarLotesOperativos(lotes.filter((lote) => lote.product_id.toString() === productId), modo));
+  if (!lotesSeleccionados.length) return { valor: 0, unidades: 0, lotes: 0 };
   const consumos = await prisma.inventory_consumptions.findMany({
-    where: { negocio_id: negocioId, fecha: { lte: fechaCorte }, lote_id: { in: lotes.map((lote) => lote.id) } },
+    where: { negocio_id: negocioId, fecha: { lte: fechaCorte }, lote_id: { in: lotesSeleccionados.map((lote) => lote.id) } },
     select: { lote_id: true, cantidad: true },
   });
   const consumido = new Map<string, number>();
@@ -379,7 +386,7 @@ export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date, modo
   let unidades = 0;
   let valor = 0;
   let lotesConSaldo = 0;
-  for (const lote of lotes) {
+  for (const lote of lotesSeleccionados) {
     const restante = Math.max(0, Number(lote.cantidad_inicial) - (consumido.get(lote.id.toString()) ?? 0));
     if (restante <= 0.0001) continue;
     lotesConSaldo += 1;

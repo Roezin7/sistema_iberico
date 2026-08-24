@@ -323,12 +323,12 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     }),
     // FIFO es un libro continuo. No lo reiniciamos al cambiar de semana:
     // todos los lotes recibidos hasta el cierre participan en la existencia
-    // esperada y los que cruzan semanas. Los lotes de `historico_prueba`
-    // pertenecen al libro de reconstrucción y no deben duplicar el snapshot
-    // que abrió la operación real.
+    // esperada y los que cruzan semanas. La selección final es por producto:
+    // si existe lote operativo se usa ese libro; si no, se conserva el saldo
+    // histórico para no convertir una línea omitida del snapshot en faltante.
     prisma.inventory_lots.findMany({
-      where: { negocio_id: negocioId, recibido_at: { lte: semana.fecha_fin }, estado: { in: ['abierto', 'agotado'] }, fuente: { not: 'historico_prueba' } },
-      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true },
+      where: { negocio_id: negocioId, recibido_at: { lte: semana.fecha_fin }, estado: { in: ['abierto', 'agotado'] } },
+      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true, fuente: true },
     }),
     prisma.inventory_consumptions.findMany({
       where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin } },
@@ -383,11 +383,29 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     consumosLedgerPorLote.set(loteKey, redondearCantidad((consumosLedgerPorLote.get(loteKey) ?? 0) + num0(consumo.cantidad)));
   }
   const lotesPorProducto = new Map<string, { id: bigint; cantidad: number; costo: number }[]>();
+  const lotesPorProductoRaw = new Map<string, typeof lotesLedger>();
   for (const lote of lotesLedger) {
     const key = lote.product_id.toString();
-    const lista = lotesPorProducto.get(key) ?? [];
-    lista.push({ id: lote.id, cantidad: num0(lote.cantidad_inicial), costo: num0(lote.costo_unitario) });
-    lotesPorProducto.set(key, lista);
+    const lista = lotesPorProductoRaw.get(key) ?? [];
+    lista.push(lote);
+    lotesPorProductoRaw.set(key, lista);
+  }
+  for (const [key, lista] of lotesPorProductoRaw) {
+    const vivos = lista.filter((lote) => lote.fuente !== 'historico_prueba');
+    const seleccionados = vivos.length ? vivos : lista;
+    lotesPorProducto.set(key, seleccionados.map((lote) => ({ id: lote.id, cantidad: num0(lote.cantidad_inicial), costo: num0(lote.costo_unitario) })));
+  }
+  const lotesSeleccionadosIds = new Set([...lotesPorProducto.values()].flatMap((lista) => lista.map((lote) => lote.id.toString())));
+  // Durante la transición puede haber ventas de esta semana que fueron
+  // consumidas contra un lote histórico antes de que existiera el lote
+  // operativo de apertura. No sumamos ese lote histórico, pero sí descontamos
+  // ese consumo del saldo operativo del producto para que la conciliación no
+  // muestre una existencia completa artificial.
+  const consumosHistoricosSemanaPorProducto = new Map<string, number>();
+  for (const consumo of consumos) {
+    if (consumo.fuente === 'ajuste_inventario' || lotesSeleccionadosIds.has(consumo.lote_id.toString())) continue;
+    const key = consumo.product_id.toString();
+    consumosHistoricosSemanaPorProducto.set(key, redondearCantidad((consumosHistoricosSemanaPorProducto.get(key) ?? 0) + num0(consumo.cantidad)));
   }
 
   const productoPorId = new Map(productos.map((p) => [p.id.toString(), p]));
@@ -408,8 +426,12 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
         ? costoPresentacion / contenidoCompra
         : costoPresentacion;
     const tieneAperturaFifo = lotesLedger.some((lote) => lote.product_id.toString() === key && lote.recibido_at <= semana.fecha_inicio);
-    const fifoRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)), 0);
-    const fifoValorRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)) * lote.costo, 0);
+    const saldoSeleccionado = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)), 0);
+    const valorSeleccionado = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)) * lote.costo, 0);
+    const consumoHistoricoDeLaSemana = consumosHistoricosSemanaPorProducto.get(key) ?? 0;
+    const fifoRestante = Math.max(0, saldoSeleccionado - consumoHistoricoDeLaSemana);
+    const costoSeleccionado = saldoSeleccionado > 0.0001 ? valorSeleccionado / saldoSeleccionado : 0;
+    const fifoValorRestante = Math.max(0, valorSeleccionado - consumoHistoricoDeLaSemana * costoSeleccionado);
     const esperado = redondearCantidad(fifoRestante);
     const diferencia = redondearCantidad(fisico - esperado);
     const costoPonderado = fifoRestante > 0.0001
