@@ -247,21 +247,25 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
   ]);
   const compras = redondear(movs.reduce((a, m) => a + num0(m.monto), 0));
   const apertura = semanal.apertura_valor == null ? null : num0(semanal.apertura_valor);
-  const cierreRegistrado = semanal.cierre_valor == null ? null : num0(semanal.cierre_valor);
-  const cierre = cierreRegistrado ?? (fifoCorte.lotes ? fifoCorte.valor : null);
+  // El valor FIFO al corte es una valuación del libro, no un conteo físico.
+  // Nunca debe presentarse como cierre de inventario mientras la semana no
+  // tenga un snapshot de cierre vinculado.
+  const cierreRegistrado = semanal.cierre_snapshot_id == null || semanal.cierre_valor == null
+    ? null
+    : num0(semanal.cierre_valor);
   const costoVentasLedger = consumosPeriodo._count._all > 0 ? num0(consumosPeriodo._sum.costo_total) : null;
-  const costoVentas = costoVentasLedger ?? costoVentasPorInventario(apertura, compras, cierre);
+  const costoVentas = costoVentasLedger ?? costoVentasPorInventario(apertura, compras, cierreRegistrado);
   return {
     apertura_snapshot_id: semanal.apertura_snapshot_id == null ? null : Number(semanal.apertura_snapshot_id),
     cierre_snapshot_id: semanal.cierre_snapshot_id == null ? null : Number(semanal.cierre_snapshot_id),
     apertura_valor: apertura,
     compras,
-    cierre_valor: cierre,
+    cierre_valor: cierreRegistrado,
     costo_ventas: costoVentas,
     costo_ventas_fuente: costoVentasLedger == null ? 'conciliacion_inventario' : 'ledger_fifo_en_vivo',
     valor_fifo_corte: fifoCorte.valor,
     unidades_fifo_corte: fifoCorte.unidades,
-    estado: cierre == null ? 'pendiente_cierre' : 'cerrado',
+    estado: semanal.cierre_snapshot_id == null ? 'pendiente_cierre' : 'cerrado',
     apertura_origen: semanal.apertura_origen,
   };
 }
