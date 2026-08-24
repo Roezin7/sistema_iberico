@@ -12,6 +12,11 @@ type Linea = {
   costo_unitario_base: number | null;
   costo: number | null;
   costo_fifo: number | null;
+  costo_fifo_aplicado: number | null;
+  costo_fifo_referencia: number | null;
+  estado_fifo: 'disponible' | 'aplicado' | 'insuficiente' | 'sin_datos';
+  ultimo_costo_fifo_unitario: number | null;
+  ultimo_costo_fifo_fecha: string | null;
   falta_fifo: string | null;
   falta_configuracion: string[];
   nota: string | null;
@@ -29,6 +34,10 @@ type ProductoCosto = {
   costo_fifo_actual: number | null;
   margen_fifo_actual: number | null;
   food_cost_fifo_pct: number | null;
+  costo_fifo_referencia: number | null;
+  margen_fifo_referencia: number | null;
+  food_cost_fifo_referencia_pct: number | null;
+  fifo_referencia_disponible: boolean;
   fifo_disponible: boolean;
   receta_id: number | null;
   version: number | null;
@@ -156,6 +165,19 @@ export default function CostosMenu() {
 function ProductCard({ product }: { product: ProductoCosto }) {
   const status = product.receta_id == null ? 'Sin receta' : product.completa ? 'Completo' : 'Pendiente';
   const statusClass = product.receta_id == null ? 'is-missing' : product.completa ? 'is-ok' : 'is-pending';
+  const costoVisible = product.costo_fifo_actual ?? product.costo_fifo_referencia ?? product.costo_receta;
+  const margenVisible = product.margen_fifo_actual ?? product.margen_fifo_referencia ?? product.margen_unitario;
+  const foodCostVisible = product.food_cost_fifo_pct ?? product.food_cost_fifo_referencia_pct ?? product.food_cost_pct;
+  const etiquetaCosto = product.costo_fifo_actual != null
+    ? 'Costo FIFO disponible'
+    : product.costo_fifo_referencia != null
+      ? 'Último costo FIFO aplicado'
+      : 'Costo base de receta';
+  const notaCosto = product.costo_fifo_actual != null
+    ? 'saldo actual en lotes'
+    : product.costo_fifo_referencia != null
+      ? `último consumo${product.lineas.find((line) => line.ultimo_costo_fifo_fecha)?.ultimo_costo_fifo_fecha ? ` · ${product.lineas.find((line) => line.ultimo_costo_fifo_fecha)?.ultimo_costo_fifo_fecha}` : ''}`
+      : 'referencia estática';
   return (
     <article className="menu-costos-card">
       <div className="menu-costos-card__head">
@@ -163,9 +185,9 @@ function ProductCard({ product }: { product: ProductoCosto }) {
         <strong className="menu-costos-card__price">{money(product.precio_venta)}</strong>
       </div>
       <div className="menu-costos-metrics">
-        <div className="menu-costos-metric"><span>Costo FIFO actual</span><strong>{money(product.costo_fifo_actual ?? product.costo_receta)}</strong><small>{product.fifo_disponible ? 'lotes disponibles' : 'sin lote suficiente'}</small></div>
-        <div className="menu-costos-metric"><span>Margen unitario</span><strong>{money(product.margen_fifo_actual ?? product.margen_unitario)}</strong><small>{product.costo_fifo_actual != null ? 'calculado con FIFO' : 'costo base'}</small></div>
-        <div className="menu-costos-metric"><span>Food cost</span><strong>{percent(product.food_cost_fifo_pct ?? product.food_cost_pct)}</strong><small>{product.costo_fifo_actual != null ? 'costo FIFO' : 'costo base'}</small></div>
+        <div className="menu-costos-metric"><span>{etiquetaCosto}</span><strong>{money(costoVisible)}</strong><small>{notaCosto}</small></div>
+        <div className="menu-costos-metric"><span>Margen unitario</span><strong>{money(margenVisible)}</strong><small>{product.costo_fifo_actual != null || product.costo_fifo_referencia != null ? 'calculado con FIFO' : 'costo base'}</small></div>
+        <div className="menu-costos-metric"><span>Food cost</span><strong>{percent(foodCostVisible)}</strong><small>{product.costo_fifo_actual != null || product.costo_fifo_referencia != null ? 'costo FIFO' : 'costo base'}</small></div>
       </div>
       <details className="menu-costos-detail">
         <summary>Ver desglose <Icono name="chevron" size={15} /></summary>
@@ -174,12 +196,13 @@ function ProductCard({ product }: { product: ProductoCosto }) {
             {product.lineas.map((line, index) => (
               <div className="menu-costos-line" key={`${line.producto}-${index}`}>
                 <span><strong>{line.producto}</strong><small>{line.cantidad} {line.unidad}{line.nota ? ` · ${line.nota}` : ''}</small></span>
-                <strong>{money(line.costo_fifo ?? line.costo)}</strong>
+                <strong>{money(line.costo_fifo ?? line.costo_fifo_aplicado ?? line.costo)}</strong>
               </div>
             ))}
           </div>
         ) : <p className="muted">No hay receta vigente capturada.</p>}
-        {product.costo_fifo_actual == null && product.completa && <div className="menu-costos-warning"><Icono name="alertTriangle" size={15} /> El costo FIFO no está disponible para todos los ingredientes; se muestra el costo base de receta.</div>}
+        {product.costo_fifo_actual == null && product.costo_fifo_referencia != null && product.completa && <div className="menu-costos-warning"><Icono name="alertCircle" size={15} /> No hay lote suficiente abierto para todos los ingredientes; se muestra el último costo FIFO aplicado.</div>}
+        {product.costo_fifo_actual == null && product.costo_fifo_referencia == null && product.completa && <div className="menu-costos-warning"><Icono name="alertTriangle" size={15} /> El costo FIFO no está disponible para todos los ingredientes; se muestra el costo base de receta.</div>}
         {!product.completa && <div className="menu-costos-warning"><Icono name="alertTriangle" size={15} /> Configuración pendiente: {product.lineas.flatMap((line) => line.falta_configuracion).filter((value, index, list) => list.indexOf(value) === index).join(', ') || 'receta o insumos'}</div>}
       </details>
     </article>

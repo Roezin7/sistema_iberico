@@ -74,13 +74,13 @@ const ORDEN_MENU = [
   'Montado Mediterraneo', 'Montado Castellano', 'Montado Ibérico', 'Montado Sevillano', 'Montado Ateca',
   'Papas a la francesa', 'Papas Ibéricas', 'Tabla de Tapas', 'Tabla de Quesos y Embutidos',
   'Pizza Margarita', 'Pizza Castellana', 'Pizza Ibérica', 'Pizza Madrileña', 'Pizza Catalana', 'Pizza Dos Carnes',
-  'Copa de la Casa', 'Piñada', 'Limonada', 'Limonada Ibérica', 'Cubanito Grande', 'Affogato',
+  'Copa de la Casa', 'Piñada', 'Limonada', 'Limonada Ibérica', 'Naranjada', 'Refresco', 'Cubanito Grande', 'Affogato',
   'Gin Tonic Rojo', 'Gin Tonic Verde', 'Gin Tonic Rosa', 'Gin Tonic de Frutos Rojos', 'Gin Tonic de Pepino',
   'Negroni Ibérico', 'Mezcal-tonic', 'Mezcal Mule', 'Mezcalita Piña', 'Mezcalita Mango', 'Mezcalita Tamarindo', 'Mezcalita Jamaica',
   'Carajillo', 'Baileys', 'Ronchata', 'Mezcachata', 'Oro Blanco', 'Tinto de Verano', 'Sangría Española',
   'Mimosa Clásica', 'Mimosa Ibérica', 'Mojito Clásico', 'Mojito Tinto', 'Perla Negra', 'Toro Negro',
   'Margarita Clásica', 'Margarita de Fresa', 'Tequila Sunrise', 'Piña Colada',
-  'Paloma Chica', 'Paloma Grande', 'Vampiro Grande', 'Cuba/Shot Jagger', 'Cuba de hacienda de tepa',
+  'Paloma Chica', 'Paloma Grande', 'Vampiro Grande', 'Cuba/Shot Jagger', 'Cuba de hacienda de tepa', 'CBA Doble D',
   'Michelada Chica', 'Michelada Grande', 'Modelo', 'Stella Artois', 'Michelob Ultra',
 ];
 const normalizarMenu = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -92,8 +92,8 @@ function seccionMenu(nombre: string) {
   if (n.startsWith('papa') || n.startsWith('tabla')) return 'Para compartir';
   if (n.startsWith('pizza')) return 'Pizzas';
   if (['modelo', 'stella artois', 'michelob ultra'].some((x) => n === x)) return 'Cervezas';
-  if (n.includes('copa de la casa') || n.includes('gin tonic') || n.includes('negroni') || n.includes('mezcal') || n.includes('carajillo') || n.includes('baileys') || n.includes('ronchata') || n.includes('mezcachata') || n.includes('oro blanco') || n.includes('tinto') || n.includes('sangria') || n.includes('mimosa') || n.includes('mojito') || n.includes('perla') || n.includes('toro') || n.includes('margarita') || n.includes('tequila') || n.includes('paloma') || n.includes('vampiro') || n.includes('cuba')) return 'Bebidas con alcohol';
-  if (['pinada', 'limonada', 'affogato'].some((x) => n.startsWith(x))) return 'Sin alcohol';
+  if (n.includes('cba doble d') || n.includes('copa de la casa') || n.includes('gin tonic') || n.includes('negroni') || n.includes('mezcal') || n.includes('carajillo') || n.includes('baileys') || n.includes('ronchata') || n.includes('mezcachata') || n.includes('oro blanco') || n.includes('tinto') || n.includes('sangria') || n.includes('mimosa') || n.includes('mojito') || n.includes('perla') || n.includes('toro') || n.includes('margarita') || n.includes('tequila') || n.includes('paloma') || n.includes('vampiro') || n.includes('cuba')) return 'Bebidas con alcohol';
+  if (['pinada', 'limonada', 'naranjada', 'refresco', 'affogato'].some((x) => n.startsWith(x))) return 'Sin alcohol';
   return 'Otros';
 }
 
@@ -132,6 +132,21 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
     lista.push(lote);
     lotesPorProducto.set(lote.product_id.toString(), lista);
   }
+  // Un lote puede haberse agotado después de pagar una venta. Conservamos el
+  // último costo unitario aplicado para que la vista de costos no retroceda
+  // silenciosamente al costo estático cuando ya no queda saldo abierto.
+  const consumosRecientes = productIds.length ? await prisma.inventory_consumptions.findMany({
+    where: { negocio_id: req.auth!.negocioId, product_id: { in: productIds } },
+    orderBy: [{ fecha: 'desc' }, { id: 'desc' }],
+    select: { product_id: true, costo_unitario: true, fecha: true },
+  }) : [];
+  const ultimoCostoPorProducto = new Map<string, { costo: number; fecha: string }>();
+  for (const consumo of consumosRecientes) {
+    const key = consumo.product_id.toString();
+    if (!ultimoCostoPorProducto.has(key)) {
+      ultimoCostoPorProducto.set(key, { costo: Number(consumo.costo_unitario), fecha: consumo.fecha.toISOString().slice(0, 10) });
+    }
+  }
 
   const items = productos.map((p) => {
     const receta = p.recetas[0];
@@ -146,11 +161,20 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
         })), cantidadBase)
         : null;
       const fifoDisponible = fifo != null && fifo.faltante <= 0.0001;
+      const ultimoCosto = ultimoCostoPorProducto.get(l.product_id.toString());
+      const costoFifoAplicado = !fifoDisponible && cantidadBase != null && ultimoCosto
+        ? cantidadBase * ultimoCosto.costo
+        : null;
       return {
         producto: l.products.name, cantidad: Number(l.cantidad), unidad: l.unidad,
         cantidad_base: cantidadBase, unidad_base: costeo.unidadBase,
         costo_unitario_base: costeo.costoUnitarioBase, costo: costeo.costoEstimado,
         costo_fifo: fifoDisponible ? fifo.costoTotal : null,
+        costo_fifo_aplicado: costoFifoAplicado,
+        costo_fifo_referencia: fifoDisponible ? fifo?.costoTotal ?? null : costoFifoAplicado,
+        estado_fifo: fifoDisponible ? 'disponible' : costoFifoAplicado != null ? 'aplicado' : fifo ? 'insuficiente' : 'sin_datos',
+        ultimo_costo_fifo_unitario: ultimoCosto?.costo ?? null,
+        ultimo_costo_fifo_fecha: ultimoCosto?.fecha ?? null,
         falta_fifo: fifo && !fifoDisponible ? `Inventario FIFO insuficiente: faltan ${fifo.faltante} ${costeo.unidadBase ?? ''}`.trim() : null,
         falta_configuracion: costeo.faltaConfiguracion, nota: l.nota,
       };
@@ -159,6 +183,8 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
     const costo = costoCompleto ? lineas.reduce((total, l) => total + (l.costo ?? 0), 0) : null;
     const costoFifoCompleto = receta?.estado === 'validada' && lineas.length > 0 && lineas.every((l) => l.costo_fifo != null && l.falta_configuracion.length === 0);
     const costoFifo = costoFifoCompleto ? lineas.reduce((total, l) => total + (l.costo_fifo ?? 0), 0) : null;
+    const costoFifoReferenciaCompleto = receta?.estado === 'validada' && lineas.length > 0 && lineas.every((l) => l.costo_fifo_referencia != null && l.falta_configuracion.length === 0);
+    const costoFifoReferencia = costoFifoReferenciaCompleto ? lineas.reduce((total, l) => total + (l.costo_fifo_referencia ?? 0), 0) : null;
     const precio = num(p.precio_venta);
     const margen = costo != null && precio != null ? precio - costo : null;
     const margenFifo = costoFifo != null && precio != null ? precio - costoFifo : null;
@@ -168,6 +194,10 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
       food_cost_pct: costo != null && precio && precio > 0 ? (costo / precio) * 100 : null,
       costo_fifo_actual: costoFifo, margen_fifo_actual: margenFifo,
       food_cost_fifo_pct: costoFifo != null && precio && precio > 0 ? (costoFifo / precio) * 100 : null,
+      costo_fifo_referencia: costoFifoReferencia,
+      margen_fifo_referencia: costoFifoReferencia != null && precio != null ? precio - costoFifoReferencia : null,
+      food_cost_fifo_referencia_pct: costoFifoReferencia != null && precio && precio > 0 ? (costoFifoReferencia / precio) * 100 : null,
+      fifo_referencia_disponible: costoFifoCompleto,
       fifo_disponible: costoFifoCompleto, receta_id: receta ? Number(receta.id) : null, version: receta?.version ?? null,
       estado: receta?.estado ?? 'sin_receta', completa: !!receta && lineas.length > 0 && lineas.every((l) => l.falta_configuracion.length === 0), lineas,
     };
