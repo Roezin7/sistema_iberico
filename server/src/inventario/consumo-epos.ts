@@ -44,13 +44,15 @@ type PlanContext = {
 type ModoCosteo = 'normal' | 'historico_prueba';
 
 /**
- * El costeo histórico es un libro de prueba aislado. Nunca debe contaminar
- * el FIFO operativo ni el estado de inventario que ve el cierre actual.
+ * El modo histórico limita deliberadamente el costeo al libro del piloto.
+ * El modo normal, en cambio, es continuo: todos los lotes reales (incluidos
+ * los recibidos durante la reconstrucción inicial) pasan a las semanas
+ * siguientes por su saldo restante.
  */
 function filtroFuenteFifo(modo: ModoCosteo) {
   return modo === 'historico_prueba'
     ? { fuente: 'historico_prueba' as const }
-    : { fuente: { not: 'historico_prueba' as const } };
+    : {};
 }
 
 function fechaISO(value: Date) {

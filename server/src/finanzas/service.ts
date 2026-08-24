@@ -323,11 +323,10 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     }),
     // FIFO es un libro continuo. No lo reiniciamos al cambiar de semana:
     // todos los lotes recibidos hasta el cierre participan en la existencia
-    // esperada y los que cruzan semanas. Los lotes de `historico_prueba` se
-    // mantienen auditables, pero pertenecen a un libro aislado y no pueden
-    // contaminar la conciliación operativa.
+    // esperada y los que cruzan semanas. `fuente` conserva la procedencia
+    // (incluido el piloto histórico), pero no corta la continuidad del saldo.
     prisma.inventory_lots.findMany({
-      where: { negocio_id: negocioId, recibido_at: { lte: semana.fecha_fin }, estado: { in: ['abierto', 'agotado'] }, fuente: { not: 'historico_prueba' } },
+      where: { negocio_id: negocioId, recibido_at: { lte: semana.fecha_fin }, estado: { in: ['abierto', 'agotado'] } },
       select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true },
     }),
     prisma.inventory_consumptions.findMany({
