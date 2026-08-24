@@ -3,6 +3,12 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { num0 } from '../lib/num.js';
 
+function costoUnitarioBase(producto: { unit_cost: unknown; unidad_base?: string | null; contenido_compra?: unknown }) {
+  const costo = producto.unit_cost == null ? null : Number(producto.unit_cost);
+  const contenido = producto.contenido_compra == null ? null : Number(producto.contenido_compra);
+  return costo == null ? null : producto.unidad_base && contenido != null && contenido > 0 ? costo / contenido : costo;
+}
+
 function redondear(n: number, decimales = 4) {
   const factor = 10 ** decimales;
   return Math.round((n + Number.EPSILON) * factor) / factor;
@@ -61,9 +67,9 @@ type AjusteInput = {
 };
 
 async function valorSnapshotTx(tx: Prisma.TransactionClient, snapshotId: bigint) {
-  const lineas = await tx.inventory_lines.findMany({ where: { snapshot_id: snapshotId }, include: { products: { select: { unit_cost: true } } } });
+  const lineas = await tx.inventory_lines.findMany({ where: { snapshot_id: snapshotId }, include: { products: { select: { unit_cost: true, unidad_base: true, contenido_compra: true } } } });
   return Math.round(lineas.reduce((total, l) => {
-    const costo = l.products.unit_cost == null ? 0 : num0(l.products.unit_cost);
+    const costo = costoUnitarioBase(l.products) ?? 0;
     return total + num0(l.qty_captura) * num0(l.factor) * costo;
   }, 0) * 100) / 100;
 }

@@ -32,15 +32,32 @@ export interface InventarioActual {
   sin_costo: { product_id: number; nombre: string }[];
 }
 
+/**
+ * El catálogo guarda unit_cost como costo de la presentación de compra
+ * (botella, bolsa, paquete). El inventario y FIFO trabajan en unidad base,
+ * por lo que toda valuación de existencias debe usar el costo por unidad base.
+ */
+function costoUnitarioBase(producto: {
+  unit_cost: unknown;
+  unidad_base?: string | null;
+  contenido_compra?: unknown;
+}) {
+  const costo = producto.unit_cost == null ? null : Number(producto.unit_cost);
+  if (costo == null) return null;
+  const contenido = producto.contenido_compra == null ? null : Number(producto.contenido_compra);
+  if (producto.unidad_base && contenido != null && contenido > 0) return costo / contenido;
+  return costo;
+}
+
 /** Valor de un snapshot histórico usando el costo vigente del catálogo. */
 export async function valorSnapshot(negocioId: bigint, snapshotId: bigint | null): Promise<number> {
   if (!snapshotId) return 0;
   const lineas = await prisma.inventory_lines.findMany({
     where: { snapshot_id: snapshotId, inventory_snapshot: { negocio_id: negocioId } },
-    include: { products: { select: { unit_cost: true } } },
+    include: { products: { select: { unit_cost: true, unidad_base: true, contenido_compra: true } } },
   });
   return Math.round(lineas.reduce((total, l) => {
-    const costo = num(l.products.unit_cost);
+    const costo = costoUnitarioBase(l.products);
     return total + (costo == null ? 0 : num0(l.qty_captura) * num0(l.factor) * costo);
   }, 0) * 100) / 100;
 }
@@ -133,8 +150,9 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
     const totalBase = totalBaseProducto(
       ls.map((l) => ({ qty_captura: num0(l.qty_captura), factor: num0(l.factor) })),
     );
-    const unitCost = num(p.unit_cost);
-    if (unitCost == null) sinCosto.push({ product_id: Number(p.id), nombre: p.name });
+    const unitCostPresentation = num(p.unit_cost);
+    const unitCostBase = costoUnitarioBase(p);
+    if (unitCostPresentation == null) sinCosto.push({ product_id: Number(p.id), nombre: p.name });
     return {
       product_id: Number(p.id),
       nombre: p.name,
@@ -142,8 +160,10 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
       store: p.stores.name,
       base_qty: num0(p.base_qty),
       total_base: totalBase,
-      unit_cost: unitCost,
-      valor: valorProducto(totalBase, unitCost),
+      // Se conserva unit_cost como costo de compra para la UI; la valuación
+      // usa explícitamente el costo por unidad base.
+      unit_cost: unitCostPresentation,
+      valor: valorProducto(totalBase, unitCostBase),
       categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
       categoria: p.categorias_inventario?.nombre ?? null,
       por_zona: ls.map((l) => ({
@@ -180,7 +200,7 @@ export async function listaCompras(negocioId: bigint) {
       total_base: p.total_base,
       faltante,
       unit_cost: p.unit_cost,
-      valor_faltante: valorProducto(faltante, p.unit_cost),
+      valor_faltante: valorProducto(faltante, costoUnitarioBase(p)),
     };
   });
   return armarListaCompras(faltantes);

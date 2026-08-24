@@ -310,7 +310,7 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
   if (!semana) throw new HttpError(404, 'Semana no encontrada');
 
   const [productos, aperturaLineas, cierreLineas, comprasLotes, ajustesLotes, lotesLedger, consumos, consumosLedger, consumosAjuste] = await Promise.all([
-    prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, unit_cost: true } }),
+    prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, contenido_compra: true, unit_cost: true } }),
     prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.apertura_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
     prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.cierre_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
     prisma.inventory_lots.findMany({
@@ -398,7 +398,13 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     const consumo = redondearCantidad(consumosPorProducto.get(key) ?? 0);
     const fisico = redondearCantidad(finales.get(key) ?? 0);
     const lotes = lotesPorProducto.get(key) ?? [];
-    const costoCatalogo = producto?.unit_cost == null ? null : num0(producto.unit_cost);
+    const costoPresentacion = producto?.unit_cost == null ? null : num0(producto.unit_cost);
+    const contenidoCompra = producto?.contenido_compra == null ? null : num0(producto.contenido_compra);
+    const costoCatalogo = costoPresentacion == null
+      ? null
+      : producto?.unidad_base && contenidoCompra != null && contenidoCompra > 0
+        ? costoPresentacion / contenidoCompra
+        : costoPresentacion;
     const tieneAperturaFifo = lotesLedger.some((lote) => lote.product_id.toString() === key && lote.recibido_at <= semana.fecha_inicio);
     const fifoRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)), 0);
     const fifoValorRestante = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)) * lote.costo, 0);
