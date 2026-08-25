@@ -80,6 +80,8 @@ function clasificarIncidencia(args: {
   unidadBase: string | null;
   unidadCompra: string | null;
   contenidoCompra: number | null;
+  factoresApertura: number[];
+  factoresCierre: number[];
   tieneAperturaFifo: boolean;
 }): { tipo: IncidenciaTipo; texto: string } {
   if (!args.tieneAperturaFifo && args.inicial > 0) return { tipo: 'captura', texto: 'Captura: apertura FIFO pendiente de validar' };
@@ -93,7 +95,14 @@ function clasificarIncidencia(args: {
   const contenido = args.contenidoCompra && args.contenidoCompra > 0 ? args.contenidoCompra : null;
   const presentaciones = contenido ? Math.abs(args.diferencia) / contenido : 0;
   const presentacionesCompletas = contenido != null && presentaciones >= 0.5 && Math.abs(presentaciones - Math.round(presentaciones)) <= 0.03;
-  if (unidadCompra && unidadBase && unidadCompra !== unidadBase && presentacionesCompletas) {
+  // La diferencia de nombres de unidad (por ejemplo, botella → ml) no prueba
+  // una conversión: ambos snapshots pueden haber usado el mismo factor. Sólo
+  // elevamos a conversión cuando el factor capturado cambió entre apertura y
+  // cierre y la diferencia equivale a presentaciones completas.
+  const factoresApertura = new Set(args.factoresApertura.map((factor) => Math.round(factor * 1_000_000) / 1_000_000));
+  const factoresCierre = new Set(args.factoresCierre.map((factor) => Math.round(factor * 1_000_000) / 1_000_000));
+  const factoresCambian = factoresApertura.size !== factoresCierre.size || [...factoresApertura].some((factor) => !factoresCierre.has(factor));
+  if (unidadCompra && unidadBase && unidadCompra !== unidadBase && factoresCambian && presentacionesCompletas) {
     return {
       tipo: 'conversion',
       texto: `Revisar conversión de presentación (${args.unidadCompra} → ${args.unidadBase}; factor ${contenido})`,
@@ -512,6 +521,19 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
   };
   const iniciales = acumularLineas(aperturaLineas);
   const finales = acumularLineas(cierreLineas);
+  const factoresDe = (lineas: { product_id: bigint; factor: unknown }[]) => {
+    const mapa = new Map<string, number[]>();
+    for (const linea of lineas) {
+      const key = linea.product_id.toString();
+      const factor = num0(linea.factor as never);
+      const lista = mapa.get(key) ?? [];
+      if (!lista.includes(factor)) lista.push(factor);
+      mapa.set(key, lista);
+    }
+    return mapa;
+  };
+  const factoresApertura = factoresDe(aperturaLineas);
+  const factoresCierre = factoresDe(cierreLineas);
   const compras = new Map<string, number>();
   for (const lote of comprasLotes) {
     const key = lote.product_id.toString();
@@ -608,6 +630,8 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
       unidadBase: producto?.unidad_base ?? null,
       unidadCompra: producto?.unidad_compra ?? null,
       contenidoCompra,
+      factoresApertura: factoresApertura.get(key) ?? [],
+      factoresCierre: factoresCierre.get(key) ?? [],
       tieneAperturaFifo,
     });
     return {
