@@ -389,7 +389,10 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
           tarjeta: tarjetaEpos,
           otros: noReconocidoEpos,
         },
-        confirmado: { ventas: n(efectivo) + n(tarjeta) + n(propina), efectivo: n(efectivo), tarjeta: n(tarjeta), otros: noReconocidoEpos },
+        // Epos reporta ventas sin propinas. La propina se conserva en el
+        // movimiento financiero diario, pero no se suma a la base de
+        // conciliación para no crear una diferencia artificial.
+        confirmado: { ventas: n(efectivo) + n(tarjeta) + noReconocidoEpos, efectivo: n(efectivo), tarjeta: n(tarjeta), otros: noReconocidoEpos },
         cuentas_abiertas: n(cuentasAbiertas),
         excepciones: [],
         notas: notaFinal || undefined,
@@ -480,19 +483,21 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
 }
 
 function CorteConfirmado({ evidencia, propina }: { evidencia: ConciliacionDiaria; propina: number }) {
-  // Epos no reporta la propina como venta. La excluimos de la comparación para
-  // no marcar una diferencia falsa cuando el corte sí la capturó manualmente.
-  const diferencia = evidencia.confirmado.ventas - propina - evidencia.epos.ventas;
+  // La confirmación persiste ventas sin propina, igual que Epos. La propina
+  // sigue visible como movimiento diario y nunca contamina la conciliación.
+  const diferencia = evidencia.confirmado.ventas - evidencia.epos.ventas;
   const dinero = (value: number) => mxn(value);
   return <details className="epos-evidence">
     <summary><strong>Evidencia del corte confirmado</strong><span className="muted">{evidencia.confirmado_at ? new Date(evidencia.confirmado_at).toLocaleString('es-MX') : 'sin sello de hora'}</span></summary>
     <p className="muted epos-evidence__note">{evidencia.usuario_id == null ? 'Usuario de confirmación no identificado' : `Confirmado por usuario #${evidencia.usuario_id}`}</p>
+    {!evidencia.diferencia.reconciliada && <p className="text-danger epos-evidence__note">El corte humano no cuadra con Epos: diferencia {dinero(evidencia.diferencia.total)}. Revisa cuentas abiertas, propinas y pagos mixtos antes de cerrar.</p>}
     <div className="summary-grid epos-evidence__grid">
       <div><small>Epos</small><strong>{dinero(evidencia.epos.ventas)}</strong><span>Importe leído</span></div>
-      <div><small>Confirmado</small><strong>{dinero(evidencia.confirmado.ventas)}</strong><span>Registro humano</span></div>
+      <div><small>Confirmado</small><strong>{dinero(evidencia.confirmado.ventas)}</strong><span>Ventas sin propina</span></div>
       <div><small>Diferencia</small><strong className={Math.abs(diferencia) > 0.01 ? 'text-danger' : ''}>{dinero(diferencia)}</strong><span>{Math.abs(diferencia) > 0.01 ? 'Revisar' : 'Cuadra'}</span></div>
       <div><small>Cuentas abiertas</small><strong>{evidencia.cuentas_abiertas}</strong><span>Al cierre del día</span></div>
     </div>
+    {propina > 0 && <p className="muted epos-evidence__note">Propina registrada aparte: {dinero(propina)} (no forma parte de la conciliación de ventas).</p>}
     <div className="epos-evidence__methods">
       <span><small>Epos · efectivo</small><strong>{dinero(evidencia.epos.efectivo)}</strong></span>
       <span><small>Epos · tarjeta</small><strong>{dinero(evidencia.epos.tarjeta)}</strong></span>
@@ -574,13 +579,14 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
   const sueldos = sumaTipo('sueldo');
   const propinasPagadas = sumaTipo('propina_pagada');
   const ventasEpos = conciliaciones.reduce((total, corte) => total + Number(corte.epos.ventas || 0), 0);
-  const ventasOperativas = ventasEpos > 0 ? ventasEpos : Math.max(0, r.ventas.total - r.ventas.propinas);
+  const ventasOperativas = r.ventas_operativas ?? (ventasEpos > 0 ? ventasEpos : Math.max(0, r.ventas.total - r.ventas.propinas));
   const ventasPersistidas = Math.max(0, r.ventas.total - r.ventas.propinas);
   const diferenciaVentas = ventasEpos > 0 ? ventasEpos - ventasPersistidas : 0;
   const costoFifo = r.inventario.costo_ventas;
-  const utilidadOperativa = costoFifo == null
+  const utilidadBruta = r.utilidad_bruta ?? (costoFifo == null ? null : ventasOperativas - costoFifo);
+  const utilidadOperativa = r.resultado_operativo ?? (utilidadBruta == null
     ? null
-    : ventasOperativas - costoFifo - r.comision_terminal_estimada - gastos - sueldos - propinasPagadas;
+    : utilidadBruta - r.comision_terminal_estimada - gastos - sueldos - propinasPagadas);
   const margenOperativo = utilidadOperativa == null || ventasOperativas === 0 ? null : utilidadOperativa / ventasOperativas;
   const inventarioAlCorte = r.inventario.estado === 'cerrado' && r.inventario.cierre_valor != null
     ? r.inventario.cierre_valor
@@ -617,6 +623,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
           <p className="vision-card__definition">Ventas reales menos inventario consumido, comisión, gastos y sueldos.</p>
           <div className="vision-card__rows">
             {fila('Ventas Epos', mxn(ventasOperativas))}
+            {fila('Utilidad bruta', utilidadBruta == null ? 'Pendiente' : mxn(utilidadBruta))}
             {fila('Costo consumido FIFO', costoFifo == null ? 'Pendiente' : `−${mxn(costoFifo)}`)}
             {fila('Comisión + gastos + sueldos', `−${mxn(r.comision_terminal_estimada + gastos + sueldos + propinasPagadas)}`)}
           </div>
@@ -649,6 +656,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         {fila('Comisión terminal (1.99%)', mxn(r.comision_terminal_estimada))}
         {fila('Gastos operativos', mxn(gastos))}
         {fila('Sueldos', mxn(sueldos))}
+        {fila('Diferencia física FIFO vs conteo', mxn(r.diferencia_fisica_valor))}
       </div>
 
       <div className="resumen-card">
@@ -657,6 +665,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         {fila('Compras de la semana', mxn(r.inventario.compras))}
         {fila('Inventario de cierre', mxn(r.inventario.cierre_valor))}
         {fila(r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' ? 'Costo de ventas FIFO en vivo' : 'Costo de ventas (apertura + compras − cierre)', mxn(r.inventario.costo_ventas))}
+        {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <div className="kv"><span className="muted">FIFO normal / excepciones</span><span>{mxn(r.inventario.control_fifo.costo_normal)} / {mxn(r.inventario.control_fifo.costo_excepcion)}</span></div>}
         {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>El valor del corte FIFO se reconstruye con los lotes que siguen abiertos; los lotes pasan a la siguiente semana sin reiniciarse.</p>}
         <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>
           {r.inventario.estado === 'pendiente_cierre'
@@ -668,7 +677,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
           <span>{r.inventario.control_fifo.reporte_independiente
             ? 'El costo de ventas usa únicamente consumos FIFO activos y coincide con las ventas Epos costeadas.'
             : (r.inventario.control_fifo.alerta_independencia ?? 'Compara los consumos FIFO activos contra el inventario físico antes de interpretar el margen.')}</span>
-          {r.inventario.control_fifo.filas_reversiones_historial > 0 && <small>Las reversiones ({r.inventario.control_fifo.filas_reversiones_historial}) sólo permanecen como historial/auditoría; no se incluyen en costo de ventas.</small>}
+          {r.inventario.control_fifo.filas_reversiones_historial > 0 && <small>Las reversiones ({r.inventario.control_fifo.filas_reversiones_historial}) sólo permanecen como historial/auditoría; no se incluyen en costo de ventas. Excepciones activas: {r.inventario.control_fifo.filas_excepcion} movimientos ({mxn(r.inventario.control_fifo.costo_excepcion)}).</small>}
         </div>
       </div>
       <ConciliacionInventarioCard conciliacion={r.conciliacion_inventario} />

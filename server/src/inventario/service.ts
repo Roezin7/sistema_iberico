@@ -21,12 +21,14 @@ export interface ProductoActual {
   valor: number;
   categoria_id: number | null;
   categoria: string | null;
-  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number }[];
+  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number; unidad_captura: string }[];
 }
 
 export interface InventarioActual {
   snapshot_id: number | null;
   fecha: string | null;
+  tipo: string | null;
+  semana_id: number | null;
   productos: ProductoActual[];
   valor_total: number;
   sin_costo: { product_id: number; nombre: string }[];
@@ -71,8 +73,15 @@ export async function crearSnapshotConsolidado(
   tx: Prisma.TransactionClient,
   negocioId: bigint,
   actual: InventarioActual,
+  metadata: { tipo?: string; semana_id?: bigint | null; motivo?: string | null; nota?: string | null } = {},
 ) {
-  const snap = await tx.inventory_snapshot.create({ data: { negocio_id: negocioId } });
+  const snap = await tx.inventory_snapshot.create({ data: {
+    negocio_id: negocioId,
+    tipo: metadata.tipo ?? 'conteo_operativo',
+    semana_id: metadata.semana_id ?? null,
+    motivo: metadata.motivo ?? null,
+    nota: metadata.nota ?? null,
+  } });
   const data = actual.productos.flatMap((p) => p.por_zona.map((z) => ({
     snapshot_id: snap.id,
     product_id: BigInt(p.product_id),
@@ -98,11 +107,12 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
     }),
     prisma.inventory_snapshot.findMany({
       where: { negocio_id: negocioId },
-      select: { id: true, created_at: true },
+      select: { id: true, created_at: true, tipo: true, semana_id: true },
     }),
   ]);
 
   const fechaPorSnap = new Map(snaps.map((s) => [s.id.toString(), s.created_at]));
+  const metadataPorSnap = new Map(snaps.map((s) => [s.id.toString(), { tipo: s.tipo, semana_id: s.semana_id }]));
   const snapIds = snaps.map((s) => s.id);
 
   // Por cada zona, el snapshot más reciente que la haya contado.
@@ -125,6 +135,17 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
         include: { zonas_inventario: true },
       })
     : [];
+
+  const unidadesCaptura = lineas.length
+    ? await prisma.product_zone_units.findMany({
+        where: {
+          product_id: { in: lineas.map((l) => l.product_id) },
+          zona_id: { in: lineas.map((l) => l.zona_id) },
+        },
+        select: { product_id: true, zona_id: true, unidad_captura: true },
+      })
+    : [];
+  const unidadCapturaPorPar = new Map(unidadesCaptura.map((u) => [`${u.product_id}:${u.zona_id}`, u.unidad_captura]));
 
   // Fecha/snapshot a mostrar = el conteo por zona más reciente.
   let snapIdActual: bigint | null = null;
@@ -171,6 +192,7 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
         zona: l.zonas_inventario.nombre,
         qty_captura: num0(l.qty_captura),
         factor: num0(l.factor),
+        unidad_captura: unidadCapturaPorPar.get(`${l.product_id}:${l.zona_id}`) ?? 'unidad base',
       })),
     };
   });
@@ -180,10 +202,37 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
   return {
     snapshot_id: snapIdActual != null ? Number(snapIdActual) : null,
     fecha: fechaActual ? fechaActual.toISOString() : null,
+    tipo: snapIdActual != null ? metadataPorSnap.get(snapIdActual.toString())?.tipo ?? null : null,
+    semana_id: snapIdActual != null && metadataPorSnap.get(snapIdActual.toString())?.semana_id != null
+      ? Number(metadataPorSnap.get(snapIdActual.toString())!.semana_id)
+      : null,
     productos: result,
     valor_total: valorTotal,
     sin_costo: sinCosto,
   };
+}
+
+/** Historial explícito de snapshots: evita interpretar un conteo operativo
+ * como apertura, cierre o ajuste. */
+export async function listarSnapshots(
+  negocioId: bigint,
+  semanaId?: bigint,
+) {
+  const rows = await prisma.inventory_snapshot.findMany({
+    where: { negocio_id: negocioId, semana_id: semanaId },
+    orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+    include: { inventory_lines: { select: { zona_id: true, product_id: true, qty_captura: true, factor: true } } },
+    take: 200,
+  });
+  return rows.map((row) => ({
+    id: Number(row.id),
+    tipo: row.tipo,
+    semana_id: row.semana_id == null ? null : Number(row.semana_id),
+    motivo: row.motivo,
+    nota: row.nota,
+    creado_at: row.created_at.toISOString(),
+    lineas: row.inventory_lines.length,
+  }));
 }
 
 /** Lista de compras: faltantes (base_qty - total_base) agrupados por tienda. */
@@ -212,14 +261,37 @@ export interface LineaConteoInput {
   qty_captura: number;
 }
 
+export type TipoSnapshotInventario = 'apertura' | 'cierre' | 'ajuste' | 'conteo_operativo';
+
+export interface MetadataSnapshotInventario {
+  tipo: TipoSnapshotInventario;
+  semana_id?: number | null;
+  motivo?: string | null;
+  nota?: string | null;
+}
+
 /**
  * Crea un nuevo conteo (snapshot) con líneas por zona.
  * El factor se resuelve server-side desde product_zone_units (default 1) y se
  * "congela" en cada línea. Nunca sobrescribe snapshots previos (histórico).
  */
-export async function crearConteo(negocioId: bigint, lineasInput: LineaConteoInput[]) {
+export async function crearConteo(
+  negocioId: bigint,
+  lineasInput: LineaConteoInput[],
+  metadata: MetadataSnapshotInventario = { tipo: 'conteo_operativo' },
+) {
   if (lineasInput.length === 0) {
     throw new HttpError(400, 'El conteo no tiene líneas');
+  }
+  if ((metadata.tipo === 'apertura' || metadata.tipo === 'cierre') && metadata.semana_id == null) {
+    throw new HttpError(400, 'La apertura o cierre debe estar ligada a una semana');
+  }
+  if (metadata.tipo === 'ajuste' && !metadata.motivo?.trim()) {
+    throw new HttpError(400, 'Un ajuste de inventario requiere motivo');
+  }
+  if (metadata.semana_id != null) {
+    const semana = await prisma.semanas.findFirst({ where: { id: BigInt(metadata.semana_id), negocio_id: negocioId }, select: { id: true } });
+    if (!semana) throw new HttpError(400, 'La semana del snapshot no pertenece al negocio');
   }
 
   const productIds = [...new Set(lineasInput.map((l) => BigInt(l.product_id)))];
@@ -247,7 +319,27 @@ export async function crearConteo(negocioId: bigint, lineasInput: LineaConteoInp
   };
 
   return prisma.$transaction(async (tx) => {
-    const snap = await tx.inventory_snapshot.create({ data: { negocio_id: negocioId } });
+    // Una semana sólo puede tener una apertura y un cierre oficiales. Si el
+    // usuario necesita corregirlos, debe usar un ajuste documentado; de esa
+    // forma nunca queda ambiguo qué conteo alimenta el FIFO de la semana.
+    if (metadata.semana_id != null && (metadata.tipo === 'apertura' || metadata.tipo === 'cierre')) {
+      const semanal = await tx.inventario_semanal.findUnique({
+        where: { semana_id: BigInt(metadata.semana_id) },
+        select: { apertura_snapshot_id: true, cierre_snapshot_id: true },
+      });
+      const existente = metadata.tipo === 'apertura' ? semanal?.apertura_snapshot_id : semanal?.cierre_snapshot_id;
+      if (existente != null) {
+        const nombre = metadata.tipo === 'apertura' ? 'apertura' : 'cierre';
+        throw new HttpError(409, `La semana ya tiene un ${nombre} oficial (snapshot ${existente.toString()}). Usa "Ajuste documentado" para corregirlo sin romper la cadena.`);
+      }
+    }
+    const snap = await tx.inventory_snapshot.create({ data: {
+      negocio_id: negocioId,
+      tipo: metadata.tipo,
+      semana_id: metadata.semana_id == null ? null : BigInt(metadata.semana_id),
+      motivo: metadata.motivo?.trim() || null,
+      nota: metadata.nota?.trim() || null,
+    } });
     await tx.inventory_lines.createMany({
       data: lineasInput.map((l) => ({
         snapshot_id: snap.id,
@@ -257,6 +349,11 @@ export async function crearConteo(negocioId: bigint, lineasInput: LineaConteoInp
         factor: factorDe(l.product_id, l.zona_id),
       })),
     });
-    return { snapshot_id: Number(snap.id), lineas: lineasInput.length };
+    return {
+      snapshot_id: Number(snap.id),
+      lineas: lineasInput.length,
+      tipo: metadata.tipo,
+      semana_id: metadata.semana_id ?? null,
+    };
   });
 }

@@ -38,6 +38,16 @@ function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Epos entrega timestamps reales en UTC, mientras que las semanas y los
+// cortes de Ibérico se capturan como fechas locales de México (UTC-06:00).
+// Una semana local lunes-domingo termina a las 06:00Z del lunes siguiente.
+function rangoEposSemana(fechaInicio: Date, fechaFin: Date): { inicio: Date; fin: Date } {
+  const inicio = new Date(`${iso(fechaInicio)}T06:00:00.000Z`);
+  const fin = new Date(`${iso(fechaFin)}T06:00:00.000Z`);
+  fin.setUTCDate(fin.getUTCDate() + 1);
+  return { inicio, fin };
+}
+
 /**
  * Las reversiones son eventos inmutables del historial. No representan
  * consumo corriente: cancelan un movimiento previo al reconstruir el saldo
@@ -67,10 +77,15 @@ function clasificarIncidencia(args: {
 }): { tipo: IncidenciaTipo; texto: string } {
   if (!args.tieneAperturaFifo && args.inicial > 0) return { tipo: 'captura', texto: 'Captura: apertura FIFO pendiente de validar' };
   if (Math.abs(args.diferencia) <= 0.01 && Math.abs(args.diferenciaConsumo) <= 0.01) return { tipo: 'sin_diferencia', texto: 'Sin incidencia' };
-  // Una presentación sin conversión completa no puede interpretarse como
-  // merma: primero hay que resolver pieza/paquete/kg frente a la unidad base.
-  if (args.unidadCompra && args.unidadBase && args.unidadCompra !== args.unidadBase && (!args.contenidoCompra || args.contenidoCompra <= 0)) {
-    return { tipo: 'conversion', texto: 'Revisar conversión de presentación' };
+  // Una diferencia entre la unidad de compra y la unidad base siempre debe
+  // revisarse como conversión antes de llamarla merma o compra faltante. Esto
+  // cubre paquetes/cajas, kg→g, botellas→ml y piezas→porciones; el factor se
+  // conserva en la línea FIFO y no se debe inferir de la diferencia física.
+  if (args.unidadCompra && args.unidadBase && args.unidadCompra !== args.unidadBase) {
+    const detalle = args.contenidoCompra && args.contenidoCompra > 0
+      ? `Revisar conversión de presentación (${args.unidadCompra} → ${args.unidadBase}; factor ${args.contenidoCompra})`
+      : 'Revisar conversión de presentación antes de clasificar la diferencia';
+    return { tipo: 'conversion', texto: detalle };
   }
   if (args.diferencia > 0.01 && args.compras <= 0.01) return { tipo: 'compra_faltante', texto: 'Posible compra faltante o no registrada' };
   if (args.diferenciaConsumo > 0.01) return { tipo: 'posible_merma', texto: 'Posible merma o consumo no registrado' };
@@ -273,7 +288,7 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
   const semanal = await asegurarInventarioSemanal(negocioId, semanaId);
   const semana = await prisma.semanas.findUnique({ where: { id: semanaId }, select: { fecha_inicio: true, fecha_fin: true } });
   if (!semana) throw new HttpError(404, 'Semana no encontrada');
-  const [movs, fifoCorte, consumosPeriodo, consumosActivosDetalle, reversionesPeriodo] = await Promise.all([
+  const [movs, fifoCorte, consumosPeriodo, consumosActivosDetalle, consumosCostoDetalle, reversionesPeriodo] = await Promise.all([
     prisma.movimientos.findMany({
       where: { negocio_id: negocioId, semana_id: semanaId, tipo: 'compra_inventario' },
       select: { monto: true },
@@ -302,6 +317,16 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
       },
       select: { epos_venta_id: true },
     }),
+    prisma.inventory_consumptions.findMany({
+      where: {
+        negocio_id: negocioId,
+        fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin },
+        epos_venta_id: { not: null },
+        cantidad: { gt: 0 },
+        OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+      },
+      select: { fuente: true, costo_total: true, epos_venta_id: true },
+    }),
     prisma.inventory_consumptions.aggregate({
       where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin }, fuente: { startsWith: 'reversion_' } },
       _sum: { costo_total: true },
@@ -317,6 +342,22 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     ? null
     : num0(semanal.cierre_valor);
   const costoVentasLedger = consumosPeriodo._count._all > 0 ? num0(consumosPeriodo._sum.costo_total) : null;
+  // Los lotes normales llevan un sufijo de semana (p. ej. venta_fifo_vivo_w64).
+  // Sólo `_exception` y `venta_receta` son excepciones reales. No clasificar
+  // por igualdad exacta: hacerlo convertiría todo el FIFO semanal en excepción.
+  const esExcepcionCosto = (fuente: string | null) => fuente === 'venta_receta' || (fuente ?? '').endsWith('_exception');
+  const costoNormal = redondear(consumosCostoDetalle
+    .filter((row) => (row.fuente ?? '').startsWith('venta_fifo_vivo') && !esExcepcionCosto(row.fuente))
+    .reduce((total, row) => total + num0(row.costo_total), 0));
+  const costoExcepcion = redondear(consumosCostoDetalle
+    .filter((row) => esExcepcionCosto(row.fuente))
+    .reduce((total, row) => total + num0(row.costo_total), 0));
+  const filasNormal = consumosCostoDetalle.filter((row) => (row.fuente ?? '').startsWith('venta_fifo_vivo') && !esExcepcionCosto(row.fuente)).length;
+  const filasExcepcion = consumosCostoDetalle.filter((row) => esExcepcionCosto(row.fuente)).length;
+  const ventasEposException = new Set(consumosCostoDetalle
+    .filter((row) => esExcepcionCosto(row.fuente))
+    .map((row) => row.epos_venta_id?.toString())
+    .filter((id): id is string => Boolean(id)));
   const idsEposActivos = [...new Set(consumosActivosDetalle.map((row) => row.epos_venta_id?.toString()).filter((id): id is string => Boolean(id)))];
   const ventasEposActivas = idsEposActivos.length
     ? await prisma.epos_ventas.aggregate({ where: { id: { in: idsEposActivos.map(BigInt) } }, _sum: { costo_fifo: true }, _count: { _all: true } })
@@ -337,10 +378,15 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     unidades_fifo_corte: fifoCorte.unidades,
     control_fifo: {
       costo_movimientos_activos: costoVentasLedger,
+      costo_normal: costoNormal,
+      costo_excepcion: costoExcepcion,
+      filas_normal: filasNormal,
+      filas_excepcion: filasExcepcion,
       costo_reversiones_historial: num0(reversionesPeriodo._sum.costo_total),
       filas_movimientos_activos: consumosPeriodo._count._all,
       filas_reversiones_historial: reversionesPeriodo._count._all,
       ventas_epos_con_consumo_activo: idsEposActivos.length,
+      ventas_epos_con_consumo_exception: ventasEposException.size,
       diferencia_costo_vs_epos: diferenciaCostoEpos,
       reporte_independiente: reporteIndependiente,
       alerta_independencia: reporteIndependiente
@@ -931,11 +977,17 @@ function sumarPorTipo(movs: { tipo: TipoMovimiento; monto: unknown }[], tipo: Ti
 
 export async function resumen(negocioId: bigint, semanaId: bigint) {
   const semana = await getSemanaAbierta(negocioId, semanaId);
-  const [ubicaciones, movs, inicialMap, socios] = await Promise.all([
+  const rangoEpos = rangoEposSemana(semana.fecha_inicio, semana.fecha_fin);
+  const [ubicaciones, movs, inicialMap, socios, eposSemana] = await Promise.all([
     prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true } }),
     movimientosDeSemana(semanaId),
     mapaSaldoInicial(negocioId, semana.fecha_inicio),
     prisma.socios.findMany({ where: { negocio_id: negocioId, activo: true } }),
+    prisma.epos_ventas.aggregate({
+      where: { negocio_id: negocioId, fecha: { gte: rangoEpos.inicio, lt: rangoEpos.fin } },
+      _sum: { venta_neta: true, venta_bruta: true },
+      _count: { _all: true },
+    }),
   ]);
 
   const ventaEfectivo = sumarPorTipo(movs, 'venta_efectivo');
@@ -969,6 +1021,23 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
   });
   const inventario = await inventarioDeSemana(negocioId, semanaId);
   const conciliacion_inventario = await conciliacionInventarioSemana(negocioId, semanaId);
+  // Epos es la fuente de ventas operativas; las propinas se muestran aparte y
+  // nunca se confunden con ingreso del negocio. Si todavía no hay Epos
+  // importado, dejamos el valor nulo para no inventar un resultado.
+  const ventasEpos = eposSemana._count._all > 0
+    ? redondear(num0(eposSemana._sum.venta_neta ?? eposSemana._sum.venta_bruta))
+    : null;
+  const ventasOperativas = ventasEpos ?? null;
+  const utilidadBruta = ventasOperativas == null || inventario.costo_ventas == null
+    ? null
+    : redondear(ventasOperativas - inventario.costo_ventas);
+  const gastosOperativos = redondear(
+    movs.filter((m) => m.tipo === 'gasto' || m.tipo === 'sueldo' || m.tipo === 'propina_pagada')
+      .reduce((sum, m) => sum + num0(m.monto as never), 0),
+  );
+  const resultadoOperativo = utilidadBruta == null
+    ? null
+    : redondear(utilidadBruta - comisionTerminal(ventaTarjeta, propinaTarjeta) - gastosOperativos);
 
   // Capital por socio.
   const ubicSocio = new Map<number, number>(); // ubicacion_id -> socio_id
@@ -996,6 +1065,10 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
     utilidad: r.utilidad,
     margen: r.margen,
     utilidad_pct: r.utilidadPct,
+    ventas_operativas: ventasOperativas,
+    utilidad_bruta: utilidadBruta,
+    resultado_operativo: resultadoOperativo,
+    diferencia_fisica_valor: conciliacion_inventario.total_diferencia_valor,
     facturado: { tarjeta_facturable: r.tarjetaFacturable, gastos_facturados: r.gastosFacturados, balance: r.balanceFacturado },
     capital_socios: capital,
     saldo_inicial_total: redondear(saldoInicialTotal),
@@ -1013,12 +1086,11 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
   // El cierre no debe ocultar ventas que no pudieron convertirse en consumo
   // FIFO. Permitimos continuar únicamente después de una confirmación explícita
   // para que la excepción quede visible y no se interprete como margen real.
-  const finExclusivo = new Date(semana.fecha_fin);
-  finExclusivo.setUTCDate(finExclusivo.getUTCDate() + 1);
+  const rangoEpos = rangoEposSemana(semana.fecha_inicio, semana.fecha_fin);
   const excepcionesCosteo = await prisma.epos_ventas.findMany({
     where: {
       negocio_id: negocioId,
-      fecha: { gte: semana.fecha_inicio, lt: finExclusivo },
+      fecha: { gte: rangoEpos.inicio, lt: rangoEpos.fin },
       costeo_estado: 'excepcion',
     },
     select: { id: true, producto_nombre: true, cantidad: true, costeo_error: true },
@@ -1054,7 +1126,12 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
     // El último conteo vigente se consolida en un snapshot inmutable de cierre.
     // Así, el próximo periodo abrirá exactamente con este inventario y no con
     // el siguiente conteo global que se capture en otra zona.
-    const cierreSnapshot = await crearSnapshotConsolidado(tx, negocioId, invActual);
+    const cierreSnapshot = await crearSnapshotConsolidado(tx, negocioId, invActual, {
+      tipo: 'cierre',
+      semana_id: semanaId,
+      motivo: 'Cierre físico semanal',
+      nota: 'Snapshot consolidado del último conteo vigente de cada zona',
+    });
     await tx.inventario_semanal.update({
       where: { semana_id: semanaId },
       data: { cierre_snapshot_id: cierreSnapshot.id, cierre_valor: valorInventario },

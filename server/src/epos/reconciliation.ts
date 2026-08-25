@@ -26,11 +26,20 @@ function salida(row: {
   confirmado_ventas: unknown; confirmado_efectivo: unknown; confirmado_tarjeta: unknown; confirmado_otros: unknown;
   cuentas_abiertas: unknown; excepciones_json: string | null; notas: string | null; usuario_id: bigint | null; confirmado_at: Date | null;
 }) {
+  const epos = { ventas: num0(row.epos_ventas as never), efectivo: num0(row.epos_efectivo as never), tarjeta: num0(row.epos_tarjeta as never), otros: num0(row.epos_otros as never) };
+  const confirmado = { ventas: num0(row.confirmado_ventas as never), efectivo: num0(row.confirmado_efectivo as never), tarjeta: num0(row.confirmado_tarjeta as never), otros: num0(row.confirmado_otros as never) };
+  const diferencia = {
+    ventas: confirmado.ventas - epos.ventas,
+    efectivo: confirmado.efectivo - epos.efectivo,
+    tarjeta: confirmado.tarjeta - epos.tarjeta,
+    otros: confirmado.otros - epos.otros,
+    total: confirmado.ventas - epos.ventas,
+    reconciliada: Math.abs(confirmado.ventas - epos.ventas) <= 0.01,
+  };
   return {
     id: Number(row.id), negocio_id: Number(row.negocio_id), semana_id: Number(row.semana_id),
     fecha: row.fecha.toISOString().slice(0, 10), estado: row.estado,
-    epos: { ventas: num0(row.epos_ventas as never), efectivo: num0(row.epos_efectivo as never), tarjeta: num0(row.epos_tarjeta as never), otros: num0(row.epos_otros as never) },
-    confirmado: { ventas: num0(row.confirmado_ventas as never), efectivo: num0(row.confirmado_efectivo as never), tarjeta: num0(row.confirmado_tarjeta as never), otros: num0(row.confirmado_otros as never) },
+    epos, confirmado, diferencia,
     cuentas_abiertas: num0(row.cuentas_abiertas as never),
     excepciones: row.excepciones_json ? JSON.parse(row.excepciones_json) : [],
     notas: row.notas,

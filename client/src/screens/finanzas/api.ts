@@ -29,6 +29,10 @@ export interface Resumen {
   comision_terminal_estimada: number;
   compras_inventario: number;
   utilidad: number; margen: number; utilidad_pct: number;
+  ventas_operativas: number | null;
+  utilidad_bruta: number | null;
+  resultado_operativo: number | null;
+  diferencia_fisica_valor: number | null;
   facturado: { tarjeta_facturable: number; gastos_facturados: number; balance: number };
   capital_socios: { socio_id: number; nombre: string; transferencias: number; retiros: number; capital: number }[];
   saldo_inicial_total: number; saldo_real_final_total: number;
@@ -39,8 +43,9 @@ export interface Resumen {
     valor_fifo_corte: number; unidades_fifo_corte: number;
     control_fifo: {
       costo_movimientos_activos: number | null; costo_reversiones_historial: number;
+      costo_normal: number; costo_excepcion: number; filas_normal: number; filas_excepcion: number;
       filas_movimientos_activos: number; filas_reversiones_historial: number;
-      ventas_epos_con_consumo_activo: number; diferencia_costo_vs_epos: number | null;
+      ventas_epos_con_consumo_activo: number; ventas_epos_con_consumo_exception: number; diferencia_costo_vs_epos: number | null;
       reporte_independiente: boolean; alerta_independencia: string | null;
     };
     estado: 'pendiente_cierre' | 'cerrado'; apertura_origen: string | null;
@@ -123,6 +128,7 @@ export interface ConciliacionDiaria {
   confirmado: { ventas: number; efectivo: number; tarjeta: number; otros: number };
   cuentas_abiertas: number; excepciones: unknown[]; notas: string | null;
   usuario_id: number | null; confirmado_at: string | null;
+  diferencia: { ventas: number; efectivo: number; tarjeta: number; otros: number; total: number; reconciliada: boolean };
 }
 
 export const finanzas = {

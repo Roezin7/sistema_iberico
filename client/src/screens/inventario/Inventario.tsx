@@ -7,15 +7,16 @@ import { Cargando } from '../../ui/Cargando';
 interface Zona { id: number; nombre: string; orden: number }
 interface Categoria { id: number; nombre: string; orden: number; activo: boolean }
 interface Unidad { zona_id: number; unidad_captura: string; factor: number }
+interface SemanaRef { id: number; etiqueta: string; fecha_inicio: string; fecha_fin: string; estado: string }
 interface Producto {
   id: number; nombre: string; store: string; base_qty: number | null;
-  unit_cost: number | null; unidades: Unidad[]; categoria_id: number | null; categoria: string | null;
+  unit_cost: number | null; unidad_base: string | null; unidades: Unidad[]; categoria_id: number | null; categoria: string | null;
 }
 interface ProductoActual {
   product_id: number; nombre: string; store: string; base_qty: number;
   total_base: number; unit_cost: number | null; valor: number;
   categoria_id: number | null; categoria: string | null;
-  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number }[];
+  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number; unidad_captura?: string }[];
 }
 
 // Agrupa por categoría, respetando el orden configurado; "Sin categoría" al final.
@@ -51,12 +52,16 @@ function SeccionCategoria({ titulo, count, children }: { titulo: string; count: 
   );
 }
 interface Actual {
-  snapshot_id: number | null; fecha: string | null; productos: ProductoActual[];
+  snapshot_id: number | null; fecha: string | null; tipo: string | null; semana_id: number | null; productos: ProductoActual[];
   valor_total: number; sin_costo: { product_id: number; nombre: string }[];
 }
 interface ItemCompra { product_id: number; nombre: string; faltante: number; unit_cost: number | null; valor_faltante: number }
 interface GrupoCompra { store: string; items: ItemCompra[]; subtotal: number }
 interface ListaCompras { grupos: GrupoCompra[]; total: number }
+interface SnapshotHistorial {
+  id: number; tipo: 'apertura' | 'cierre' | 'ajuste' | 'conteo_operativo' | string;
+  semana_id: number | null; motivo: string | null; nota: string | null; creado_at: string; lineas: number;
+}
 
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
@@ -112,6 +117,10 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [filtro, setFiltro] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState('');
+  const [tipo, setTipo] = useState<'conteo_operativo' | 'apertura' | 'cierre' | 'ajuste'>('conteo_operativo');
+  const [semanas, setSemanas] = useState<SemanaRef[]>([]);
+  const [semanaId, setSemanaId] = useState<number | null>(null);
+  const [motivo, setMotivo] = useState('');
 
   useEffect(() => {
     Promise.all([
@@ -119,17 +128,21 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       api<Producto[]>('/catalogo/products'),
       api<Categoria[]>('/catalogo/categorias-inventario'),
       api<Actual>('/inventario/current'),
-    ]).then(([z, p, c, actual]) => {
+      api<SemanaRef[]>('/finanzas/semanas'),
+    ]).then(([z, p, c, actual, ss]) => {
       setZonas(z);
       setProductos(p);
       setCategorias(c);
+      setSemanas(ss);
+      const abierta = ss.find((s) => s.estado === 'abierta');
+      if (abierta) setSemanaId(abierta.id);
       if (z[0]) setZonaActiva(z[0].id);
       // Pre-carga el último conteo de cada zona: así, para corregir una cantidad
       // basta editar ese campo y guardar, sin recapturar todo de nuevo.
       const previos: Record<string, string> = {};
       for (const prod of actual.productos) {
         for (const pz of prod.por_zona) {
-          previos[`${prod.product_id}:${pz.zona_id}`] = String(pz.qty_captura);
+        previos[`${prod.product_id}:${pz.zona_id}`] = String(pz.qty_captura);
         }
       }
       setValores(previos);
@@ -162,7 +175,18 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
     setGuardando(true);
     setMsg('');
     try {
-      await api('/inventario/snapshots', { method: 'POST', body: { lineas } });
+      if ((tipo === 'apertura' || tipo === 'cierre') && semanaId == null) {
+        setMsg('Selecciona la semana que estás abriendo o cerrando.');
+        return;
+      }
+      if (tipo === 'ajuste' && motivo.trim().length < 5) {
+        setMsg('Describe el motivo del ajuste (mínimo 5 caracteres).');
+        return;
+      }
+      await api('/inventario/snapshots', {
+        method: 'POST',
+        body: { lineas, tipo, semana_id: semanaId, motivo: motivo.trim() || null },
+      });
       setValores({});
       onGuardado();
     } catch (e) {
@@ -176,6 +200,24 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
 
   return (
     <>
+      <section className="inventory-capture-context">
+        <div className="section-heading"><div><strong>¿Qué estás contando?</strong><p className="muted">Cada captura queda identificada y no reemplaza el historial.</p></div></div>
+        <div className="pill-row">
+          {([
+            ['conteo_operativo', 'Conteo operativo'],
+            ['apertura', 'Apertura de semana'],
+            ['cierre', 'Cierre de semana'],
+            ['ajuste', 'Ajuste documentado'],
+          ] as const).map(([value, label]) => (
+            <button key={value} type="button" className={tipo === value ? 'pill pill--on' : 'pill'} onClick={() => setTipo(value)}>{label}</button>
+          ))}
+        </div>
+        {tipo !== 'conteo_operativo' && <div className="form-grid form-grid--two">
+          {(tipo === 'apertura' || tipo === 'cierre') && <label>Semana<select value={semanaId ?? ''} onChange={(e) => setSemanaId(e.target.value ? Number(e.target.value) : null)}><option value="">Selecciona…</option>{semanas.map((s) => <option key={s.id} value={s.id}>{s.etiqueta} · {s.estado}</option>)}</select></label>}
+          {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}
+        </div>}
+        <p className="muted inventory-unit-help">Captura la cantidad en la unidad visible junto a cada producto. El sistema convierte automáticamente a la unidad base; no mezcles cajas, paquetes y piezas.</p>
+      </section>
       <div className="zona-tabs">
         {zonas.map((z) => (
           <button key={z.id} className={z.id === zonaActiva ? 'pill pill--on' : 'pill'} onClick={() => setZonaActiva(z.id)}>
@@ -185,7 +227,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       </div>
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
       <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>
-        Se muestra tu último conteo. Corrige solo lo que cambie y guarda, o usa <b>Limpiar</b> para empezar de cero.
+        Se muestra tu último conteo por zona como referencia. Elige arriba si esto es una apertura, cierre o ajuste antes de guardar.
       </p>
 
       {zonaActiva != null && grupos.map((g) => (
@@ -199,7 +241,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                 <li key={p.id} className="conteo-row">
                   <div className="conteo-info">
                     <strong>{p.nombre}</strong>
-                    <small className="muted">{u.unidad_captura}{u.factor !== 1 ? ` ×${u.factor}` : ''} · {p.store}</small>
+                    <small className="muted">Se captura en {u.unidad_captura}{u.factor !== 1 ? ` · 1 = ${u.factor} ${p.unidad_base ?? 'base'}` : ''} · {p.store}</small>
                   </div>
                   {esBool ? (
                     <div className="bool-toggle">
@@ -219,6 +261,11 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                       onChange={(e) => setVal(p.id, zonaActiva, e.target.value)}
                       onKeyDown={moverConteoConFlecha}
                     />
+                  )}
+                  {!esBool && valores[key] !== '' && valores[key] != null && Number.isFinite(Number(valores[key])) && (
+                    <small className="muted conteo-conversion">
+                      = {(Number(valores[key]) * u.factor).toLocaleString('es-MX', { maximumFractionDigits: 3 })} {p.unidad_base ?? 'unidad base'}
+                    </small>
                   )}
                 </li>
               );
@@ -387,9 +434,11 @@ export function BorradorIA({ onGuardado }: { onGuardado: () => void }) {
 function InventarioActual() {
   const [data, setData] = useState<Actual | null>(null);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [historial, setHistorial] = useState<SnapshotHistorial[]>([]);
   useEffect(() => {
     api<Actual>('/inventario/current').then(setData);
     api<Categoria[]>('/catalogo/categorias-inventario').then(setCategorias).catch(() => {});
+    api<SnapshotHistorial[]>('/inventario/snapshots').then(setHistorial).catch(() => {});
   }, []);
   if (!data) return <Cargando />;
   const grupos = agruparPorCategoria(data.productos, categorias);
@@ -400,7 +449,7 @@ function InventarioActual() {
         <span className="muted">Valor de inventario (a costo)</span>
         <strong className="big-number">{mxn(data.valor_total)}</strong>
         <small className="muted">
-          {data.fecha ? `Último conteo: ${new Date(data.fecha).toLocaleString('es-MX')}` : 'Sin conteos aún'}
+          {data.fecha ? `Último conteo: ${new Date(data.fecha).toLocaleString('es-MX')} · ${data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'operativo'}${data.semana_id ? ` · semana ${data.semana_id}` : ''}` : 'Sin conteos aún'}
         </small>
       </div>
       {data.sin_costo.length > 0 && (
@@ -416,7 +465,7 @@ function InventarioActual() {
               <li key={p.product_id} className="conteo-row">
                 <div className="conteo-info">
                   <strong>{p.nombre}</strong>
-                  <small className="muted">{p.total_base} / {p.base_qty} mín · {p.store}</small>
+                  <small className="muted">{p.por_zona.map((z) => `${z.zona}: ${z.qty_captura} ${z.unidad_captura ?? 'unidad base'}`).join(' · ') || 'Sin conteo por zona'} · base: {p.total_base} {p.base_qty ? `/ ${p.base_qty} mín` : ''} · {p.store}</small>
                 </div>
                 <span>{mxn(p.valor)}</span>
               </li>
@@ -424,6 +473,22 @@ function InventarioActual() {
           </ul>
         </SeccionCategoria>
       ))}
+      <section className="resumen-card inventory-history">
+        <div className="section-heading">
+          <div><strong>Historial de conteos</strong><p className="muted">Cada conteo indica si fue apertura, cierre o ajuste. El operativo no cambia por sí solo el cierre semanal.</p></div>
+        </div>
+        {historial.length === 0 ? <p className="muted">Sin conteos registrados.</p> : (
+          <ul className="conteo-list">
+            {historial.slice(0, 12).map((s) => {
+              const label = s.tipo === 'cierre' ? 'Cierre de semana' : s.tipo === 'apertura' ? 'Apertura de semana' : s.tipo === 'ajuste' ? 'Ajuste documentado' : 'Conteo operativo';
+              return <li key={s.id} className="conteo-row">
+                <div className="conteo-info"><strong>{label}{s.semana_id ? ` · Semana ${s.semana_id}` : ''}</strong><small className="muted">{new Date(s.creado_at).toLocaleString('es-MX')} · {s.lineas} líneas{s.motivo ? ` · ${s.motivo}` : ''}</small></div>
+                <span className="chip">#{s.id}</span>
+              </li>;
+            })}
+          </ul>
+        )}
+      </section>
     </>
   );
 }

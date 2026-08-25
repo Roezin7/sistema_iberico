@@ -161,6 +161,13 @@ model inventory_snapshot {
   id                  BigInt                  @id @default(autoincrement())
   negocio_id          BigInt
   created_at          DateTime                @default(now()) @db.Timestamptz(6)
+  // Purpose of the snapshot. Historical rows default to conteo_operativo;
+  // new captures must explicitly identify whether they open, close or adjust
+  // a week so the inventory chain cannot be interpreted ambiguously.
+  tipo                String                  @default("conteo_operativo")
+  semana_id           BigInt?
+  motivo              String?
+  nota                String?
   inventory_lines     inventory_lines[]
   negocios            negocios                @relation(fields: [negocio_id], references: [id])
   aperturas_semanales inventario_semanal[]    @relation("InventarioSemanalApertura")
@@ -169,6 +176,7 @@ model inventory_snapshot {
   ajustes_nuevo       inventory_adjustments[] @relation("AjusteSnapshotNuevo")
 
   @@index([negocio_id])
+  @@index([negocio_id, tipo, semana_id])
 }
 
 model product_aliases {

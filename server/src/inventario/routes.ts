@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncHandler } from '../middleware/error.js';
+import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
-import { inventarioActual, listaCompras, crearConteo } from './service.js';
+import { inventarioActual, listaCompras, crearConteo, listarSnapshots } from './service.js';
 import { borradorCompraTicket, borradorConteo, draftDisponible } from './draft.js';
 import { listarLotes, registrarCompra } from './compras.js';
 import { prepararAperturaFifo } from './apertura-fifo.js';
@@ -22,6 +22,11 @@ inventarioRouter.get(
   }),
 );
 
+inventarioRouter.get('/snapshots', asyncHandler(async (req, res) => {
+  const semanaId = req.query.semana_id ? BigInt(z.coerce.number().int().positive().parse(req.query.semana_id)) : undefined;
+  res.json(await listarSnapshots(req.auth!.negocioId, semanaId));
+}));
+
 /** GET /inventario/shopping-list — faltantes agrupados por tienda. */
 inventarioRouter.get(
   '/shopping-list',
@@ -31,6 +36,10 @@ inventarioRouter.get(
 );
 
 const conteoSchema = z.object({
+  tipo: z.enum(['apertura', 'cierre', 'ajuste', 'conteo_operativo']).default('conteo_operativo'),
+  semana_id: z.coerce.number().int().positive().nullable().optional(),
+  motivo: z.string().trim().max(500).nullable().optional(),
+  nota: z.string().trim().max(1000).nullable().optional(),
   lineas: z
     .array(
       z.object({
@@ -46,8 +55,16 @@ const conteoSchema = z.object({
 inventarioRouter.post(
   '/snapshots',
   asyncHandler(async (req, res) => {
-    const { lineas } = conteoSchema.parse(req.body);
-    const r = await crearConteo(req.auth!.negocioId, lineas);
+    const body = conteoSchema.parse(req.body);
+    if (body.tipo !== 'conteo_operativo' && req.auth!.rol !== 'admin') {
+      throw new HttpError(403, 'Sólo un administrador puede registrar aperturas, cierres o ajustes');
+    }
+    const r = await crearConteo(req.auth!.negocioId, body.lineas, {
+      tipo: body.tipo,
+      semana_id: body.semana_id ?? null,
+      motivo: body.motivo,
+      nota: body.nota,
+    });
     res.status(201).json(r);
   }),
 );

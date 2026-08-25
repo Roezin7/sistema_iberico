@@ -125,7 +125,13 @@ export async function crearCorreccionInventario(input: AjusteInput) {
     }
     if (costo == null) throw new HttpError(409, 'El producto no tiene costo para valorar la corrección');
 
-    const nuevo = await tx.inventory_snapshot.create({ data: { negocio_id: input.negocioId } });
+    const nuevo = await tx.inventory_snapshot.create({ data: {
+      negocio_id: input.negocioId,
+      tipo: 'ajuste',
+      semana_id: input.semanaId,
+      motivo: input.motivo.trim(),
+      nota: input.nota?.trim() || null,
+    } });
     const nuevasLineas: { snapshot_id: bigint; product_id: bigint; zona_id: bigint; qty_captura: number; factor: number }[] = lineas.map((l) => ({ snapshot_id: nuevo.id, product_id: l.product_id, zona_id: l.zona_id, qty_captura: l.product_id === input.productId && l.zona_id === input.zonaId ? redondear(num0(l.qty_captura) + deltaCaptura) : num0(l.qty_captura), factor: num0(l.factor) }));
     if (!existente && cantidadBase > 0) nuevasLineas.push({ snapshot_id: nuevo.id, product_id: input.productId, zona_id: input.zonaId, qty_captura: deltaCaptura, factor });
     if (nuevasLineas.length) await tx.inventory_lines.createMany({ data: nuevasLineas });
