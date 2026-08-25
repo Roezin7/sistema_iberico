@@ -65,6 +65,13 @@ function esReversionFifo(row: { fuente: string | null }): boolean {
 
 type IncidenciaTipo = 'conversion' | 'compra_faltante' | 'receta' | 'captura' | 'posible_merma' | 'sin_diferencia';
 
+function unidadComparable(unidad: string | null): string | null {
+  if (!unidad) return null;
+  // Las cervezas pueden guardar la presentación en el nombre ("pieza 355
+  // ml"), pero siguen siendo una pieza para efectos del inventario.
+  return unidad.trim().toLowerCase().replace(/\s+\d+(?:[.,]\d+)?\s*ml$/, '').trim();
+}
+
 function clasificarIncidencia(args: {
   diferencia: number;
   diferenciaConsumo: number;
@@ -77,15 +84,20 @@ function clasificarIncidencia(args: {
 }): { tipo: IncidenciaTipo; texto: string } {
   if (!args.tieneAperturaFifo && args.inicial > 0) return { tipo: 'captura', texto: 'Captura: apertura FIFO pendiente de validar' };
   if (Math.abs(args.diferencia) <= 0.01 && Math.abs(args.diferenciaConsumo) <= 0.01) return { tipo: 'sin_diferencia', texto: 'Sin incidencia' };
-  // Una diferencia entre la unidad de compra y la unidad base siempre debe
-  // revisarse como conversión antes de llamarla merma o compra faltante. Esto
-  // cubre paquetes/cajas, kg→g, botellas→ml y piezas→porciones; el factor se
-  // conserva en la línea FIFO y no se debe inferir de la diferencia física.
-  if (args.unidadCompra && args.unidadBase && args.unidadCompra !== args.unidadBase) {
-    const detalle = args.contenidoCompra && args.contenidoCompra > 0
-      ? `Revisar conversión de presentación (${args.unidadCompra} → ${args.unidadBase}; factor ${args.contenidoCompra})`
-      : 'Revisar conversión de presentación antes de clasificar la diferencia';
-    return { tipo: 'conversion', texto: detalle };
+  // Sólo llamamos "conversión" cuando la diferencia observada es compatible
+  // con una o varias presentaciones completas. Una unidad distinta por sí
+  // sola (por ejemplo botella→ml) no explica una merma parcial y debe seguir
+  // pasando por las categorías de compra, receta, captura o merma.
+  const unidadCompra = unidadComparable(args.unidadCompra);
+  const unidadBase = unidadComparable(args.unidadBase);
+  const contenido = args.contenidoCompra && args.contenidoCompra > 0 ? args.contenidoCompra : null;
+  const presentaciones = contenido ? Math.abs(args.diferencia) / contenido : 0;
+  const presentacionesCompletas = contenido != null && presentaciones >= 0.5 && Math.abs(presentaciones - Math.round(presentaciones)) <= 0.03;
+  if (unidadCompra && unidadBase && unidadCompra !== unidadBase && presentacionesCompletas) {
+    return {
+      tipo: 'conversion',
+      texto: `Revisar conversión de presentación (${args.unidadCompra} → ${args.unidadBase}; factor ${contenido})`,
+    };
   }
   if (args.diferencia > 0.01 && args.compras <= 0.01) return { tipo: 'compra_faltante', texto: 'Posible compra faltante o no registrada' };
   if (args.diferenciaConsumo > 0.01) return { tipo: 'posible_merma', texto: 'Posible merma o consumo no registrado' };
