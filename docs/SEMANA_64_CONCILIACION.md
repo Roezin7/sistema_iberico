@@ -25,6 +25,13 @@ asignación del costo de ventas, pero **no** valida todavía la existencia físi
 la conciliación FIFO contra el conteo final permanece abierta con 78 productos
 con incidencia.
 
+### Pagos diarios
+
+Los tres cortes diarios están conciliados por importe contra Epos. El 22 de
+agosto contiene **$100.00 como `Card/Cash`**: el total sí está conciliado, pero
+Epos no permite saber si fue efectivo o tarjeta. Se conserva como `otros` y no
+se asigna silenciosamente a una cuenta.
+
 ## Compra vinculada
 
 La compra de **$68.00** quedó registrada como `Compra local`, ticket
