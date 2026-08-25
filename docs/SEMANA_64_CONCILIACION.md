@@ -25,6 +25,11 @@ asignación del costo de ventas, pero **no** valida todavía la existencia físi
 la conciliación FIFO contra el conteo final permanece abierta con 78 productos
 con incidencia.
 
+La diferencia neta de $2,544.36 oculta compensaciones entre sobrantes y
+faltantes: la magnitud absoluta de las diferencias es aproximadamente
+$10,694.62 ($6,619.49 de sobrantes frente a $4,075.13 de faltantes). Por eso
+no debe interpretarse el neto como una merma única.
+
 ### Pagos diarios
 
 Los tres cortes diarios están conciliados por importe contra Epos. El 22 de
