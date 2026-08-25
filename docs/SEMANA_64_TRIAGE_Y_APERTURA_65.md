@@ -17,14 +17,14 @@ El snapshot 59 es el inventario final corregido de la semana 64. No se debe crea
 
 ## Qué reveló la semana 64
 
-La conciliación produjo **78 líneas de diferencia física**:
+La conciliación produjo **78 líneas de diferencia física** (15 productos sin diferencia):
 
 | Clasificación | Líneas | Tratamiento inicial |
 |---|---:|---|
-| Conversión de presentación | 9 | Confirmar unidad y factor; corregir sólo si la evidencia lo respalda |
+| Conversión de presentación | 2 | Confirmar unidad y factor; corregir sólo si la evidencia lo respalda |
 | Compra faltante | 19 | Buscar ticket o registrar compra omitida; no inventar lote |
-| Receta | 11 | Revisar receta y cantidad vendida; no cambiar receta validada sin evidencia |
-| Posible merma | 39 | Mantener como incidencia hasta validar conteo, desperdicio o captura |
+| Receta | 12 | Revisar receta y cantidad vendida; no cambiar receta validada sin evidencia |
+| Posible merma | 45 | Mantener como incidencia hasta validar conteo, desperdicio o captura |
 
 La diferencia física neta fue **+$2,544.36** y la diferencia bruta absoluta **$10,694.62**. Esto significa que el resultado no debe interpretarse como una sola “merma”: mezcla presentaciones, compras no cargadas, recetas y posibles pérdidas.
 
