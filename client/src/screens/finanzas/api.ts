@@ -37,18 +37,31 @@ export interface Resumen {
     apertura_valor: number | null; compras: number; cierre_valor: number | null;
     costo_ventas: number | null; costo_ventas_fuente: 'ledger_fifo_en_vivo' | 'conciliacion_inventario';
     valor_fifo_corte: number; unidades_fifo_corte: number;
+    control_fifo: {
+      costo_movimientos_activos: number | null; costo_reversiones_historial: number;
+      filas_movimientos_activos: number; filas_reversiones_historial: number;
+      ventas_epos_con_consumo_activo: number; diferencia_costo_vs_epos: number | null;
+      reporte_independiente: boolean; alerta_independencia: string | null;
+    };
     estado: 'pendiente_cierre' | 'cerrado'; apertura_origen: string | null;
   };
   conciliacion_inventario: {
     estado: 'pendiente_cierre' | 'calculada';
     apertura_snapshot_id: number | null; cierre_snapshot_id: number | null;
     total_diferencia_valor: number | null; productos_con_incidencia: number;
+    consumo_fifo_activo_filas: number; reversiones_historial_filas: number;
+    productos_con_diferencia_consumo: number; reporte_independiente: boolean;
+    alerta_independencia: string | null;
     filas: {
       product_id: number; producto: string; unidad_base: string | null;
       inventario_inicial: number; compras_recibidas: number; ajustes_inventario: number; consumo_teorico: number;
+      consumo_fifo_activo: number;
+      consumo_fisico_inferido: number; diferencia_consumo: number;
       existencia_fifo_esperada: number; inventario_fisico_final: number;
       diferencia_cantidad: number; costo_fifo: number | null;
-      diferencia_valor: number | null; incidencia: string;
+      diferencia_valor: number | null;
+      incidencia_tipo: 'conversion' | 'compra_faltante' | 'receta' | 'captura' | 'posible_merma' | 'sin_diferencia';
+      incidencia: string;
     }[];
   };
 }

@@ -136,7 +136,15 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
   // último costo unitario aplicado para que la vista de costos no retroceda
   // silenciosamente al costo estático cuando ya no queda saldo abierto.
   const consumosRecientes = productIds.length ? await prisma.inventory_consumptions.findMany({
-    where: { negocio_id: req.auth!.negocioId, product_id: { in: productIds } },
+    // El último costo de menú debe venir de un consumo FIFO activo. Una
+    // reversión sólo explica el historial y nunca debe reemplazar el costo
+    // vigente de una receta.
+    where: {
+      negocio_id: req.auth!.negocioId,
+      product_id: { in: productIds },
+      cantidad: { gt: 0 },
+      OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+    },
     orderBy: [{ fecha: 'desc' }, { id: 'desc' }],
     select: { product_id: true, costo_unitario: true, fecha: true },
   }) : [];

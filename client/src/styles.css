@@ -805,6 +805,138 @@ table th {
   margin-top: 0.25rem;
   letter-spacing: -0.01em;
 }
+
+/* ---------- Lectura doble de resultados ---------- */
+.resumen-intro {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.25rem 0 1.15rem;
+}
+.resumen-intro h2 {
+  margin: 0.2rem 0 0.35rem;
+  font-size: 1.35rem;
+  letter-spacing: -0.015em;
+}
+.resumen-intro p {
+  margin: 0;
+  max-width: 48rem;
+}
+.eyebrow,
+.vision-card__eyebrow {
+  color: var(--brand);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.vision-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.vision-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--border-strong);
+  border-radius: var(--r-card);
+  padding: 1.15rem 1.25rem;
+  box-shadow: var(--sh-sm);
+}
+.vision-card--cash { border-left-color: var(--data-azulejo); }
+.vision-card--fifo { border-left-color: var(--data-olivo); }
+.vision-card__head,
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+.vision-card h3 {
+  margin: 0.18rem 0 0;
+  font-size: 1.2rem;
+}
+.vision-card__icon {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--brand) 18%, transparent);
+  color: var(--brand);
+  font-weight: 800;
+}
+.vision-card__value {
+  display: block;
+  margin: 0.85rem 0 0.2rem;
+  font-family: var(--font-ui);
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  letter-spacing: -0.04em;
+}
+.vision-card__definition {
+  min-height: 2.5rem;
+  margin: 0 0 0.75rem;
+  color: var(--ink-2);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+.vision-card__rows { margin-top: 0.45rem; }
+.vision-card__rows .kv { font-size: 0.88rem; }
+.vision-card__note {
+  display: block;
+  margin-top: 0.85rem;
+  color: var(--ink-3);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+.vision-callout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  margin-bottom: 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid color-mix(in srgb, var(--data-ochre) 65%, var(--border));
+  border-radius: var(--r-card);
+  background: color-mix(in srgb, var(--data-ochre) 9%, var(--surface));
+}
+.vision-callout__warning {
+  color: var(--danger);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.patrimonio-card .section-heading { align-items: center; }
+.patrimonio-card .section-heading strong { font-size: 1.05rem; }
+.patrimonio-grid,
+.semana-evolucion__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+.patrimonio-grid > div,
+.semana-evolucion__grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: color-mix(in srgb, var(--bg) 35%, var(--surface));
+}
+.patrimonio-grid small,
+.semana-evolucion__grid small {
+  color: var(--ink-3);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.patrimonio-grid strong { font-size: 1.15rem; }
+.semana-evolucion__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.semana-evolucion__grid strong { font-size: 1.15rem; }
+.semana-evolucion__grid span { font-size: 0.78rem; }
+.resumen-detalle { margin-top: 0; }
 .kpi__delta {
   font-size: 0.78rem;
   font-weight: 600;
@@ -2131,6 +2263,10 @@ select:disabled {
   .fifo-panel summary { align-items: flex-start; }
   .sticky-action { position: sticky; bottom: .4rem; z-index: 3; padding: .6rem; margin-top: .7rem; background: color-mix(in srgb, var(--surface) 92%, transparent); border-radius: var(--r-input); }
   .sticky-action button { min-height: 44px; }
+  .resumen-intro { flex-direction: column; }
+  .vision-grid { grid-template-columns: 1fr; }
+  .patrimonio-grid, .semana-evolucion__grid { grid-template-columns: 1fr; }
+  .patrimonio-card .section-heading { align-items: flex-start; flex-direction: column; }
 }
 
 /* Costos del menú — vista ejecutiva y consulta por carta */
@@ -2179,6 +2315,17 @@ select:disabled {
 .menu-costos-warning { display: flex; align-items: flex-start; gap: .4rem; margin: .25rem 1rem .8rem; padding: .55rem .6rem; border-radius: var(--r-input); color: #e7c16d; background: rgba(220, 167, 69, .11); font-size: .75rem; line-height: 1.35; }
 .menu-costos-footnote { margin: 1.5rem 0 .25rem; color: var(--ink-3); font-size: .76rem; }
 .menu-costos-error { margin-bottom: 1rem; }
+
+.fifo-independence { display: grid; gap: .2rem; margin-top: .8rem; padding: .7rem .8rem; border: 1px solid var(--border); border-radius: var(--r-input); font-size: .82rem; }
+.fifo-independence strong { font-size: .86rem; }
+.fifo-independence span, .fifo-independence small { color: var(--ink-2); line-height: 1.4; }
+.fifo-independence--ok { border-color: rgba(75, 155, 74, .55); background: rgba(75, 155, 74, .10); }
+.fifo-independence--warning { border-color: rgba(220, 167, 69, .55); background: rgba(220, 167, 69, .10); }
+.incidencia-tipo { display: inline-flex; padding: .2rem .4rem; border-radius: 999px; color: var(--ink-2); background: var(--surface-2); font-size: .7rem; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
+.incidencia-tipo--posible_merma { color: #f08a7c; background: rgba(224, 92, 77, .14); }
+.incidencia-tipo--compra_faltante, .incidencia-tipo--conversion { color: #e7c16d; background: rgba(220, 167, 69, .14); }
+.incidencia-tipo--receta, .incidencia-tipo--captura { color: #81c8e2; background: rgba(54, 154, 194, .14); }
+.incidencia-tipo--sin_diferencia { color: #9ad67b; background: rgba(75, 155, 74, .14); }
 
 @media (max-width: 820px) {
   .menu-costos-hero { flex-direction: column; }

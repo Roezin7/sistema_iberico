@@ -114,7 +114,7 @@ function Marco({ children }: { children: React.ReactNode }) {
       <header className="page-head">
         <div className="page-title">
           <Icono name="wallet" size={24} className="ttl-icon" />
-        <h1>Operación</h1>
+        <h1>Finanzas</h1>
         </div>
       </header>
       <div className="tab-body">{children}</div>
@@ -190,13 +190,13 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
       </div>
       <nav className="tabs" aria-label="Flujo semanal">
         <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Operación diaria</button>
-        <button className={tab === 'resumen' ? 'tab tab--on' : 'tab'} onClick={() => setTab('resumen')}>Resumen</button>
-        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Compras y tickets</button>
-        <button className={tab === 'cuadre' ? 'tab tab--on' : 'tab'} onClick={() => setTab('cuadre')}>Cuadre</button>
+        <button className={tab === 'resumen' ? 'tab tab--on' : 'tab'} onClick={() => setTab('resumen')}>Resultado y patrimonio</button>
+        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Movimientos</button>
+        <button className={tab === 'cuadre' ? 'tab tab--on' : 'tab'} onClick={() => setTab('cuadre')}>Cierre y control</button>
       </nav>
 
       {tab === 'dia' && <DiaView semana={semana} dias={dias} conciliaciones={conciliaciones} onChange={cargar} />}
-      {tab === 'resumen' && resumen && <ResumenView r={resumen} semana={semana} onCambio={cargar} />}
+      {tab === 'resumen' && resumen && <ResumenView r={resumen} semana={semana} movs={movs} conciliaciones={conciliaciones} dias={dias} onCambio={cargar} />}
       {tab === 'movs' && (
         <MovimientosView ref_={ref_} semana={semana} movs={movs} onChange={cargar} />
       )}
@@ -204,7 +204,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
         <CuadreView ref_={ref_} semana={semana} filas={cuadre} onChange={cargar} />
       )}
 
-      {abierta && (tab === 'resumen' || tab === 'cuadre') && (
+      {abierta && tab === 'cuadre' && (
         <button className="btn-primary" style={{ marginTop: '1.5rem' }} onClick={async () => {
           const ok = await confirmar({
             message: '¿Cerrar la semana? Se generará la comisión de terminal y se congelarán los saldos.',
@@ -556,38 +556,101 @@ function DetalleVentasEpos({ filas, preview, metodoMixto }: { filas: EposVenta[]
   </details>;
 }
 
-function ResumenView({ r, semana, onCambio }: { r: Resumen; semana: Semana; onCambio: () => void }) {
+function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
+  r: Resumen;
+  semana: Semana;
+  movs: Movimiento[];
+  conciliaciones: ConciliacionDiaria[];
+  dias: DiaFila[];
+  onCambio: () => void;
+}) {
   const fila = (l: string, v: string, em?: boolean) => (
     <div className="kv"><span className="muted">{l}</span><span className={em ? 'big-number' : ''}>{v}</span></div>
   );
+  const sumaTipo = (tipo: TipoMov) => movs
+    .filter((mov) => mov.tipo === tipo)
+    .reduce((total, mov) => total + Number(mov.monto || 0), 0);
+  const gastos = sumaTipo('gasto');
+  const sueldos = sumaTipo('sueldo');
+  const propinasPagadas = sumaTipo('propina_pagada');
+  const ventasEpos = conciliaciones.reduce((total, corte) => total + Number(corte.epos.ventas || 0), 0);
+  const ventasOperativas = ventasEpos > 0 ? ventasEpos : Math.max(0, r.ventas.total - r.ventas.propinas);
+  const ventasPersistidas = Math.max(0, r.ventas.total - r.ventas.propinas);
+  const diferenciaVentas = ventasEpos > 0 ? ventasEpos - ventasPersistidas : 0;
+  const costoFifo = r.inventario.costo_ventas;
+  const utilidadOperativa = costoFifo == null
+    ? null
+    : ventasOperativas - costoFifo - r.comision_terminal_estimada - gastos - sueldos - propinasPagadas;
+  const margenOperativo = utilidadOperativa == null || ventasOperativas === 0 ? null : utilidadOperativa / ventasOperativas;
+  const inventarioAlCorte = r.inventario.estado === 'cerrado' && r.inventario.cierre_valor != null
+    ? r.inventario.cierre_valor
+    : r.inventario.valor_fifo_corte;
+  const patrimonioOperativo = r.saldo_real_final_total + inventarioAlCorte;
+  const diasOperativos = dias.filter((dia) => esDiaOperativo(dia.fecha));
   return (
     <>
-      <div className="kpi-grid">
-        <div className="kpi kpi--vino">
-          <div className="kpi__label">Utilidad</div>
-          <div className="kpi__value">{mxn(r.utilidad)}</div>
+      <div className="resumen-intro">
+        <div>
+          <span className="eyebrow">Lectura financiera de la semana</span>
+          <h2>Dos números, dos preguntas distintas</h2>
+          <p className="muted">El flujo de caja explica cuánto dinero cambió de lugar. El resultado FIFO explica cuánto ganó realmente la operación después de reconocer lo consumido.</p>
         </div>
-        <div className="kpi kpi--ochre">
-          <div className="kpi__label">Margen</div>
-          <div className="kpi__value">{(r.margen * 100).toFixed(1)}%</div>
-        </div>
-        <div className="kpi kpi--olivo">
-          <div className="kpi__label">Utilidad %</div>
-          <div className="kpi__value">{(r.utilidad_pct * 100).toFixed(0)}%</div>
-        </div>
-        <div className="kpi kpi--azulejo">
-          <div className="kpi__label">Ventas totales</div>
-          <div className="kpi__value">{mxn(r.ventas.total)}</div>
+        <span className={semana.estado === 'abierta' ? 'chip chip--info' : 'chip chip--ok'}>{semana.estado === 'abierta' ? 'Semana en curso' : 'Semana cerrada'}</span>
+      </div>
+
+      <div className="vision-grid">
+        <section className="vision-card vision-card--cash">
+          <div className="vision-card__head"><div><span className="vision-card__eyebrow">Flujo de caja</span><h3>Cambio de efectivo</h3></div><span className="vision-card__icon">$</span></div>
+          <strong className="vision-card__value">{mxn(r.utilidad)}</strong>
+          <p className="vision-card__definition">Dinero que entró o salió de banco y caja durante la semana.</p>
+          <div className="vision-card__rows">
+            {fila('Ventas registradas + propinas', mxn(r.ventas.total))}
+            {fila('Compras pagadas', mxn(r.compras_inventario))}
+            {fila('Gastos y sueldos', mxn(gastos + sueldos))}
+          </div>
+          <span className="vision-card__note">Sirve para liquidez. No mide el costo real de lo consumido.</span>
+        </section>
+
+        <section className="vision-card vision-card--fifo">
+          <div className="vision-card__head"><div><span className="vision-card__eyebrow">Resultado operativo</span><h3>Utilidad con FIFO</h3></div><span className="vision-card__icon">ƒ</span></div>
+          <strong className="vision-card__value">{utilidadOperativa == null ? 'Pendiente' : mxn(utilidadOperativa)}</strong>
+          <p className="vision-card__definition">Ventas reales menos inventario consumido, comisión, gastos y sueldos.</p>
+          <div className="vision-card__rows">
+            {fila('Ventas Epos', mxn(ventasOperativas))}
+            {fila('Costo consumido FIFO', costoFifo == null ? 'Pendiente' : `−${mxn(costoFifo)}`)}
+            {fila('Comisión + gastos + sueldos', `−${mxn(r.comision_terminal_estimada + gastos + sueldos + propinasPagadas)}`)}
+          </div>
+          <span className="vision-card__note">{margenOperativo == null ? 'Falta costo FIFO o ventas verificadas.' : `Margen operativo: ${(margenOperativo * 100).toFixed(1)}%`}</span>
+        </section>
+      </div>
+
+      <div className="vision-callout"><strong>Cómo leer la diferencia</strong><span className="muted">Si el flujo de caja es mayor que la utilidad FIFO, normalmente se compró inventario que todavía está en bodega. Esa diferencia no es pérdida: es inventario convertido en activo.</span>{Math.abs(diferenciaVentas) > 0.01 && <span className="vision-callout__warning">Epos y movimientos registrados difieren por {mxn(diferenciaVentas)}. Revisa el método mixto, propinas u otros antes de cerrar.</span>}<span className="muted">El cierre y las correcciones se realizan únicamente en la pestaña <strong>Cierre y control</strong>.</span></div>
+
+      <div className="resumen-card patrimonio-card">
+        <div className="section-heading"><div><strong>Patrimonio operativo al corte</strong><p className="muted">La foto del negocio: dinero disponible más inventario, sin llamarlo utilidad.</p></div><span className="big-number">{mxn(patrimonioOperativo)}</span></div>
+        <div className="patrimonio-grid">
+          <div><small>Banco y caja</small><strong>{mxn(r.saldo_real_final_total)}</strong></div>
+          <div><small>Inventario {r.inventario.estado === 'cerrado' ? 'físico de cierre' : 'FIFO al corte'}</small><strong>{mxn(inventarioAlCorte)}</strong></div>
+          <div><small>Estado del inventario</small><strong>{r.inventario.estado === 'cerrado' ? 'Congelado' : 'En curso'}</strong></div>
         </div>
       </div>
-      <div className="resumen-card">
+
+      <div className="resumen-card semana-evolucion">
+        <div className="section-heading"><div><strong>Evolución de la semana</strong><p className="muted">El selector superior cambia esta misma lectura para cada semana sin mezclar periodos.</p></div><span className="muted">{diasOperativos.length} días operativos</span></div>
+        {diasOperativos.length > 0 ? <div className="semana-evolucion__grid">{diasOperativos.map((dia) => <div key={dia.fecha}><small>{dia.dia} · {dia.fecha.slice(5)}</small><strong>{mxn(dia.total_ventas)}</strong><span className="muted">Egresos {mxn(dia.total_egresos)}</span></div>)}</div> : <p className="muted">No hay ventas registradas en los días operativos de esta semana.</p>}
+      </div>
+
+      <div className="resumen-card resumen-detalle">
+        <strong>Componentes de la semana</strong>
         {fila('Ventas efectivo', mxn(r.ventas.efectivo))}
         {fila('Ventas tarjeta', mxn(r.ventas.tarjeta))}
         {fila('Propinas tarjeta', mxn(r.ventas.propinas))}
-        {fila('Ventas totales', mxn(r.ventas.total))}
+        {fila('Ventas Epos verificadas', mxn(ventasOperativas))}
         {fila('Comisión terminal (1.99%)', mxn(r.comision_terminal_estimada))}
-        {fila('Compras inventario', mxn(r.compras_inventario))}
+        {fila('Gastos operativos', mxn(gastos))}
+        {fila('Sueldos', mxn(sueldos))}
       </div>
+
       <div className="resumen-card">
         <strong>Ciclo semanal de inventario</strong>
         {fila('Inventario de apertura', mxn(r.inventario.apertura_valor))}
@@ -600,6 +663,13 @@ function ResumenView({ r, semana, onCambio }: { r: Resumen; semana: Semana; onCa
             ? 'Pendiente: captura el inventario físico de cierre para abrir la siguiente semana con ese mismo saldo.'
             : 'El inventario de cierre queda congelado y será la apertura de la siguiente semana.'}
         </p>
+        <div className={`fifo-independence ${r.inventario.control_fifo.reporte_independiente ? 'fifo-independence--ok' : 'fifo-independence--warning'}`}>
+          <strong>{r.inventario.control_fifo.reporte_independiente ? 'Costo FIFO independiente' : 'Costo FIFO pendiente de conciliación'}</strong>
+          <span>{r.inventario.control_fifo.reporte_independiente
+            ? 'El costo de ventas usa únicamente consumos FIFO activos y coincide con las ventas Epos costeadas.'
+            : (r.inventario.control_fifo.alerta_independencia ?? 'Compara los consumos FIFO activos contra el inventario físico antes de interpretar el margen.')}</span>
+          {r.inventario.control_fifo.filas_reversiones_historial > 0 && <small>Las reversiones ({r.inventario.control_fifo.filas_reversiones_historial}) sólo permanecen como historial/auditoría; no se incluyen en costo de ventas.</small>}
+        </div>
       </div>
       <ConciliacionInventarioCard conciliacion={r.conciliacion_inventario} />
       <CorreccionInventarioCard semana={semana} cierreId={r.inventario.cierre_snapshot_id} onSaved={onCambio} />
@@ -648,23 +718,31 @@ function ConciliacionInventarioCard({ conciliacion }: { conciliacion: Resumen['c
         <div><small>Productos revisados</small><strong>{conciliacion.filas.length}</strong></div>
         <div><small>Con diferencia</small><strong>{filasConDiferencia.length}</strong></div>
         <div><small>Diferencia valorizada</small><strong>{conciliacion.total_diferencia_valor == null ? 'Pendiente' : mxn(conciliacion.total_diferencia_valor)}</strong></div>
+        <div><small>Diferencia de consumo</small><strong>{conciliacion.productos_con_diferencia_consumo}</strong></div>
+      </div>
+      <div className={`fifo-independence ${conciliacion.reporte_independiente ? 'fifo-independence--ok' : 'fifo-independence--warning'}`}>
+        <strong>{conciliacion.reporte_independiente ? 'FIFO y físico son independientes' : 'Alerta: cifras no independientes'}</strong>
+        <span>{conciliacion.alerta_independencia ?? 'El consumo FIFO activo coincide con el consumo inferido del inventario físico.'}</span>
+        <small>Consumo FIFO activo: {conciliacion.consumo_fifo_activo_filas} movimientos · Reversiones históricas: {conciliacion.reversiones_historial_filas}. Las reversiones no se suman al consumo.</small>
       </div>
       <details className="inventario-conciliacion__details">
         <summary>Ver detalle por producto</summary>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Producto</th><th>Inicial</th><th>Compras</th><th>Ajuste</th><th>Consumo teórico</th><th>FIFO esperado</th><th>Físico final</th><th>Diferencia</th><th>Valor</th><th>Incidencia</th></tr></thead>
+            <thead><tr><th>Producto</th><th>Inicial</th><th>Compras</th><th>Ajuste</th><th>Consumo FIFO activo</th><th>Consumo inferido físico</th><th>FIFO esperado</th><th>Físico final</th><th>Diferencia</th><th>Valor</th><th>Tipo</th><th>Incidencia</th></tr></thead>
             <tbody>{conciliacion.filas.map((fila) => (
               <tr key={fila.product_id}>
                 <td><strong>{fila.producto}</strong><small className="muted">{fila.unidad_base ?? 'unidad base pendiente'}</small></td>
                 <td>{fila.inventario_inicial}</td>
                 <td>{fila.compras_recibidas}</td>
                 <td>{fila.ajustes_inventario}</td>
-                <td>{fila.consumo_teorico}</td>
+                <td>{fila.consumo_fifo_activo}</td>
+                <td className={Math.abs(fila.diferencia_consumo) > 0.01 ? 'text-danger' : ''}>{fila.consumo_fisico_inferido}</td>
                 <td>{fila.existencia_fifo_esperada}</td>
                 <td>{fila.inventario_fisico_final}</td>
                 <td className={Math.abs(fila.diferencia_cantidad) > 0.01 ? 'text-danger' : ''}>{fila.diferencia_cantidad}</td>
                 <td>{fila.diferencia_valor == null ? '—' : mxn(fila.diferencia_valor)}</td>
+                <td><span className={`incidencia-tipo incidencia-tipo--${fila.incidencia_tipo}`}>{fila.incidencia_tipo.replace('_', ' ')}</span></td>
                 <td>{fila.incidencia}</td>
               </tr>
             ))}</tbody>

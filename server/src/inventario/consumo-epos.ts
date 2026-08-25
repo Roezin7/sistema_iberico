@@ -69,7 +69,15 @@ function finDelDia(value: Date) {
 async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date }, context?: PlanContext): Promise<PlanConsumo> {
   const previo = context
     ? context.consumedVentaIds.has(venta.id.toString())
-    : await client.inventory_consumptions.findFirst({ where: { negocio_id: negocioId, epos_venta_id: venta.id }, select: { id: true } });
+    : await client.inventory_consumptions.findFirst({
+      where: {
+        negocio_id: negocioId,
+        epos_venta_id: venta.id,
+        cantidad: { gt: 0 },
+        OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+      },
+      select: { id: true },
+    });
   if (previo) return { estado: 'ya_costeada', costoTotal: 0, consumos: [] };
 
   const includeReceta = {
@@ -162,7 +170,12 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
     select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true },
   }) : [];
   const consumed = await client.inventory_consumptions.findMany({
-    where: { negocio_id: negocioId, epos_venta_id: { in: ventas.map((venta) => venta.id) } },
+    where: {
+      negocio_id: negocioId,
+      epos_venta_id: { in: ventas.map((venta) => venta.id) },
+      cantidad: { gt: 0 },
+      OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+    },
     select: { epos_venta_id: true },
   });
   const lotsByProduct = new Map<string, CachedLot[]>();

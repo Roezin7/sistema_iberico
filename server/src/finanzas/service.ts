@@ -38,6 +38,46 @@ function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Las reversiones son eventos inmutables del historial. No representan
+ * consumo corriente: cancelan un movimiento previo al reconstruir el saldo
+ * del lote, pero nunca deben volver a entrar al costo de ventas ni a la
+ * conciliación del período.
+ */
+function esConsumoFifoActivo(row: { fuente: string | null; cantidad: unknown }): boolean {
+  const fuente = row.fuente ?? '';
+  return num0(row.cantidad as never) > 0 && (fuente.startsWith('venta_fifo_vivo') || fuente === 'venta_receta');
+}
+
+function esReversionFifo(row: { fuente: string | null }): boolean {
+  return (row.fuente ?? '').startsWith('reversion_');
+}
+
+type IncidenciaTipo = 'conversion' | 'compra_faltante' | 'receta' | 'captura' | 'posible_merma' | 'sin_diferencia';
+
+function clasificarIncidencia(args: {
+  diferencia: number;
+  diferenciaConsumo: number;
+  inicial: number;
+  compras: number;
+  unidadBase: string | null;
+  unidadCompra: string | null;
+  contenidoCompra: number | null;
+  tieneAperturaFifo: boolean;
+}): { tipo: IncidenciaTipo; texto: string } {
+  if (!args.tieneAperturaFifo && args.inicial > 0) return { tipo: 'captura', texto: 'Captura: apertura FIFO pendiente de validar' };
+  if (Math.abs(args.diferencia) <= 0.01 && Math.abs(args.diferenciaConsumo) <= 0.01) return { tipo: 'sin_diferencia', texto: 'Sin incidencia' };
+  // Una presentación sin conversión completa no puede interpretarse como
+  // merma: primero hay que resolver pieza/paquete/kg frente a la unidad base.
+  if (args.unidadCompra && args.unidadBase && args.unidadCompra !== args.unidadBase && (!args.contenidoCompra || args.contenidoCompra <= 0)) {
+    return { tipo: 'conversion', texto: 'Revisar conversión de presentación' };
+  }
+  if (args.diferencia > 0.01 && args.compras <= 0.01) return { tipo: 'compra_faltante', texto: 'Posible compra faltante o no registrada' };
+  if (args.diferenciaConsumo > 0.01) return { tipo: 'posible_merma', texto: 'Posible merma o consumo no registrado' };
+  if (args.diferenciaConsumo < -0.01) return { tipo: 'receta', texto: 'Posible receta o consumo teórico incorrecto' };
+  return { tipo: 'captura', texto: 'Posible error de captura o conteo' };
+}
+
 // ---------------------------------------------------------------------------
 //  Referencias para la UI
 // ---------------------------------------------------------------------------
@@ -233,14 +273,37 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
   const semanal = await asegurarInventarioSemanal(negocioId, semanaId);
   const semana = await prisma.semanas.findUnique({ where: { id: semanaId }, select: { fecha_inicio: true, fecha_fin: true } });
   if (!semana) throw new HttpError(404, 'Semana no encontrada');
-  const [movs, fifoCorte, consumosPeriodo] = await Promise.all([
+  const [movs, fifoCorte, consumosPeriodo, consumosActivosDetalle, reversionesPeriodo] = await Promise.all([
     prisma.movimientos.findMany({
       where: { negocio_id: negocioId, semana_id: semanaId, tipo: 'compra_inventario' },
       select: { monto: true },
     }),
     valorFifoAlCorte(negocioId, semana.fecha_fin),
+    // Sólo movimientos FIFO activos. Las reversiones quedan en el ledger
+    // para auditoría, pero no son costo de ventas.
     prisma.inventory_consumptions.aggregate({
-      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin }, epos_venta_id: { not: null } },
+      where: {
+        negocio_id: negocioId,
+        fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin },
+        epos_venta_id: { not: null },
+        cantidad: { gt: 0 },
+        OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+      },
+      _sum: { costo_total: true },
+      _count: { _all: true },
+    }),
+    prisma.inventory_consumptions.findMany({
+      where: {
+        negocio_id: negocioId,
+        fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin },
+        epos_venta_id: { not: null },
+        cantidad: { gt: 0 },
+        OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+      },
+      select: { epos_venta_id: true },
+    }),
+    prisma.inventory_consumptions.aggregate({
+      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin }, fuente: { startsWith: 'reversion_' } },
       _sum: { costo_total: true },
       _count: { _all: true },
     }),
@@ -254,6 +317,13 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     ? null
     : num0(semanal.cierre_valor);
   const costoVentasLedger = consumosPeriodo._count._all > 0 ? num0(consumosPeriodo._sum.costo_total) : null;
+  const idsEposActivos = [...new Set(consumosActivosDetalle.map((row) => row.epos_venta_id?.toString()).filter((id): id is string => Boolean(id)))];
+  const ventasEposActivas = idsEposActivos.length
+    ? await prisma.epos_ventas.aggregate({ where: { id: { in: idsEposActivos.map(BigInt) } }, _sum: { costo_fifo: true }, _count: { _all: true } })
+    : { _sum: { costo_fifo: null }, _count: { _all: 0 } };
+  const costoEposActivas = num0(ventasEposActivas._sum.costo_fifo);
+  const diferenciaCostoEpos = costoVentasLedger == null ? null : redondear(costoVentasLedger - costoEposActivas);
+  const reporteIndependiente = costoVentasLedger != null && idsEposActivos.length > 0 && Math.abs(diferenciaCostoEpos ?? 0) <= 0.01;
   const costoVentas = costoVentasLedger ?? costoVentasPorInventario(apertura, compras, cierreRegistrado);
   return {
     apertura_snapshot_id: semanal.apertura_snapshot_id == null ? null : Number(semanal.apertura_snapshot_id),
@@ -265,6 +335,18 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     costo_ventas_fuente: costoVentasLedger == null ? 'conciliacion_inventario' : 'ledger_fifo_en_vivo',
     valor_fifo_corte: fifoCorte.valor,
     unidades_fifo_corte: fifoCorte.unidades,
+    control_fifo: {
+      costo_movimientos_activos: costoVentasLedger,
+      costo_reversiones_historial: num0(reversionesPeriodo._sum.costo_total),
+      filas_movimientos_activos: consumosPeriodo._count._all,
+      filas_reversiones_historial: reversionesPeriodo._count._all,
+      ventas_epos_con_consumo_activo: idsEposActivos.length,
+      diferencia_costo_vs_epos: diferenciaCostoEpos,
+      reporte_independiente: reporteIndependiente,
+      alerta_independencia: reporteIndependiente
+        ? null
+        : 'El costo de ventas no puede considerarse independiente todavía: faltan movimientos FIFO activos o no coincide con las ventas Epos costeadas.',
+    },
     estado: semanal.cierre_snapshot_id == null ? 'pendiente_cierre' : 'cerrado',
     apertura_origen: semanal.apertura_origen,
   };
@@ -280,11 +362,15 @@ interface FilaConciliacionInventario {
   compras_recibidas: number;
   ajustes_inventario: number;
   consumo_teorico: number;
+  consumo_fifo_activo: number;
+  consumo_fisico_inferido: number;
+  diferencia_consumo: number;
   existencia_fifo_esperada: number;
   inventario_fisico_final: number;
   diferencia_cantidad: number;
   costo_fifo: number | null;
   diferencia_valor: number | null;
+  incidencia_tipo: IncidenciaTipo;
   incidencia: string;
 }
 
@@ -303,6 +389,11 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     filas: [] as FilaConciliacionInventario[],
     total_diferencia_valor: null as number | null,
     productos_con_incidencia: 0,
+    consumo_fifo_activo_filas: 0,
+    reversiones_historial_filas: 0,
+    productos_con_diferencia_consumo: 0,
+    reporte_independiente: false,
+    alerta_independencia: null as string | null,
   };
   if (!semanal.apertura_snapshot_id || !semanal.cierre_snapshot_id) return base;
 
@@ -310,7 +401,7 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
   if (!semana) throw new HttpError(404, 'Semana no encontrada');
 
   const [productos, aperturaLineas, cierreLineas, comprasLotes, ajustesLotes, lotesLedger, consumos, consumosLedger, consumosAjuste] = await Promise.all([
-    prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, contenido_compra: true, unit_cost: true } }),
+    prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, unidad_compra: true, contenido_compra: true, unit_cost: true } }),
     prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.apertura_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
     prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.cierre_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
     prisma.inventory_lots.findMany({
@@ -331,7 +422,14 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
       select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true, fuente: true },
     }),
     prisma.inventory_consumptions.findMany({
-      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin } },
+      // Esta colección alimenta consumo teórico: sólo ventas FIFO activas.
+      // Las reversiones no se vuelven a restar en una conciliación.
+      where: {
+        negocio_id: negocioId,
+        fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin },
+        cantidad: { gt: 0 },
+        OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+      },
       select: { product_id: true, lote_id: true, cantidad: true, fuente: true },
     }),
     prisma.inventory_consumptions.findMany({
@@ -373,7 +471,7 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
   const consumosPorProducto = new Map<string, number>();
   for (const consumo of consumos) {
     const cantidad = num0(consumo.cantidad);
-    if (consumo.fuente === 'ajuste_inventario') continue;
+    if (!esConsumoFifoActivo(consumo)) continue;
     const productoKey = consumo.product_id.toString();
     consumosPorProducto.set(productoKey, redondearCantidad((consumosPorProducto.get(productoKey) ?? 0) + cantidad));
   }
@@ -403,7 +501,7 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
   // muestre una existencia completa artificial.
   const consumosHistoricosSemanaPorProducto = new Map<string, number>();
   for (const consumo of consumos) {
-    if (consumo.fuente === 'ajuste_inventario' || lotesSeleccionadosIds.has(consumo.lote_id.toString())) continue;
+    if (!esConsumoFifoActivo(consumo) || lotesSeleccionadosIds.has(consumo.lote_id.toString())) continue;
     const key = consumo.product_id.toString();
     consumosHistoricosSemanaPorProducto.set(key, redondearCantidad((consumosHistoricosSemanaPorProducto.get(key) ?? 0) + num0(consumo.cantidad)));
   }
@@ -417,6 +515,11 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     const ajusteInventario = redondearCantidad(ajustes.get(key) ?? 0);
     const consumo = redondearCantidad(consumosPorProducto.get(key) ?? 0);
     const fisico = redondearCantidad(finales.get(key) ?? 0);
+    // Consumo inferido desde el movimiento físico: lo que había, más lo
+    // recibido y ajustado, menos lo contado al cierre. Esta cifra es
+    // independiente del costo FIFO y permite detectar merma o captura.
+    const consumoFisicoInferido = redondearCantidad(inicial + comprasRecibidas + ajusteInventario - fisico);
+    const diferenciaConsumo = redondearCantidad(consumoFisicoInferido - consumo);
     const lotes = lotesPorProducto.get(key) ?? [];
     const costoPresentacion = producto?.unit_cost == null ? null : num0(producto.unit_cost);
     const contenidoCompra = producto?.contenido_compra == null ? null : num0(producto.contenido_compra);
@@ -439,13 +542,16 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
       : lotes.length
         ? Math.round((lotes.reduce((suma, lote) => suma + lote.cantidad * lote.costo, 0) / Math.max(lotes.reduce((suma, lote) => suma + lote.cantidad, 0), 0.0001)) * 1_000_000) / 1_000_000
         : costoCatalogo;
-    const incidencia = !tieneAperturaFifo && inicial > 0
-      ? 'Apertura FIFO pendiente'
-      : Math.abs(diferencia) <= 0.01
-        ? 'Sin incidencia'
-        : diferencia < 0
-          ? 'Faltante físico: revisar merma, captura o receta'
-          : 'Sobrante físico: revisar compra no registrada o captura';
+    const incidenciaClasificada = clasificarIncidencia({
+      diferencia,
+      diferenciaConsumo,
+      inicial,
+      compras: comprasRecibidas,
+      unidadBase: producto?.unidad_base ?? null,
+      unidadCompra: producto?.unidad_compra ?? null,
+      contenidoCompra,
+      tieneAperturaFifo,
+    });
     return {
       product_id: Number(key),
       producto: producto?.name ?? `Producto ${key}`,
@@ -454,16 +560,24 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
       compras_recibidas: comprasRecibidas,
       ajustes_inventario: ajusteInventario,
       consumo_teorico: consumo,
+      consumo_fifo_activo: consumo,
+      consumo_fisico_inferido: consumoFisicoInferido,
+      diferencia_consumo: diferenciaConsumo,
       existencia_fifo_esperada: esperado,
       inventario_fisico_final: fisico,
       diferencia_cantidad: diferencia,
       costo_fifo: costoPonderado,
       diferencia_valor: costoPonderado == null ? null : redondear(diferencia * costoPonderado),
-      incidencia,
+      incidencia_tipo: incidenciaClasificada.tipo,
+      incidencia: incidenciaClasificada.texto,
     } satisfies FilaConciliacionInventario;
   }).sort((a, b) => Math.abs(b.diferencia_valor ?? b.diferencia_cantidad) - Math.abs(a.diferencia_valor ?? a.diferencia_cantidad));
 
-  const conIncidencia = filas.filter((fila) => fila.incidencia !== 'Sin incidencia');
+  const conIncidencia = filas.filter((fila) => fila.incidencia_tipo !== 'sin_diferencia');
+  const consumoActivoFilas = consumos.filter((row) => esConsumoFifoActivo(row)).length;
+  const reversionesHistorialFilas = consumosLedger.filter((row) => esReversionFifo(row)).length;
+  const diferenciasConsumo = filas.filter((fila) => Math.abs(fila.diferencia_consumo) > 0.01);
+  const reporteIndependiente = Boolean(semanal.cierre_snapshot_id && consumoActivoFilas > 0 && diferenciasConsumo.length === 0);
   return {
     ...base,
     filas,
@@ -471,6 +585,13 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
       ? redondear(filas.reduce((suma, fila) => suma + (fila.diferencia_valor ?? 0), 0))
       : null,
     productos_con_incidencia: conIncidencia.length,
+    consumo_fifo_activo_filas: consumoActivoFilas,
+    reversiones_historial_filas: reversionesHistorialFilas,
+    productos_con_diferencia_consumo: diferenciasConsumo.length,
+    reporte_independiente: reporteIndependiente,
+    alerta_independencia: reporteIndependiente
+      ? null
+      : 'El cierre no es independiente: la existencia física todavía no coincide con el consumo FIFO activo en todos los productos.',
   };
 }
 
