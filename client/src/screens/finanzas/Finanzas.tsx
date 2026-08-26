@@ -12,6 +12,7 @@ import { useToast } from '../../ui/ToastProvider';
 import { Cargando } from '../../ui/Cargando';
 import { api } from '../../api';
 import { cantidadBaseDesdePresentacion, conversionCompraTexto, costoBase, formatoCantidad, presentacionTexto } from '../compras/fifo-form';
+import { weekLabel, weekStateLabel } from '../../operating';
 
 interface ProductoCompra { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null; rendimiento_util?: number | null }
 
@@ -88,13 +89,13 @@ export default function Finanzas() {
   return (
     <Marco>
       <div className="semana-bar">
-        <select value={semanaId ?? ''} onChange={(e) => setSemanaId(Number(e.target.value))}>
+        <select aria-label="Semana de consulta" value={semanaId ?? ''} onChange={(e) => setSemanaId(Number(e.target.value))}>
           {semanas.map((s) => (
-            <option key={s.id} value={s.id}>{s.etiqueta} {s.estado === 'cerrada' ? '🔒' : '·'}</option>
+            <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>
           ))}
         </select>
-        <input type="date" value={fechaNueva} onChange={(e) => setFechaNueva(e.target.value)} title="Lunes de la semana a abrir" />
-        <button className="pill" onClick={async () => {
+        <input aria-label="Fecha de inicio de la nueva semana" type="date" value={fechaNueva} onChange={(e) => setFechaNueva(e.target.value)} title="Lunes de la semana a abrir" />
+        <button className="pill" aria-label="Crear semana" onClick={async () => {
           try { const s = await finanzas.crearSemana(fechaNueva || undefined); setSemanaId(s.id); recargar(); }
           catch (e) { error(e instanceof Error ? e.message : 'No se pudo crear la semana'); }
         }}>+ Semana</button>
@@ -114,7 +115,7 @@ function Marco({ children }: { children: React.ReactNode }) {
       <header className="page-head">
         <div className="page-title">
           <Icono name="wallet" size={24} className="ttl-icon" />
-        <h1>Finanzas</h1>
+          <h1>Cierre</h1>
         </div>
       </header>
       <div className="tab-body">{children}</div>
@@ -188,11 +189,12 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
           )}
         </span>
       </div>
+      <p className="muted weekly-flow-note">Flujo de la semana: viernes–domingo para ventas y caja; compras y ajustes se registran una sola vez en Entradas.</p>
       <nav className="tabs" aria-label="Flujo semanal">
         <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Operación diaria</button>
         <button className={tab === 'resumen' ? 'tab tab--on' : 'tab'} onClick={() => setTab('resumen')}>Resultado y patrimonio</button>
-        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Movimientos</button>
-        <button className={tab === 'cuadre' ? 'tab tab--on' : 'tab'} onClick={() => setTab('cuadre')}>Cierre y control</button>
+        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Entradas y gastos</button>
+        <button className={tab === 'cuadre' ? 'tab tab--on' : 'tab'} onClick={() => setTab('cuadre')}>Cierre</button>
       </nav>
 
       {tab === 'dia' && <DiaView semana={semana} dias={dias} conciliaciones={conciliaciones} onChange={cargar} />}
@@ -256,6 +258,7 @@ function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; d
             <div key={d.fecha} className="dia-bar-wrap" title={`${d.dia} ${mxn(d.total_ventas)}`}>
               <div className={`dia-bar ${claseBarra}`} style={{ height: `${(d.total_ventas / maxVenta) * 100}%` }} />
               <small className="muted">{d.dia}</small>
+              <small className="muted">{d.fecha.slice(5)}</small>
             </div>
           );
         })}
@@ -631,7 +634,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         </section>
       </div>
 
-      <div className="vision-callout"><strong>Cómo leer la diferencia</strong><span className="muted">Si el flujo de caja es mayor que la utilidad FIFO, normalmente se compró inventario que todavía está en bodega. Esa diferencia no es pérdida: es inventario convertido en activo.</span>{Math.abs(diferenciaVentas) > 0.01 && <span className="vision-callout__warning">Epos y movimientos registrados difieren por {mxn(diferenciaVentas)}. Revisa el método mixto, propinas u otros antes de cerrar.</span>}<span className="muted">El cierre y las correcciones se realizan únicamente en la pestaña <strong>Cierre y control</strong>.</span></div>
+      <div className="vision-callout"><strong>Cómo leer la diferencia</strong><span className="muted">Si el flujo de caja es mayor que la utilidad FIFO, normalmente se compró inventario que todavía está en bodega. Esa diferencia no es pérdida: es inventario convertido en activo.</span>{Math.abs(diferenciaVentas) > 0.01 && <span className="vision-callout__warning">Epos y movimientos registrados difieren por {mxn(diferenciaVentas)}. Revisa el método mixto, propinas u otros antes de cerrar.</span>}<span className="muted">El cierre y las correcciones se realizan únicamente en la pestaña <strong>Cierre</strong>.</span></div>
 
       <div className="resumen-card patrimonio-card">
         <div className="section-heading"><div><strong>Patrimonio operativo al corte</strong><p className="muted">La foto del negocio: dinero disponible más inventario, sin llamarlo utilidad.</p></div><span className="big-number">{mxn(patrimonioOperativo)}</span></div>
@@ -944,9 +947,9 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
       <section className="info-box unified-operations-intro">
         <div>
           <strong>Una sola entrada para compras y tickets</strong>
-          <p className="muted">Registra la compra desde la pantalla de Compras y tickets. Al confirmarla se crean juntos el lote FIFO y el movimiento financiero.</p>
+          <p className="muted">Registra la entrada desde Entradas. Al confirmarla se crean juntos el lote FIFO y el movimiento financiero.</p>
         </div>
-        <Link className="btn-primary" to={`/compras?semana=${semana.id}&fecha=${semana.fecha_inicio}&return=finanzas`}>Abrir Compras y tickets</Link>
+        <Link className="btn-primary" to={`/compras?semana=${semana.id}&fecha=${semana.fecha_inicio}&return=finanzas`}>Abrir Entradas</Link>
       </section>
       {semana.estado === 'abierta' && <details className="operation-adjustment">
         <summary><strong>Corrección administrativa</strong><span className="muted">Sólo para transferencias o ajustes que no provienen de un ticket</span></summary>

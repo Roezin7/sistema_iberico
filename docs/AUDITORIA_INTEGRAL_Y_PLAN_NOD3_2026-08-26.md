@@ -278,3 +278,10 @@ Ibérico/NOD3 estará funcionando como mando operativo integrado cuando:
 - cada semana produzca una decisión concreta para mejorar margen, merma o rotación.
 
 **Decisión recomendada:** no ampliar el alcance funcional hasta terminar P0 y operar una semana completa con el flujo simplificado. Las compras de mayor valor sin evidencia deben seguir en cola; la integridad de los datos vale más que hacer que el total “cuadre” artificialmente.
+## Estado de aplicación
+
+La primera aplicación del plan está documentada en
+`docs/ESTADO_IMPLEMENTACION_IBERICO_2026-08-26.md`. La navegación y las vistas
+ahora usan el mismo lenguaje del ciclo operativo; los tickets, movimientos y
+lotes se mantienen como una sola entrada y la conciliación conserva la
+separación entre FIFO activo, historial y diferencia física.

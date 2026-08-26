@@ -53,7 +53,8 @@ function AppBody() {
         <Route path="/costos-menu" element={<SoloAdmin rol="admin"><CostosMenu /></SoloAdmin>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      {!['/finanzas', '/inventario', '/tareas'].includes(location.pathname) && <SilviaBubble />}
+      {/* La captura operativa debe quedar libre de un asistente flotante. */}
+      {!['/finanzas', '/inventario', '/compras', '/tareas'].includes(location.pathname) && <SilviaBubble />}
     </Shell>
   );
 }

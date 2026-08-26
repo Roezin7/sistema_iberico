@@ -15,8 +15,8 @@ interface Item {
 
 const ITEMS: Item[] = [
   { ruta: '/', label: 'Inicio', icono: 'home' },
-  { ruta: '/compras', label: 'Compras', icono: 'package' },
-  { ruta: '/finanzas', label: 'Operación', icono: 'check', soloAdmin: true },
+  { ruta: '/compras', label: 'Entradas', icono: 'package' },
+  { ruta: '/finanzas', label: 'Cierre', icono: 'check', soloAdmin: true },
   { ruta: '/inventario', label: 'Inventario', icono: 'package' },
 ];
 
@@ -62,6 +62,7 @@ export default function Shell({ children }: { children: ReactNode }) {
               to={i.ruta}
               end={i.ruta === '/'}
               className={({ isActive }) => (isActive ? 'nav-link nav-link--on' : 'nav-link')}
+              aria-label={i.label}
             >
               <Icono name={i.icono} size={20} />
               <span>{i.label}</span>
@@ -75,6 +76,7 @@ export default function Shell({ children }: { children: ReactNode }) {
                   key={i.ruta}
                   to={i.ruta}
                   className={({ isActive }) => (isActive ? 'nav-link nav-link--on' : 'nav-link')}
+                  aria-label={i.label}
                 >
                   <Icono name={i.icono} size={20} />
                   <span>{i.label}</span>
@@ -84,11 +86,11 @@ export default function Shell({ children }: { children: ReactNode }) {
           )}
         </nav>
         <div className="nav-foot">
-          <button className="nav-link" onClick={alternar}>
+          <button className="nav-link" onClick={alternar} aria-label="Cambiar tema" title="Cambiar tema">
             <Icono name={tema === 'dark' ? 'sun' : 'moon'} size={20} />
             <span>{tema === 'dark' ? 'Modo claro' : 'Modo oscuro'}</span>
           </button>
-          <button className="nav-link" onClick={logout}>
+          <button className="nav-link" onClick={logout} aria-label="Cerrar sesión" title="Cerrar sesión">
             <Icono name="logout" size={20} />
             <span>Salir</span>
           </button>
@@ -124,6 +126,7 @@ export default function Shell({ children }: { children: ReactNode }) {
             to={i.ruta}
             end={i.ruta === '/'}
             className={({ isActive }) => (isActive ? 'bottom-link bottom-link--on' : 'bottom-link')}
+            aria-label={i.label}
           >
             <Icono name={i.icono} size={22} />
             <span>{i.label}</span>

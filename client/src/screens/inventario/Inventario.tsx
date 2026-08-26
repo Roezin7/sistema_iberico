@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { Cargando } from '../../ui/Cargando';
+import { weekLabel, weekStateLabel } from '../../operating';
 
 // --- Tipos de la API ---
 interface Zona { id: number; nombre: string; orden: number }
@@ -213,7 +214,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           ))}
         </div>
         {tipo !== 'conteo_operativo' && <div className="form-grid form-grid--two">
-          {(tipo === 'apertura' || tipo === 'cierre') && <label>Semana<select value={semanaId ?? ''} onChange={(e) => setSemanaId(e.target.value ? Number(e.target.value) : null)}><option value="">Selecciona…</option>{semanas.map((s) => <option key={s.id} value={s.id}>{s.etiqueta} · {s.estado}</option>)}</select></label>}
+          {(tipo === 'apertura' || tipo === 'cierre') && <label>Semana<select aria-label="Semana del conteo" value={semanaId ?? ''} onChange={(e) => setSemanaId(e.target.value ? Number(e.target.value) : null)}><option value="">Selecciona…</option>{semanas.map((s) => <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>)}</select></label>}
           {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}
         </div>}
         <p className="muted inventory-unit-help">Captura la cantidad en la unidad visible junto a cada producto. El sistema convierte automáticamente a la unidad base; no mezcles cajas, paquetes y piezas.</p>
@@ -226,7 +227,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         ))}
       </div>
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
-      <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>
+        <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>
         Se muestra tu último conteo por zona como referencia. Elige arriba si esto es una apertura, cierre o ajuste antes de guardar.
       </p>
 

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../auth';
 import { Icono } from '../icons';
 import { finanzas, epos, mxn, type ConciliacionDiaria, type DiaFila, type Resumen, type Semana } from './finanzas/api';
+import { weekLabel, weekStateLabel } from '../operating';
 
 interface Modulo {
   clave: string;
@@ -14,9 +15,9 @@ interface Modulo {
 }
 
 const MODULOS: Modulo[] = [
-  { clave: 'compras', titulo: 'Registrar compra', icono: 'package', desc: 'Tickets, gastos y revisión', ruta: '/compras' },
+  { clave: 'compras', titulo: 'Entradas', icono: 'package', desc: 'Tickets, gastos y lotes FIFO', ruta: '/compras' },
   { clave: 'inventario', titulo: 'Inventario', icono: 'package', desc: 'Conteos y lista de compras', ruta: '/inventario' },
-  { clave: 'finanzas', titulo: 'Operación', icono: 'wallet', desc: 'Ventas, compras, egresos y cuadre', ruta: '/finanzas', soloAdmin: true },
+  { clave: 'finanzas', titulo: 'Cierre', icono: 'wallet', desc: 'Ventas, egresos, patrimonio y cierre', ruta: '/finanzas', soloAdmin: true },
   { clave: 'patrimonio', titulo: 'Patrimonio', icono: 'trending', desc: 'Tendencia y snapshots', ruta: '/patrimonio', soloAdmin: true },
   { clave: 'ajustes', titulo: 'Catálogo y ajustes', icono: 'settings', desc: 'Productos, mínimos, saldos', ruta: '/configuracion', soloAdmin: true },
 ];
@@ -103,7 +104,7 @@ export default function Home() {
         {usuario.rol === 'admin' && (
           <div className="operating-brief__meta">
             <span className={semana?.estado === 'cerrada' ? 'badge-ok' : 'badge-neutral'}>
-              {estado.cargando ? 'Cargando estado…' : semana ? `${semana.etiqueta} · ${semana.estado}` : 'Semana actual'}
+              {estado.cargando ? 'Cargando estado…' : semana ? `${weekLabel(semana)} · ${weekStateLabel(semana)}` : 'Semana actual'}
             </span>
             <Link className="btn-primary" to={accionRuta}>
               {operativo ? (conciliacion ? 'Abrir operación de hoy' : 'Abrir cierre de hoy') : 'Revisar inventario'}
@@ -120,6 +121,19 @@ export default function Home() {
           <div><small>Inventario</small><strong>{resumen?.inventario.estado === 'cerrado' ? 'Cerrado' : 'Pendiente'}</strong><span>{resumen?.inventario.estado === 'cerrado' ? 'Disponible para consulta' : 'Requiere cierre físico'}</span></div>
         </section>
       )}
+
+      <section className="operating-cycle" aria-labelledby="ciclo-operativo-titulo">
+        <div className="section-heading">
+          <div><span className="eyebrow">Un solo ciclo</span><h2 id="ciclo-operativo-titulo">De la entrada al cierre</h2></div>
+          <span className="muted">La misma fuente alimenta cada paso</span>
+        </div>
+        <div className="operating-cycle__steps">
+          <Link to="/compras"><strong>1</strong><span><b>Entradas</b><small>Tickets y gastos</small></span></Link>
+          <Link to="/finanzas"><strong>2</strong><span><b>Operación</b><small>Ventas y pagos</small></span></Link>
+          <Link to="/inventario"><strong>3</strong><span><b>Inventario</b><small>Conteo físico</small></span></Link>
+          <Link to="/finanzas"><strong>4</strong><span><b>Cierre</b><small>FIFO y decisión</small></span></Link>
+        </div>
+      </section>
 
       <div className="section-heading">
         <div>
