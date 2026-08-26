@@ -16,7 +16,7 @@ interface Item {
 const ITEMS: Item[] = [
   { ruta: '/', label: 'Inicio', icono: 'home' },
   { ruta: '/compras', label: 'Entradas', icono: 'package' },
-  { ruta: '/finanzas', label: 'Cierre', icono: 'check', soloAdmin: true },
+  { ruta: '/finanzas', label: 'Cierre', icono: 'checks', soloAdmin: true },
   { ruta: '/inventario', label: 'Inventario', icono: 'package' },
 ];
 
