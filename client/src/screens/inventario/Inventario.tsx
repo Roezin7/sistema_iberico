@@ -514,14 +514,14 @@ function InventarioActual() {
       <div className="resumen-card" style={{ gap: '0.8rem' }}>
         <span className="muted">Valuación actual del inventario</span>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.7rem' }}>
-          <div><small className="muted">Valor FIFO activo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_fifo_total)}</strong><small className="muted">Costo operativo de los lotes</small></div>
-          <div><small className="muted">Valor de catálogo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_catalogo_total)}</strong><small className="muted">Referencia del costo vigente</small></div>
-          <div><small className="muted">Diferencia de valuación</small><strong className="big-number" style={{ display: 'block', color: diferenciaValuacion === 0 ? undefined : '#e3b341' }}>{mxn(diferenciaValuacion)}</strong><small className="muted">FIFO frente a catálogo</small></div>
+          <div><small className="muted">FIFO del último conteo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_fifo_total)}</strong><small className="muted">Valor del conteo físico mostrado abajo</small></div>
+          <div><small className="muted">Catálogo del mismo conteo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_catalogo_total)}</strong><small className="muted">Referencia con el costo vigente</small></div>
+          <div><small className="muted">Diferencia FIFO vs catálogo</small><strong className="big-number" style={{ display: 'block', color: diferenciaValuacion === 0 ? undefined : '#e3b341' }}>{mxn(diferenciaValuacion)}</strong><small className="muted">No es una merma por sí sola</small></div>
         </div>
         <small className="muted">
           {data.fecha ? `Último conteo: ${new Date(data.fecha).toLocaleString('es-MX')} · ${data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'operativo'}${data.semana_id ? ` · semana ${data.semana_id}` : ''}` : 'Sin conteos aún'}
         </small>
-        <small className="muted">El valor FIFO es el operativo. La diferencia sólo señala que los lotes abiertos tienen costos distintos al catálogo o que parte del conteo aún no tiene lote asociado.</small>
+        <small className="muted">Este bloque corresponde exclusivamente al último conteo físico y a su fecha. El FIFO del cierre semanal se consulta en Cierre; no mezcles ambos cortes. La diferencia sólo señala costos de lote distintos al catálogo o parte del conteo sin lote asociado.</small>
       </div>
       {data.sin_costo.length > 0 && (
         <p className="aviso">
