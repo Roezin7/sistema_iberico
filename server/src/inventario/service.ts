@@ -6,6 +6,7 @@ import {
   totalBaseProducto,
   faltanteCompra,
   valorProducto,
+  costoBaseDesdePresentacion,
   armarListaCompras,
   type ProductoFaltante,
 } from './logic.js';
@@ -18,6 +19,11 @@ export interface ProductoActual {
   base_qty: number;
   total_base: number;
   unit_cost: number | null;
+  unit_cost_base: number | null;
+  unidad_base: string | null;
+  contenido_compra: number | null;
+  unidad_compra: string | null;
+  rendimiento_util: number;
   valor: number;
   categoria_id: number | null;
   categoria: string | null;
@@ -44,11 +50,11 @@ function costoUnitarioBase(producto: {
   unidad_base?: string | null;
   contenido_compra?: unknown;
 }) {
-  const costo = producto.unit_cost == null ? null : Number(producto.unit_cost);
-  if (costo == null) return null;
-  const contenido = producto.contenido_compra == null ? null : Number(producto.contenido_compra);
-  if (producto.unidad_base && contenido != null && contenido > 0) return costo / contenido;
-  return costo;
+  return costoBaseDesdePresentacion({
+    costoPresentacion: producto.unit_cost == null ? null : Number(producto.unit_cost),
+    contenidoCompra: producto.contenido_compra == null ? null : Number(producto.contenido_compra),
+    unidadBase: producto.unidad_base,
+  });
 }
 
 /** Valor de un snapshot histórico usando el costo vigente del catálogo. */
@@ -184,6 +190,11 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
       // Se conserva unit_cost como costo de compra para la UI; la valuación
       // usa explícitamente el costo por unidad base.
       unit_cost: unitCostPresentation,
+      unit_cost_base: unitCostBase,
+      unidad_base: p.unidad_base,
+      contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra),
+      unidad_compra: p.unidad_compra,
+      rendimiento_util: num(p.rendimiento_util) ?? 1,
       valor: valorProducto(totalBase, unitCostBase),
       categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
       categoria: p.categorias_inventario?.nombre ?? null,
@@ -249,7 +260,13 @@ export async function listaCompras(negocioId: bigint) {
       total_base: p.total_base,
       faltante,
       unit_cost: p.unit_cost,
-      valor_faltante: valorProducto(faltante, costoUnitarioBase(p)),
+      unit_cost_base: p.unit_cost_base,
+      unidad_base: p.unidad_base,
+      contenido_compra: p.contenido_compra,
+      unidad_compra: p.unidad_compra,
+      rendimiento_util: p.rendimiento_util,
+      costo_configurado: p.unit_cost_base != null,
+      valor_faltante: valorProducto(faltante, p.unit_cost_base),
     };
   });
   return armarListaCompras(faltantes);

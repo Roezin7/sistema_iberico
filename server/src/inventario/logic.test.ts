@@ -3,6 +3,7 @@ import {
   totalBaseProducto,
   faltanteCompra,
   valorProducto,
+  costoBaseDesdePresentacion,
   armarListaCompras,
   type ProductoFaltante,
 } from './logic.js';
@@ -74,6 +75,18 @@ describe('valorProducto', () => {
   });
   it('sin costo => 0', () => {
     expect(valorProducto(72, null)).toBe(0);
+  });
+});
+
+describe('costoBaseDesdePresentacion', () => {
+  it('usa el costo de la presentación dividido entre su contenido', () => {
+    expect(costoBaseDesdePresentacion({ costoPresentacion: 649, contenidoCompra: 13600, unidadBase: 'g' }))
+      .toBeCloseTo(0.0477205882, 8);
+  });
+
+  it('no devuelve el precio completo si falta metadata de presentación', () => {
+    expect(costoBaseDesdePresentacion({ costoPresentacion: 649, contenidoCompra: null, unidadBase: 'g' })).toBeNull();
+    expect(costoBaseDesdePresentacion({ costoPresentacion: 649, contenidoCompra: 13600, unidadBase: null })).toBeNull();
   });
 });
 

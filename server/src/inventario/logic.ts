@@ -26,6 +26,25 @@ export function valorProducto(totalBase: number, unitCost: number | null): numbe
   return redondear(totalBase * unitCost);
 }
 
+/**
+ * Convierte el precio de una presentación de compra a costo por unidad base.
+ * La lista de compras compara existencias físicas contra el mínimo físico;
+ * por eso no aplica rendimiento útil aquí (ese rendimiento sólo interviene al
+ * consumir recetas). Si falta la presentación, devuelve null para no inflar
+ * el total usando accidentalmente el precio completo del paquete.
+ */
+export function costoBaseDesdePresentacion(input: {
+  costoPresentacion: number | null | undefined;
+  contenidoCompra: number | null | undefined;
+  unidadBase?: string | null;
+}): number | null {
+  const costo = input.costoPresentacion == null ? null : Number(input.costoPresentacion);
+  const contenido = input.contenidoCompra == null ? null : Number(input.contenidoCompra);
+  if (costo == null || !Number.isFinite(costo) || costo < 0) return null;
+  if (!input.unidadBase || contenido == null || !Number.isFinite(contenido) || contenido <= 0) return null;
+  return costo / contenido;
+}
+
 export interface ProductoFaltante {
   product_id: number;
   nombre: string;
@@ -36,6 +55,14 @@ export interface ProductoFaltante {
   faltante: number;
   unit_cost: number | null;
   valor_faltante: number; // faltante * unit_cost (0 si sin costo)
+  /** Costo de una unidad base (g, ml o pieza), no de la presentación. */
+  unit_cost_base?: number | null;
+  unidad_base?: string | null;
+  contenido_compra?: number | null;
+  unidad_compra?: string | null;
+  rendimiento_util?: number | null;
+  /** Permite distinguir un costo cero real de una configuración faltante. */
+  costo_configurado?: boolean;
 }
 
 export interface GrupoTienda {

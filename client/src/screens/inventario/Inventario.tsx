@@ -56,7 +56,21 @@ interface Actual {
   snapshot_id: number | null; fecha: string | null; tipo: string | null; semana_id: number | null; productos: ProductoActual[];
   valor_total: number; sin_costo: { product_id: number; nombre: string }[];
 }
-interface ItemCompra { product_id: number; nombre: string; faltante: number; unit_cost: number | null; valor_faltante: number }
+interface ItemCompra {
+  product_id: number;
+  nombre: string;
+  base_qty: number;
+  total_base: number;
+  faltante: number;
+  unit_cost: number | null;
+  unit_cost_base?: number | null;
+  unidad_base?: string | null;
+  contenido_compra?: number | null;
+  unidad_compra?: string | null;
+  rendimiento_util?: number | null;
+  costo_configurado?: boolean;
+  valor_faltante: number;
+}
 interface GrupoCompra { store: string; items: ItemCompra[]; subtotal: number }
 interface ListaCompras { grupos: GrupoCompra[]; total: number }
 interface SnapshotHistorial {
@@ -512,6 +526,7 @@ function ListaDeCompras() {
       <div className="resumen-card">
         <span className="muted">Total estimado de compra</span>
         <strong className="big-number">{mxn(data.total)}</strong>
+        <small className="muted">Faltantes calculados contra el mínimo configurado, en unidad base.</small>
       </div>
       {data.grupos.map((g) => (
         <div key={g.store} className="grupo-tienda">
@@ -524,9 +539,19 @@ function ListaDeCompras() {
               <li key={it.product_id} className="conteo-row">
                 <div className="conteo-info">
                   <strong>{it.nombre}</strong>
-                  <small className="muted">faltan {it.faltante}</small>
+                  <small className="muted">
+                    Mínimo {it.base_qty} {it.unidad_base ?? 'unidad base'} · actual {it.total_base} {it.unidad_base ?? 'unidad base'} · faltan {it.faltante} {it.unidad_base ?? 'unidad base'}
+                  </small>
+                  <small className="muted">
+                    {it.costo_configurado && it.unit_cost_base != null
+                      ? `Costo base ${mxn(it.unit_cost_base)} / ${it.unidad_base ?? 'unidad'}`
+                      : 'Costo por unidad base pendiente de configurar'}
+                    {it.contenido_compra != null && it.unidad_compra
+                      ? ` · Presentación: ${it.contenido_compra} ${it.unidad_base ?? ''} por ${it.unidad_compra}`
+                      : ''}
+                  </small>
                 </div>
-                <span>{mxn(it.valor_faltante)}</span>
+                <span>{it.costo_configurado ? mxn(it.valor_faltante) : '—'}</span>
               </li>
             ))}
           </ul>
