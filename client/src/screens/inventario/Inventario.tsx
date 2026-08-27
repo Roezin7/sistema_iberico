@@ -15,6 +15,7 @@ interface Producto {
 }
 interface ProductoActual {
   product_id: number; nombre: string; store: string; base_qty: number;
+  minimo_base: number;
   total_base: number; unit_cost: number | null; valor: number;
   categoria_id: number | null; categoria: string | null;
   por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number; unidad_captura?: string }[];
@@ -60,6 +61,7 @@ interface ItemCompra {
   product_id: number;
   nombre: string;
   base_qty: number;
+  minimo_base?: number;
   total_base: number;
   faltante: number;
   unit_cost: number | null;
@@ -68,6 +70,7 @@ interface ItemCompra {
   contenido_compra?: number | null;
   unidad_compra?: string | null;
   rendimiento_util?: number | null;
+  presentaciones_faltantes?: number | null;
   costo_configurado?: boolean;
   valor_faltante: number;
 }
@@ -480,7 +483,7 @@ function InventarioActual() {
               <li key={p.product_id} className="conteo-row">
                 <div className="conteo-info">
                   <strong>{p.nombre}</strong>
-                  <small className="muted">{p.por_zona.map((z) => `${z.zona}: ${z.qty_captura} ${z.unidad_captura ?? 'unidad base'}`).join(' · ') || 'Sin conteo por zona'} · base: {p.total_base} {p.base_qty ? `/ ${p.base_qty} mín` : ''} · {p.store}</small>
+                  <small className="muted">{p.por_zona.map((z) => `${z.zona}: ${z.qty_captura} ${z.unidad_captura ?? 'unidad base'}`).join(' · ') || 'Sin conteo por zona'} · base: {p.total_base} {p.minimo_base ? `/ ${p.minimo_base} mín` : ''} · {p.store}</small>
                 </div>
                 <span>{mxn(p.valor)}</span>
               </li>
@@ -526,7 +529,7 @@ function ListaDeCompras() {
       <div className="resumen-card">
         <span className="muted">Total estimado de compra</span>
         <strong className="big-number">{mxn(data.total)}</strong>
-        <small className="muted">Faltantes calculados contra el mínimo configurado, en unidad base.</small>
+        <small className="muted">Faltantes calculados en unidad base y convertidos a presentaciones de compra.</small>
       </div>
       {data.grupos.map((g) => (
         <div key={g.store} className="grupo-tienda">
@@ -540,7 +543,10 @@ function ListaDeCompras() {
                 <div className="conteo-info">
                   <strong>{it.nombre}</strong>
                   <small className="muted">
-                    Mínimo {it.base_qty} {it.unidad_base ?? 'unidad base'} · actual {it.total_base} {it.unidad_base ?? 'unidad base'} · faltan {it.faltante} {it.unidad_base ?? 'unidad base'}
+                    Mínimo {it.base_qty} {it.unidad_compra ?? 'presentaciones'}
+                    {it.minimo_base != null && it.unidad_base ? ` (${it.minimo_base} ${it.unidad_base})` : ''}
+                    {' · '}actual {it.total_base} {it.unidad_base ?? 'unidad base'} · faltan {it.faltante} {it.unidad_base ?? 'unidad base'}
+                    {it.presentaciones_faltantes != null && it.unidad_compra ? ` · comprar ${it.presentaciones_faltantes} ${it.unidad_compra}` : ''}
                   </small>
                   <small className="muted">
                     {it.costo_configurado && it.unit_cost_base != null

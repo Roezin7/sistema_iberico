@@ -1,7 +1,7 @@
 // Lógica pura de inventario (sin DB). Es donde más duele un error, así que va testeada.
 // Reglas (spec §5.2):
 //   total_base de un producto = Σ_zonas (qty_captura * factor)
-//   faltante de compra        = max(0, base_qty - total_base)
+//   faltante de compra        = max(0, minimo_base - total_base)
 //   valor de inventario       = Σ (total_base * unit_cost) [productos sin unit_cost no suman]
 //   lista de compras          = productos con faltante > 0, agrupados por store con subtotales
 
@@ -18,6 +18,39 @@ export function totalBaseProducto(lineas: LineaConteo[]): number {
 /** Lo que hay que comprar para llegar al stock mínimo (base_qty). Nunca negativo. */
 export function faltanteCompra(baseQty: number, totalBase: number): number {
   return redondear(Math.max(0, baseQty - totalBase));
+}
+
+/**
+ * Convierte el mínimo configurado en presentaciones a la unidad base.
+ *
+ * El catálogo histórico guardó `base_qty` como número de presentaciones para
+ * muchos productos (p. ej. 1 botella), mientras que los conteos se convierten
+ * a ml, g o piezas. Comparar esos valores directamente hace que un stock de
+ * 500 ml parezca suficiente para un mínimo de 1 botella. Cuando conocemos el
+ * contenido de la presentación, el mínimo físico correcto es:
+ *
+ *   mínimo de presentaciones × contenido por presentación
+ *
+ * Sin contenido se conserva el valor original para no inventar conversiones.
+ */
+export function minimoBaseDesdePresentacion(input: {
+  minimoPresentaciones: number;
+  contenidoCompra?: number | null;
+}): number {
+  const minimo = Number(input.minimoPresentaciones);
+  const contenido = input.contenidoCompra == null ? null : Number(input.contenidoCompra);
+  if (!Number.isFinite(minimo) || minimo <= 0) return 0;
+  if (contenido == null || !Number.isFinite(contenido) || contenido <= 0) return redondear(minimo);
+  return redondear(minimo * contenido);
+}
+
+/** Número de presentaciones completas necesarias para cubrir un faltante. */
+export function presentacionesNecesarias(faltanteBase: number, contenidoCompra?: number | null): number | null {
+  const faltante = Number(faltanteBase);
+  const contenido = contenidoCompra == null ? null : Number(contenidoCompra);
+  if (!Number.isFinite(faltante) || faltante <= 0) return 0;
+  if (contenido == null || !Number.isFinite(contenido) || contenido <= 0) return null;
+  return Math.ceil(faltante / contenido);
 }
 
 /** Valor a costo de un producto. Sin costo => 0 (y se reporta aparte). */
@@ -51,6 +84,8 @@ export interface ProductoFaltante {
   store_id: number;
   store: string;
   base_qty: number;
+  /** Mínimo efectivo en unidad base (base_qty × contenido_compra). */
+  minimo_base?: number;
   total_base: number;
   faltante: number;
   unit_cost: number | null;
@@ -61,6 +96,8 @@ export interface ProductoFaltante {
   contenido_compra?: number | null;
   unidad_compra?: string | null;
   rendimiento_util?: number | null;
+  /** Presentaciones completas que deben comprarse para cubrir el faltante. */
+  presentaciones_faltantes?: number | null;
   /** Permite distinguir un costo cero real de una configuración faltante. */
   costo_configurado?: boolean;
 }

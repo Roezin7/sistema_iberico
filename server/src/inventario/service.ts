@@ -5,6 +5,8 @@ import { HttpError } from '../middleware/error.js';
 import {
   totalBaseProducto,
   faltanteCompra,
+  minimoBaseDesdePresentacion,
+  presentacionesNecesarias,
   valorProducto,
   costoBaseDesdePresentacion,
   armarListaCompras,
@@ -17,6 +19,8 @@ export interface ProductoActual {
   store_id: number;
   store: string;
   base_qty: number;
+  /** Mínimo configurado convertido a unidad base. */
+  minimo_base: number;
   total_base: number;
   unit_cost: number | null;
   unit_cost_base: number | null;
@@ -121,26 +125,36 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
   const metadataPorSnap = new Map(snaps.map((s) => [s.id.toString(), { tipo: s.tipo, semana_id: s.semana_id }]));
   const snapIds = snaps.map((s) => s.id);
 
-  // Por cada zona, el snapshot más reciente que la haya contado.
-  const ultimoPorZona = snapIds.length
-    ? await prisma.inventory_lines.groupBy({
-        by: ['zona_id'],
-        where: { snapshot_id: { in: snapIds } },
-        _max: { snapshot_id: true },
-      })
-    : [];
-
-  const pares = ultimoPorZona
-    .map((g) => ({ zona_id: g.zona_id, snapshot_id: g._max.snapshot_id }))
-    .filter((p): p is { zona_id: bigint; snapshot_id: bigint } => p.snapshot_id != null);
-
-  // Líneas vigentes = las del último conteo de cada zona.
-  const lineas = pares.length
+  // Determinar el último snapshot por fecha real, no por el ID. Los IDs no
+  // garantizan orden cronológico cuando se importan/restauran datos o se
+  // corrige un conteo histórico. Así un snapshot vacío posterior no puede
+  // ocultar el conteo válido más reciente de una zona.
+  const todasLasLineas = snapIds.length
     ? await prisma.inventory_lines.findMany({
-        where: { OR: pares.map((p) => ({ snapshot_id: p.snapshot_id, zona_id: p.zona_id })) },
-        include: { zonas_inventario: true },
+        where: { snapshot_id: { in: snapIds } },
+        include: {
+          zonas_inventario: true,
+          inventory_snapshot: { select: { created_at: true } },
+        },
       })
     : [];
+  const ultimoPorZona = new Map<string, { zona_id: bigint; snapshot_id: bigint; created_at: Date }>();
+  for (const linea of todasLasLineas) {
+    const key = linea.zona_id.toString();
+    const anterior = ultimoPorZona.get(key);
+    if (!anterior || linea.inventory_snapshot.created_at > anterior.created_at
+      || (linea.inventory_snapshot.created_at.getTime() === anterior.created_at.getTime()
+        && linea.snapshot_id > anterior.snapshot_id)) {
+      ultimoPorZona.set(key, {
+        zona_id: linea.zona_id,
+        snapshot_id: linea.snapshot_id,
+        created_at: linea.inventory_snapshot.created_at,
+      });
+    }
+  }
+  const pares = [...ultimoPorZona.values()];
+  const snapshotVigente = new Map(pares.map((p) => [`${p.snapshot_id}:${p.zona_id}`, true]));
+  const lineas = todasLasLineas.filter((linea) => snapshotVigente.has(`${linea.snapshot_id}:${linea.zona_id}`));
 
   const unidadesCaptura = lineas.length
     ? await prisma.product_zone_units.findMany({
@@ -186,6 +200,10 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
       store_id: Number(p.store_id),
       store: p.stores.name,
       base_qty: num0(p.base_qty),
+      minimo_base: minimoBaseDesdePresentacion({
+        minimoPresentaciones: num0(p.base_qty),
+        contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
+      }),
       total_base: totalBase,
       // Se conserva unit_cost como costo de compra para la UI; la valuación
       // usa explícitamente el costo por unidad base.
@@ -250,13 +268,18 @@ export async function listarSnapshots(
 export async function listaCompras(negocioId: bigint) {
   const actual = await inventarioActual(negocioId);
   const faltantes: ProductoFaltante[] = actual.productos.map((p) => {
-    const faltante = faltanteCompra(p.base_qty, p.total_base);
+    // `base_qty` es el mínimo configurado en presentaciones de compra
+    // (botellas, bolsas, paquetes, etc.). El conteo ya está normalizado a la
+    // unidad base, por lo que primero convertimos el mínimo al mismo espacio.
+    const minimoBase = p.minimo_base;
+    const faltante = faltanteCompra(minimoBase, p.total_base);
     return {
       product_id: p.product_id,
       nombre: p.nombre,
       store_id: p.store_id,
       store: p.store,
       base_qty: p.base_qty,
+      minimo_base: minimoBase,
       total_base: p.total_base,
       faltante,
       unit_cost: p.unit_cost,
@@ -265,6 +288,7 @@ export async function listaCompras(negocioId: bigint) {
       contenido_compra: p.contenido_compra,
       unidad_compra: p.unidad_compra,
       rendimiento_util: p.rendimiento_util,
+      presentaciones_faltantes: presentacionesNecesarias(faltante, p.contenido_compra),
       costo_configurado: p.unit_cost_base != null,
       valor_faltante: valorProducto(faltante, p.unit_cost_base),
     };

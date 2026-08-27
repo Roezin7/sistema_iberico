@@ -485,7 +485,7 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
         <input style={{ flex: 1 }} placeholder="Nueva tienda…" value={nuevaTienda} onChange={(e) => setNuevaTienda(e.target.value)} />
         <button className="btn-secondary" onClick={async () => { if (!nuevaTienda.trim()) return; await api('/catalogo/stores', { method: 'POST', body: { nombre: nuevaTienda.trim() } }); setNuevaTienda(''); onNuevaTienda(); }}>+ Tienda</button>
       </div>
-      <label className="muted">Cantidad mínima (en unidades base)
+      <label className="muted">Mínimo de compra (presentaciones)
         <input type="number" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} placeholder="0" />
       </label>
       <label className="muted">Costo por unidad (opcional)
@@ -537,7 +537,7 @@ function ProductoRow({ p, stores, zonas, categorias, onChange }: { p: Producto; 
     <div className={`resumen-card ${p.active ? '' : 'is-inactive'}`} style={{ gap: '0.4rem' }}>
       <div className="kv" style={{ borderBottom: 'none', cursor: 'pointer' }} onClick={() => setAbierto((v) => !v)}>
         <strong>{p.nombre} {!p.active && <span className="chip chip--warn">inactivo</span>}</strong>
-        <span className="muted">mín {p.base_qty} · {mxn(p.unit_cost)} · {p.store}</span>
+        <span className="muted">mín {p.base_qty} {p.unidad_compra ?? 'presentaciones'} · {mxn(p.unit_cost)} · {p.store}</span>
       </div>
       {abierto && (
         <>
@@ -551,7 +551,7 @@ function ProductoRow({ p, stores, zonas, categorias, onChange }: { p: Producto; 
               {categorias.filter((c) => c.activo || c.id === p.categoria_id).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
             </select>
           </label>
-          <label className="muted">Cantidad mínima (unidades base)
+          <label className="muted">Mínimo de compra (presentaciones)
             <input type="number" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} />
           </label>
           <label className="muted">Costo por unidad

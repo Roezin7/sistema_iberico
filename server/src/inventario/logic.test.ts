@@ -4,6 +4,8 @@ import {
   faltanteCompra,
   valorProducto,
   costoBaseDesdePresentacion,
+  minimoBaseDesdePresentacion,
+  presentacionesNecesarias,
   armarListaCompras,
   type ProductoFaltante,
 } from './logic.js';
@@ -66,6 +68,26 @@ describe('faltanteCompra', () => {
   });
   it('exacto => 0', () => {
     expect(faltanteCompra(48, 48)).toBe(0);
+  });
+});
+
+describe('mínimos y presentaciones', () => {
+  it('convierte un mínimo de botellas a mililitros antes de comparar', () => {
+    expect(minimoBaseDesdePresentacion({ minimoPresentaciones: 1, contenidoCompra: 700 })).toBe(700);
+    expect(faltanteCompra(
+      minimoBaseDesdePresentacion({ minimoPresentaciones: 1, contenidoCompra: 700 }),
+      350,
+    )).toBe(350);
+  });
+
+  it('conserva el mínimo cuando falta la presentación', () => {
+    expect(minimoBaseDesdePresentacion({ minimoPresentaciones: 3, contenidoCompra: null })).toBe(3);
+  });
+
+  it('redondea el faltante a presentaciones completas', () => {
+    expect(presentacionesNecesarias(350, 700)).toBe(1);
+    expect(presentacionesNecesarias(1401, 700)).toBe(3);
+    expect(presentacionesNecesarias(350, null)).toBeNull();
   });
 });
 
