@@ -10,6 +10,10 @@ import {
   valorProducto,
   costoBaseDesdePresentacion,
   armarListaCompras,
+  cantidadOperativaInventario,
+  faltanteOperativoInventario,
+  normalizarUnidadBase,
+  unidadOperativaInventario,
   type ProductoFaltante,
 } from './logic.js';
 
@@ -22,12 +26,27 @@ export interface ProductoActual {
   /** Mínimo configurado convertido a unidad base. */
   minimo_base: number;
   total_base: number;
+  /** Conteo visible: botellas, bolsas, paquetes o piezas. */
+  unidad_operativa: string;
+  minimo_operativo: number;
+  total_operativo: number;
   unit_cost: number | null;
   unit_cost_base: number | null;
   unidad_base: string | null;
   contenido_compra: number | null;
   unidad_compra: string | null;
   rendimiento_util: number;
+  /** Valor calculado con los lotes FIFO abiertos, cuando existen. */
+  valor_fifo: number;
+  /** Valor calculado con el costo vigente del catálogo. */
+  valor_catalogo: number;
+  /** Costo FIFO promedio informativo por unidad base. */
+  costo_fifo_base: number | null;
+  /** Parte del conteo físico que sí está cubierta por lotes abiertos. */
+  cantidad_con_lote: number;
+  /** Parte del conteo físico sin lote; se valora al catálogo y requiere conciliación. */
+  cantidad_sin_lote: number;
+  fuente_valoracion: 'fifo' | 'catalogo' | 'mixta' | 'sin_costo';
   valor: number;
   categoria_id: number | null;
   categoria: string | null;
@@ -41,6 +60,8 @@ export interface InventarioActual {
   semana_id: number | null;
   productos: ProductoActual[];
   valor_total: number;
+  valor_fifo_total: number;
+  valor_catalogo_total: number;
   sin_costo: { product_id: number; nombre: string }[];
 }
 
@@ -59,6 +80,41 @@ function costoUnitarioBase(producto: {
     contenidoCompra: producto.contenido_compra == null ? null : Number(producto.contenido_compra),
     unidadBase: producto.unidad_base,
   });
+}
+
+type LoteValuacion = {
+  product_id: bigint;
+  cantidad_restante: Prisma.Decimal | number;
+  costo_unitario: Prisma.Decimal | number;
+  recibido_at: Date;
+  id: bigint;
+  fuente: string;
+};
+
+/** Valora una existencia física usando lotes abiertos en orden FIFO.
+ * Si el conteo físico excede el libro de lotes, el remanente se valora al
+ * costo de catálogo y se devuelve como mezcla; nunca se omite silenciosamente.
+ */
+function valorarFisicoConLotes(cantidad: number, lotes: LoteValuacion[], costoCatalogo: number | null) {
+  const operativos = lotes.filter((l) => num0(l.cantidad_restante) > 0);
+  if (!operativos.length) return { valor: costoCatalogo == null ? 0 : cantidad * costoCatalogo, consumido: 0, fuente: costoCatalogo == null ? 'sin_costo' as const : 'catalogo' as const };
+  let restante = Math.max(0, cantidad);
+  let valor = 0;
+  let consumido = 0;
+  for (const lote of operativos) {
+    if (restante <= 0) break;
+    const qty = Math.min(restante, num0(lote.cantidad_restante));
+    valor += qty * num0(lote.costo_unitario);
+    consumido += qty;
+    restante -= qty;
+  }
+  if (restante > 0 && costoCatalogo != null) valor += restante * costoCatalogo;
+  const fuente: 'fifo' | 'mixta' = restante > 0 && costoCatalogo != null ? 'mixta' : 'fifo';
+  return {
+    valor,
+    consumido,
+    fuente,
+  };
 }
 
 /** Valor de un snapshot histórico usando el costo vigente del catálogo. */
@@ -109,7 +165,7 @@ export async function crearSnapshotConsolidado(
  * zona: no borra lo ya contado en las demás.
  */
 export async function inventarioActual(negocioId: bigint): Promise<InventarioActual> {
-  const [productos, snaps] = await Promise.all([
+  const [productos, snaps, lotes] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
       include: { stores: true, categorias_inventario: true },
@@ -119,7 +175,26 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
       where: { negocio_id: negocioId },
       select: { id: true, created_at: true, tipo: true, semana_id: true },
     }),
+    prisma.inventory_lots.findMany({
+      where: { negocio_id: negocioId, estado: 'abierto', cantidad_restante: { gt: 0 } },
+      select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true },
+      orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
+    }),
   ]);
+
+  // No mezclar el libro histórico de pruebas con lotes operativos. Si un
+  // producto ya tiene entradas reales, esas son la fuente de costo vigente.
+  const lotesPorProducto = new Map<string, typeof lotes>();
+  for (const lote of lotes) {
+    const key = lote.product_id.toString();
+    const lista = lotesPorProducto.get(key) ?? [];
+    lista.push(lote);
+    lotesPorProducto.set(key, lista);
+  }
+  for (const [key, lista] of lotesPorProducto) {
+    const operativos = lista.filter((l) => l.fuente !== 'historico_prueba');
+    if (operativos.length) lotesPorProducto.set(key, operativos);
+  }
 
   const fechaPorSnap = new Map(snaps.map((s) => [s.id.toString(), s.created_at]));
   const metadataPorSnap = new Map(snaps.map((s) => [s.id.toString(), { tipo: s.tipo, semana_id: s.semana_id }]));
@@ -193,7 +268,14 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
     );
     const unitCostPresentation = num(p.unit_cost);
     const unitCostBase = costoUnitarioBase(p);
-    if (unitCostPresentation == null) sinCosto.push({ product_id: Number(p.id), nombre: p.name });
+    const lotesProducto = (lotesPorProducto.get(p.id.toString()) ?? []) as LoteValuacion[];
+    const valorCatalogo = valorProducto(totalBase, unitCostBase);
+    const valorado = valorarFisicoConLotes(totalBase, lotesProducto, unitCostBase);
+    const cantidadesLotes = lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante), 0);
+    const costoFifoBase = cantidadesLotes > 0
+      ? lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) / cantidadesLotes
+      : null;
+    if (unitCostBase == null && !lotesProducto.length) sinCosto.push({ product_id: Number(p.id), nombre: p.name });
     return {
       product_id: Number(p.id),
       nombre: p.name,
@@ -205,6 +287,13 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
         contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
       }),
       total_base: totalBase,
+      unidad_operativa: unidadOperativaInventario(p.unidad_base, p.unidad_compra),
+      minimo_operativo: num0(p.base_qty),
+      total_operativo: cantidadOperativaInventario({
+        totalBase,
+        unidadBase: p.unidad_base,
+        contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
+      }),
       // Se conserva unit_cost como costo de compra para la UI; la valuación
       // usa explícitamente el costo por unidad base.
       unit_cost: unitCostPresentation,
@@ -213,7 +302,13 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
       contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra),
       unidad_compra: p.unidad_compra,
       rendimiento_util: num(p.rendimiento_util) ?? 1,
-      valor: valorProducto(totalBase, unitCostBase),
+      valor_fifo: Math.round(valorado.valor * 100) / 100,
+      valor_catalogo: valorCatalogo,
+      costo_fifo_base: costoFifoBase == null ? null : Math.round(costoFifoBase * 1_000_000) / 1_000_000,
+      cantidad_con_lote: Math.round(valorado.consumido * 1_000_000) / 1_000_000,
+      cantidad_sin_lote: Math.round(Math.max(0, totalBase - valorado.consumido) * 1_000_000) / 1_000_000,
+      fuente_valoracion: valorado.fuente,
+      valor: Math.round(valorado.valor * 100) / 100,
       categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
       categoria: p.categorias_inventario?.nombre ?? null,
       por_zona: ls.map((l) => ({
@@ -227,6 +322,8 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
   });
 
   const valorTotal = Math.round(result.reduce((a, p) => a + p.valor, 0) * 100) / 100;
+  const valorFifoTotal = Math.round(result.reduce((a, p) => a + p.valor_fifo, 0) * 100) / 100;
+  const valorCatalogoTotal = Math.round(result.reduce((a, p) => a + p.valor_catalogo, 0) * 100) / 100;
 
   return {
     snapshot_id: snapIdActual != null ? Number(snapIdActual) : null,
@@ -237,6 +334,8 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
       : null,
     productos: result,
     valor_total: valorTotal,
+    valor_fifo_total: valorFifoTotal,
+    valor_catalogo_total: valorCatalogoTotal,
     sin_costo: sinCosto,
   };
 }
@@ -273,6 +372,8 @@ export async function listaCompras(negocioId: bigint) {
     // unidad base, por lo que primero convertimos el mínimo al mismo espacio.
     const minimoBase = p.minimo_base;
     const faltante = faltanteCompra(minimoBase, p.total_base);
+    const faltanteOperativo = faltanteOperativoInventario(p.minimo_operativo, p.total_operativo);
+    const presentaciones = presentacionesNecesarias(faltante, p.contenido_compra);
     return {
       product_id: p.product_id,
       nombre: p.nombre,
@@ -282,15 +383,24 @@ export async function listaCompras(negocioId: bigint) {
       minimo_base: minimoBase,
       total_base: p.total_base,
       faltante,
+      unidad_operativa: p.unidad_operativa,
+      minimo_operativo: p.minimo_operativo,
+      total_operativo: p.total_operativo,
+      faltante_operativo: faltanteOperativo,
       unit_cost: p.unit_cost,
       unit_cost_base: p.unit_cost_base,
       unidad_base: p.unidad_base,
       contenido_compra: p.contenido_compra,
       unidad_compra: p.unidad_compra,
       rendimiento_util: p.rendimiento_util,
-      presentaciones_faltantes: presentacionesNecesarias(faltante, p.contenido_compra),
+      presentaciones_faltantes: presentaciones,
       costo_configurado: p.unit_cost_base != null,
-      valor_faltante: valorProducto(faltante, p.unit_cost_base),
+      // La lista propone compras completas. El valor interno sigue usando la
+      // unidad base para validar, pero el importe visible corresponde a las
+      // presentaciones que realmente se comprarían.
+      valor_faltante: presentaciones != null && p.unit_cost != null
+        ? Math.round(presentaciones * p.unit_cost * 100) / 100
+        : valorProducto(faltante, p.unit_cost_base),
     };
   });
   return armarListaCompras(faltantes);
@@ -309,6 +419,8 @@ export interface MetadataSnapshotInventario {
   semana_id?: number | null;
   motivo?: string | null;
   nota?: string | null;
+  /** `operativa` recibe piezas físicas y convierte al formato histórico al guardar. */
+  unidad_conteo?: 'captura' | 'operativa';
 }
 
 /**
@@ -340,7 +452,7 @@ export async function crearConteo(
 
   // Validar que productos y zonas pertenezcan al negocio.
   const [productos, zonas, pzus] = await Promise.all([
-    prisma.products.findMany({ where: { id: { in: productIds }, negocio_id: negocioId }, select: { id: true } }),
+    prisma.products.findMany({ where: { id: { in: productIds }, negocio_id: negocioId }, select: { id: true, unidad_base: true, contenido_compra: true } }),
     prisma.zonas_inventario.findMany({ where: { id: { in: zonaIds }, negocio_id: negocioId }, select: { id: true } }),
     prisma.product_zone_units.findMany({
       where: { product_id: { in: productIds }, zona_id: { in: zonaIds } },
@@ -358,6 +470,27 @@ export async function crearConteo(
     const pzu = pzus.find((u) => u.product_id === BigInt(productId) && u.zona_id === BigInt(zonaId));
     return pzu ? num0(pzu.factor) : 1;
   };
+  const productoDe = (productId: number) => productos.find((p) => p.id === BigInt(productId));
+  const lineasPersistidas = lineasInput.map((l) => {
+    const factor = factorDe(l.product_id, l.zona_id);
+    const producto = productoDe(l.product_id);
+    // En modo operativo el usuario siempre captura unidades físicas. El
+    // snapshot, sin embargo, conserva la unidad de captura histórica para no
+    // romper recetas ni FIFO. Convertimos primero a unidad base y después al
+    // formato que espera inventory_lines (qty_captura × factor = base).
+    let qtyCaptura = l.qty_captura;
+    if (metadata.unidad_conteo === 'operativa') {
+      const unidadBase = normalizarUnidadBase(producto?.unidad_base);
+      const contenido = producto?.contenido_compra == null ? null : num0(producto.contenido_compra);
+      const cantidadBase = unidadBase === 'pieza'
+        ? l.qty_captura
+        : contenido != null && contenido > 0
+          ? l.qty_captura * contenido
+          : l.qty_captura * factor;
+      qtyCaptura = factor > 0 ? cantidadBase / factor : cantidadBase;
+    }
+    return { ...l, qty_captura: qtyCaptura };
+  });
 
   return prisma.$transaction(async (tx) => {
     // Una semana sólo puede tener una apertura y un cierre oficiales. Si el
@@ -382,7 +515,7 @@ export async function crearConteo(
       nota: metadata.nota?.trim() || null,
     } });
     await tx.inventory_lines.createMany({
-      data: lineasInput.map((l) => ({
+      data: lineasPersistidas.map((l) => ({
         snapshot_id: snap.id,
         product_id: BigInt(l.product_id),
         zona_id: BigInt(l.zona_id),

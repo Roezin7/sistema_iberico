@@ -11,12 +11,18 @@ interface Unidad { zona_id: number; unidad_captura: string; factor: number }
 interface SemanaRef { id: number; etiqueta: string; fecha_inicio: string; fecha_fin: string; estado: string }
 interface Producto {
   id: number; nombre: string; store: string; base_qty: number | null;
-  unit_cost: number | null; unidad_base: string | null; unidades: Unidad[]; categoria_id: number | null; categoria: string | null;
+  unit_cost: number | null; unidad_base: string | null; unidad_compra: string | null; contenido_compra: number | null;
+  unidades: Unidad[]; categoria_id: number | null; categoria: string | null;
 }
 interface ProductoActual {
   product_id: number; nombre: string; store: string; base_qty: number;
   minimo_base: number;
-  total_base: number; unit_cost: number | null; valor: number;
+  total_base: number; unit_cost: number | null; unit_cost_base: number | null;
+  unidad_base: string | null; contenido_compra: number | null; unidad_compra: string | null;
+  unidad_operativa: string; minimo_operativo: number; total_operativo: number;
+  valor: number; valor_fifo: number; valor_catalogo: number;
+  costo_fifo_base: number | null; cantidad_con_lote: number; cantidad_sin_lote: number;
+  fuente_valoracion: 'fifo' | 'catalogo' | 'mixta' | 'sin_costo';
   categoria_id: number | null; categoria: string | null;
   por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number; unidad_captura?: string }[];
 }
@@ -55,7 +61,8 @@ function SeccionCategoria({ titulo, count, children }: { titulo: string; count: 
 }
 interface Actual {
   snapshot_id: number | null; fecha: string | null; tipo: string | null; semana_id: number | null; productos: ProductoActual[];
-  valor_total: number; sin_costo: { product_id: number; nombre: string }[];
+  valor_total: number; valor_fifo_total: number; valor_catalogo_total: number;
+  sin_costo: { product_id: number; nombre: string }[];
 }
 interface ItemCompra {
   product_id: number;
@@ -64,6 +71,10 @@ interface ItemCompra {
   minimo_base?: number;
   total_base: number;
   faltante: number;
+  unidad_operativa?: string;
+  minimo_operativo?: number;
+  total_operativo?: number;
+  faltante_operativo?: number;
   unit_cost: number | null;
   unit_cost_base?: number | null;
   unidad_base?: string | null;
@@ -83,6 +94,40 @@ interface SnapshotHistorial {
 
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
+
+const formatoCantidad = (n: number | null | undefined) =>
+  n == null ? '0' : n.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+
+function pluralUnidad(unidad: string | null | undefined, cantidad?: number) {
+  const u = (unidad ?? 'unidad').trim().toLowerCase();
+  if (cantidad === 1) return u;
+  const plurales: Record<string, string> = {
+    botella: 'botellas', lata: 'latas', bolsa: 'bolsas', bote: 'botes',
+    envase: 'envases', frasco: 'frascos', paquete: 'paquetes', bloque: 'bloques',
+    pieza: 'piezas', unidad: 'unidades', kg: 'kg', litro: 'litros', garrafon: 'garrafones',
+    manojo: 'manojos', ramo: 'ramos', caja: 'cajas', pack: 'packs', lote: 'lotes',
+  };
+  return plurales[u] ?? `${u}s`;
+}
+
+/** Unidad que se muestra al operador. El contenido en g/ml sólo vive en el
+ * cálculo interno; el conteo se expresa en unidades físicas comprables. */
+function unidadOperativaProducto(p: Producto, u: Unidad): string {
+  if (p.unidad_base === 'pieza') return 'pieza';
+  const texto = (p.unidad_compra || u.unidad_captura || 'unidad').trim().toLowerCase();
+  const primera = texto.split(/\s|\(|\//)[0] || 'unidad';
+  // El operador nunca debe ver la unidad técnica (g/ml) ni el contenido de
+  // la presentación; sólo la unidad física que puede contar.
+  return /^(g|gr|gramo|gramos|ml|cc|mililitro|mililitros)$/.test(primera) ? 'unidad' : primera;
+}
+
+/** Convierte una captura histórica (qty × factor = base) a unidades físicas. */
+function capturaAOperativa(qtyCaptura: number, p: Producto | undefined, u: Unidad): number {
+  const base = Number(qtyCaptura) * (Number(u.factor) || 1);
+  if (!p || p.unidad_base === 'pieza') return base;
+  const contenido = Number(p.contenido_compra);
+  return Number.isFinite(contenido) && contenido > 0 ? base / contenido : Number(qtyCaptura);
+}
 
 type Tab = 'conteo' | 'actual' | 'compras';
 
@@ -160,7 +205,10 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       const previos: Record<string, string> = {};
       for (const prod of actual.productos) {
         for (const pz of prod.por_zona) {
-        previos[`${prod.product_id}:${pz.zona_id}`] = String(pz.qty_captura);
+          const producto = p.find((item) => item.id === prod.product_id);
+          const unidad = producto?.unidades.find((item) => item.zona_id === pz.zona_id)
+            ?? { zona_id: pz.zona_id, unidad_captura: pz.unidad_captura ?? 'unidad', factor: pz.factor || 1 };
+          previos[`${prod.product_id}:${pz.zona_id}`] = String(capturaAOperativa(pz.qty_captura, producto, unidad));
         }
       }
       setValores(previos);
@@ -203,7 +251,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       }
       await api('/inventario/snapshots', {
         method: 'POST',
-        body: { lineas, tipo, semana_id: semanaId, motivo: motivo.trim() || null },
+        body: { lineas, tipo, semana_id: semanaId, motivo: motivo.trim() || null, unidad_conteo: 'operativa' },
       });
       setValores({});
       onGuardado();
@@ -234,7 +282,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           {(tipo === 'apertura' || tipo === 'cierre') && <label>Semana<select aria-label="Semana del conteo" value={semanaId ?? ''} onChange={(e) => setSemanaId(e.target.value ? Number(e.target.value) : null)}><option value="">Selecciona…</option>{semanas.map((s) => <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>)}</select></label>}
           {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}
         </div>}
-        <p className="muted inventory-unit-help">Captura la cantidad en la unidad visible junto a cada producto. El sistema convierte automáticamente a la unidad base; no mezcles cajas, paquetes y piezas.</p>
+        <p className="muted inventory-unit-help">Captura botellas, cajas, paquetes o piezas. El sistema convierte automáticamente para FIFO y costeo.</p>
       </section>
       <div className="zona-tabs">
         {zonas.map((z) => (
@@ -255,11 +303,12 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
               const u = unidadDe(p, zonaActiva);
               const key = `${p.id}:${zonaActiva}`;
               const esBool = u.unidad_captura === 'boolean';
+              const unidadOperativa = unidadOperativaProducto(p, u);
               return (
                 <li key={p.id} className="conteo-row">
                   <div className="conteo-info">
                     <strong>{p.nombre}</strong>
-                    <small className="muted">Se captura en {u.unidad_captura}{u.factor !== 1 ? ` · 1 = ${u.factor} ${p.unidad_base ?? 'base'}` : ''} · {p.store}</small>
+                    <small className="muted">Se captura en {pluralUnidad(unidadOperativa, 2)} · {p.store}</small>
                   </div>
                   {esBool ? (
                     <div className="bool-toggle">
@@ -279,11 +328,6 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                       onChange={(e) => setVal(p.id, zonaActiva, e.target.value)}
                       onKeyDown={moverConteoConFlecha}
                     />
-                  )}
-                  {!esBool && valores[key] !== '' && valores[key] != null && Number.isFinite(Number(valores[key])) && (
-                    <small className="muted conteo-conversion">
-                      = {(Number(valores[key]) * u.factor).toLocaleString('es-MX', { maximumFractionDigits: 3 })} {p.unidad_base ?? 'unidad base'}
-                    </small>
                   )}
                 </li>
               );
@@ -460,15 +504,24 @@ function InventarioActual() {
   }, []);
   if (!data) return <Cargando />;
   const grupos = agruparPorCategoria(data.productos, categorias);
+  const diferenciaValuacion = Math.round((data.valor_fifo_total - data.valor_catalogo_total) * 100) / 100;
+  const etiquetaValuacion: Record<ProductoActual['fuente_valoracion'], string> = {
+    fifo: 'FIFO', catalogo: 'catálogo', mixta: 'mixta', sin_costo: 'sin costo',
+  };
 
   return (
     <>
-      <div className="resumen-card">
-        <span className="muted">Valor de inventario (a costo)</span>
-        <strong className="big-number">{mxn(data.valor_total)}</strong>
+      <div className="resumen-card" style={{ gap: '0.8rem' }}>
+        <span className="muted">Valuación actual del inventario</span>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.7rem' }}>
+          <div><small className="muted">Valor FIFO activo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_fifo_total)}</strong><small className="muted">Costo operativo de los lotes</small></div>
+          <div><small className="muted">Valor de catálogo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_catalogo_total)}</strong><small className="muted">Referencia del costo vigente</small></div>
+          <div><small className="muted">Diferencia de valuación</small><strong className="big-number" style={{ display: 'block', color: diferenciaValuacion === 0 ? undefined : '#e3b341' }}>{mxn(diferenciaValuacion)}</strong><small className="muted">FIFO frente a catálogo</small></div>
+        </div>
         <small className="muted">
           {data.fecha ? `Último conteo: ${new Date(data.fecha).toLocaleString('es-MX')} · ${data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'operativo'}${data.semana_id ? ` · semana ${data.semana_id}` : ''}` : 'Sin conteos aún'}
         </small>
+        <small className="muted">El valor FIFO es el operativo. La diferencia sólo señala que los lotes abiertos tienen costos distintos al catálogo o que parte del conteo aún no tiene lote asociado.</small>
       </div>
       {data.sin_costo.length > 0 && (
         <p className="aviso">
@@ -480,13 +533,25 @@ function InventarioActual() {
         <SeccionCategoria key={g.id ?? 'sin'} titulo={g.nombre} count={g.items.length}>
           <ul className="conteo-list">
             {g.items.map((p) => (
-              <li key={p.product_id} className="conteo-row">
-                <div className="conteo-info">
-                  <strong>{p.nombre}</strong>
-                  <small className="muted">{p.por_zona.map((z) => `${z.zona}: ${z.qty_captura} ${z.unidad_captura ?? 'unidad base'}`).join(' · ') || 'Sin conteo por zona'} · base: {p.total_base} {p.minimo_base ? `/ ${p.minimo_base} mín` : ''} · {p.store}</small>
-                </div>
-                <span>{mxn(p.valor)}</span>
-              </li>
+              (() => {
+                const totalOperativo = p.total_operativo ?? p.total_base;
+                const minimoOperativo = p.minimo_operativo ?? p.base_qty;
+                return <li key={p.product_id} className="conteo-row">
+                  <div className="conteo-info">
+                    <strong>{p.nombre}</strong>
+                    <small className="muted">
+                      Existencia {formatoCantidad(totalOperativo)} {pluralUnidad(p.unidad_operativa, totalOperativo)}
+                      {' · '}mínimo {formatoCantidad(minimoOperativo)} {pluralUnidad(p.unidad_operativa, minimoOperativo)}
+                      {' · '}{p.store}
+                    </small>
+                    <small className="muted">
+                      Valuación {etiquetaValuacion[p.fuente_valoracion]} · {mxn(p.valor_fifo)}
+                      {p.cantidad_sin_lote > 0 ? ' · parte sin lote' : ''}
+                    </small>
+                  </div>
+                  <span>{mxn(p.valor_fifo)}</span>
+                </li>;
+              })()
             ))}
           </ul>
         </SeccionCategoria>
@@ -529,7 +594,7 @@ function ListaDeCompras() {
       <div className="resumen-card">
         <span className="muted">Total estimado de compra</span>
         <strong className="big-number">{mxn(data.total)}</strong>
-        <small className="muted">Faltantes calculados en unidad base y convertidos a presentaciones de compra.</small>
+        <small className="muted">Compara el mínimo físico contra lo que existe. Las conversiones internas sólo se usan para FIFO y costeo.</small>
       </div>
       {data.grupos.map((g) => (
         <div key={g.store} className="grupo-tienda">
@@ -538,28 +603,30 @@ function ListaDeCompras() {
             <span className="muted">{mxn(g.subtotal)}</span>
           </div>
           <ul className="conteo-list">
-            {g.items.map((it) => (
-              <li key={it.product_id} className="conteo-row">
-                <div className="conteo-info">
-                  <strong>{it.nombre}</strong>
-                  <small className="muted">
-                    Mínimo {it.base_qty} {it.unidad_compra ?? 'presentaciones'}
-                    {it.minimo_base != null && it.unidad_base ? ` (${it.minimo_base} ${it.unidad_base})` : ''}
-                    {' · '}actual {it.total_base} {it.unidad_base ?? 'unidad base'} · faltan {it.faltante} {it.unidad_base ?? 'unidad base'}
-                    {it.presentaciones_faltantes != null && it.unidad_compra ? ` · comprar ${it.presentaciones_faltantes} ${it.unidad_compra}` : ''}
-                  </small>
-                  <small className="muted">
-                    {it.costo_configurado && it.unit_cost_base != null
-                      ? `Costo base ${mxn(it.unit_cost_base)} / ${it.unidad_base ?? 'unidad'}`
-                      : 'Costo por unidad base pendiente de configurar'}
-                    {it.contenido_compra != null && it.unidad_compra
-                      ? ` · Presentación: ${it.contenido_compra} ${it.unidad_base ?? ''} por ${it.unidad_compra}`
-                      : ''}
-                  </small>
-                </div>
-                <span>{it.costo_configurado ? mxn(it.valor_faltante) : '—'}</span>
-              </li>
-            ))}
+            {g.items.map((it) => {
+              const unidad = it.unidad_operativa ?? it.unidad_compra ?? 'unidad';
+              const minimo = it.minimo_operativo ?? it.base_qty;
+              const actual = it.total_operativo ?? it.total_base;
+              const faltante = it.faltante_operativo ?? it.faltante;
+              return (
+                <li key={it.product_id} className="conteo-row">
+                  <div className="conteo-info">
+                    <strong>{it.nombre}</strong>
+                    <small className="muted">
+                      Mínimo {formatoCantidad(minimo)} {pluralUnidad(unidad, minimo)}
+                      {' · '}actual {formatoCantidad(actual)} {pluralUnidad(unidad, actual)}
+                      {' · '}faltan {formatoCantidad(faltante)} {pluralUnidad(unidad, faltante)}
+                    </small>
+                    <small className="muted">
+                      {it.costo_configurado && it.unit_cost != null
+                        ? `Costo estimado ${mxn(it.unit_cost)} por ${pluralUnidad(unidad, 2).replace(/s$/, '')}`
+                        : 'Costo pendiente de configurar'}
+                    </small>
+                  </div>
+                  <span>{it.costo_configurado ? mxn(it.valor_faltante) : '—'}</span>
+                </li>
+              );
+            })}
           </ul>
         </div>
       ))}

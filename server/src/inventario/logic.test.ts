@@ -7,6 +7,10 @@ import {
   minimoBaseDesdePresentacion,
   presentacionesNecesarias,
   armarListaCompras,
+  normalizarUnidadBase,
+  unidadOperativaInventario,
+  cantidadOperativaInventario,
+  faltanteOperativoInventario,
   type ProductoFaltante,
 } from './logic.js';
 import { costoUnitarioBaseDesdeCatalogo, conversionAperturaDesdeCatalogo } from './apertura-fifo.js';
@@ -25,6 +29,29 @@ describe('costo de apertura FIFO', () => {
     expect(conversionAperturaDesdeCatalogo({ cantidadPresentaciones: 4, contenidoCompra: 1000 })).toBe(4000);
     expect(conversionAperturaDesdeCatalogo({ cantidadPresentaciones: 5, contenidoCompra: 14, modo: 'normal' })).toBe(70);
     expect(conversionAperturaDesdeCatalogo({ cantidadPresentaciones: 2, contenidoCompra: 1000, rendimientoUtil: 0.8, modo: 'normal' })).toBe(1600);
+  });
+});
+
+describe('unidades base canónicas', () => {
+  it('normaliza gramos, mililitros y presentaciones discretas', () => {
+    expect(normalizarUnidadBase('gramos')).toBe('g');
+    expect(normalizarUnidadBase('cc')).toBe('ml');
+    expect(normalizarUnidadBase('paquete')).toBe('pieza');
+    expect(normalizarUnidadBase('desconocida')).toBeNull();
+  });
+
+  it('expone la unidad física sin revelar el contenido interno', () => {
+    expect(unidadOperativaInventario('ml', 'botella')).toBe('botella');
+    expect(unidadOperativaInventario('g', 'paquete')).toBe('paquete');
+    expect(unidadOperativaInventario('pieza', 'kg')).toBe('pieza');
+    expect(unidadOperativaInventario('ml', 'ml')).toBe('unidad');
+  });
+
+  it('convierte existencias internas a unidades físicas para la operación', () => {
+    expect(cantidadOperativaInventario({ totalBase: 2000, unidadBase: 'ml', contenidoCompra: 1000 })).toBe(2);
+    expect(cantidadOperativaInventario({ totalBase: 70, unidadBase: 'pieza', contenidoCompra: 14 })).toBe(70);
+    expect(faltanteOperativoInventario(4, 2)).toBe(2);
+    expect(faltanteOperativoInventario(4, 5)).toBe(0);
   });
 });
 

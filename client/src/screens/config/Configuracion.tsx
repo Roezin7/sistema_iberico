@@ -22,7 +22,7 @@ export default function Configuracion() {
       </header>
       <nav className="tabs">
         <button className={tab === 'general' ? 'tab tab--on' : 'tab'} onClick={() => setTab('general')}>General</button>
-        <button className={tab === 'inventario' ? 'tab tab--on' : 'tab'} onClick={() => setTab('inventario')}>Inventario</button>
+        <button className={tab === 'inventario' ? 'tab tab--on' : 'tab'} onClick={() => setTab('inventario')}>Productos</button>
         <button className={tab === 'recetas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('recetas')}>Recetas y costeo</button>
         <button className={tab === 'finanzas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('finanzas')}>Finanzas</button>
       </nav>
@@ -246,6 +246,7 @@ function RecetasCfg() {
   const [fuente, setFuente] = useState('Screenshots de costeo 2026-08-12');
   const [estado, setEstado] = useState<'borrador' | 'validada'>('borrador');
   const [lineas, setLineas] = useState<DraftLinea[]>([]);
+  const [filtroMenu, setFiltroMenu] = useState('');
   const [draft, setDraft] = useState<DraftLinea>({ product_id: '', cantidad: '', unidad: 'ml', nota: '' });
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -296,15 +297,14 @@ function RecetasCfg() {
   return (
     <>
       <div className="resumen-card" style={{ gap: '0.65rem' }}>
-        <strong>Receta y costeo</strong>
-        <p className="muted">Configura cantidades y unidades por versión. El costo se calcula con el catálogo y después podrá sustituirse por FIFO; no cambia el precio real del POS.</p>
+        <div className="card-head"><div><strong>Editor de recetas</strong><p className="muted">Crea una nueva versión sin borrar el historial. Las cantidades se costean con el catálogo y FIFO vigente.</p></div>{nombre && <span className="chip chip--info">editando {nombre}</span>}</div>
         <div className="row-actions" style={{ flexWrap: 'wrap' }}>
           <input placeholder="Producto de menú" value={nombre} onChange={(e) => setNombre(e.target.value)} style={{ flex: 2, minWidth: 180 }} />
           <input placeholder="ID Epos (opcional)" inputMode="numeric" value={eposId} onChange={(e) => setEposId(e.target.value.replace(/\D/g, ''))} style={{ flex: 1, minWidth: 130 }} />
           <input placeholder="Precio venta MXN (opcional)" inputMode="decimal" value={precio} onChange={(e) => setPrecio(e.target.value)} style={{ flex: 1, minWidth: 170 }} />
         </div>
         <div className="row-actions" style={{ flexWrap: 'wrap' }}>
-          <select value={draft.product_id} onChange={(e) => setDraft({ ...draft, product_id: e.target.value })} style={{ flex: 2, minWidth: 180 }}>
+          <select value={draft.product_id} onChange={(e) => { const value = e.target.value; const insumo = insumos.find((i) => String(i.id) === value); setDraft({ ...draft, product_id: value, unidad: insumo?.unidad_base ?? draft.unidad }); }} style={{ flex: 2, minWidth: 180 }}>
             <option value="">Ingrediente del inventario…</option>
             {insumos.map((i) => <option key={i.id} value={i.id}>{i.nombre}{i.costo_unitario == null ? '' : ` · ${mxn(i.costo_unitario)}`}</option>)}
           </select>
@@ -329,16 +329,16 @@ function RecetasCfg() {
       </div>
 
       <div className="resumen-card" style={{ gap: '0.5rem' }}>
-        <strong>Catálogo de recetas</strong>
-        <p className="muted">Las versiones anteriores permanecen para no alterar semanas históricas.</p>
+        <div className="card-head"><div><strong>Catálogo de recetas</strong><p className="muted">Selecciona un producto para preparar una nueva versión. La versión anterior permanece intacta.</p></div><span className="badge-neutral">{menu.length} productos</span></div>
+        <input className="buscador" placeholder="Buscar en el menú…" value={filtroMenu} onChange={(e) => setFiltroMenu(e.target.value)} />
         {menu.length === 0 && <p className="muted">Aún no hay recetas cargadas.</p>}
-        {menu.map((p) => {
+        {menu.filter((p) => p.nombre.toLowerCase().includes(filtroMenu.toLowerCase())).map((p) => {
           const r = p.recetas[0];
           const total = r?.lineas.reduce((s, l) => s + (l.costo_estimado ?? 0), 0) ?? null;
           return <div key={p.id} className="conteo-row" style={{ flexWrap: 'wrap', gap: '0.6rem' }}>
             <div style={{ flex: 1, minWidth: 220 }}><strong>{p.nombre}</strong><div className="muted">v{r?.version ?? '—'} · {r?.estado ?? 'sin receta'} · costo {mxn(total)}{r?.lineas.some((l) => l.falta_configuracion.length) ? ' · falta configuración de insumos' : ''}</div></div>
             <span className="muted">venta {mxn(p.precio_venta)}</span>
-            <button className="pill" onClick={() => copiarVersion(p)}>Nueva versión</button>
+            <button className="pill" onClick={() => copiarVersion(p)}>Editar receta</button>
           </div>;
         })}
       </div>
@@ -356,6 +356,7 @@ interface UnidadZona { id: number; zona_id: number; unidad_captura: string; fact
 interface Producto {
   id: number; nombre: string; store_id: number; store: string;
   base_qty: number; unit_cost: number | null; active: boolean; categoria_id: number | null; unidades: UnidadZona[];
+  categoria: string | null;
   unidad_base: string | null; contenido_compra: number | null; unidad_compra: string | null; rendimiento_util: number | null;
 }
 
@@ -365,8 +366,11 @@ function InventarioCfg() {
   const [zonas, setZonas] = useState<Zona[]>([]);
   const [categorias, setCategorias] = useState<CategoriaInv[]>([]);
   const [filtro, setFiltro] = useState('');
+  const [storeFilter, setStoreFilter] = useState<number | ''>('');
+  const [categoriaFilter, setCategoriaFilter] = useState<number | ''>('');
   const [mostrarInactivos, setMostrarInactivos] = useState(false);
   const [nuevoAbierto, setNuevoAbierto] = useState(false);
+  const [seleccionado, setSeleccionado] = useState<number | null>(null);
 
   const cargar = () => Promise.all([
     api<Producto[]>('/catalogo/products'),
@@ -379,28 +383,71 @@ function InventarioCfg() {
   const filtrados = useMemo(
     () => productos
       .filter((p) => mostrarInactivos || p.active)
-      .filter((p) => p.nombre.toLowerCase().includes(filtro.toLowerCase())),
-    [productos, filtro, mostrarInactivos],
+      .filter((p) => storeFilter === '' || p.store_id === storeFilter)
+      .filter((p) => categoriaFilter === '' || p.categoria_id === categoriaFilter)
+      .filter((p) => `${p.nombre} ${p.store} ${p.categoria ?? ''}`.toLowerCase().includes(filtro.toLowerCase())),
+    [productos, filtro, mostrarInactivos, storeFilter, categoriaFilter],
   );
+
+  useEffect(() => {
+    if (filtrados.length === 0) setSeleccionado(null);
+    else if (seleccionado == null || !filtrados.some((p) => p.id === seleccionado)) setSeleccionado(filtrados[0].id);
+  }, [filtrados, seleccionado]);
+
+  const productoSeleccionado = filtrados.find((p) => p.id === seleccionado) ?? null;
+  const recargar = () => { void cargar(); };
 
   return (
     <>
-      <CategoriasInvCfg categorias={categorias} onChange={cargar} />
-      <ZonasCfg zonas={zonas} onChange={cargar} />
+      <div className="config-intro resumen-card">
+        <div>
+          <strong>Productos e inventario</strong>
+          <p className="muted">Un solo lugar para cambiar nombre, tienda, mínimo y presentación. El sistema usa esos datos para convertir compras a la unidad FIFO y para mostrar el inventario en piezas.</p>
+        </div>
+        <div className="config-stats">
+          <span><b>{productos.filter((p) => p.active).length}</b> activos</span>
+          <span><b>{productos.filter((p) => p.unidad_base && p.contenido_compra).length}</b> con conversión</span>
+          <span><b>{productos.filter((p) => !p.unidad_base || !p.contenido_compra).length}</b> por configurar</span>
+        </div>
+      </div>
+      <details className="config-advanced">
+        <summary><strong>Catálogos auxiliares</strong><span className="muted">categorías, tiendas y zonas</span></summary>
+        <CategoriasInvCfg categorias={categorias} onChange={cargar} />
+        <ZonasCfg zonas={zonas} onChange={cargar} />
+      </details>
 
       <button className="btn-primary" style={{ marginBottom: '0.75rem' }} onClick={() => setNuevoAbierto((v) => !v)}>
         {nuevoAbierto ? 'Cerrar' : '+ Nuevo producto'}
       </button>
       {nuevoAbierto && <NuevoProducto stores={stores} categorias={categorias} onCreado={() => { setNuevoAbierto(false); cargar(); }} onNuevaTienda={cargar} />}
 
-      <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
-      <label className="kv" style={{ borderBottom: 'none', cursor: 'pointer' }}>
-        <span className="muted">Mostrar productos desactivados</span>
-        <input type="checkbox" style={{ minHeight: 'auto', width: 18, height: 18 }} checked={mostrarInactivos} onChange={(e) => setMostrarInactivos(e.target.checked)} />
-      </label>
+      <div className="product-filters">
+        <input className="buscador" placeholder="Buscar por producto, tienda o categoría…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
+        <select value={storeFilter} onChange={(e) => setStoreFilter(e.target.value === '' ? '' : Number(e.target.value))} aria-label="Filtrar por tienda">
+          <option value="">Todas las tiendas</option>
+          {stores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+        </select>
+        <select value={categoriaFilter} onChange={(e) => setCategoriaFilter(e.target.value === '' ? '' : Number(e.target.value))} aria-label="Filtrar por categoría">
+          <option value="">Todas las categorías</option>
+          {categorias.filter((c) => c.activo).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+        </select>
+        <label className="config-check"><input type="checkbox" checked={mostrarInactivos} onChange={(e) => setMostrarInactivos(e.target.checked)} /> <span>Incluir inactivos</span></label>
+      </div>
 
-      {filtrados.map((p) => <ProductoRow key={p.id} p={p} stores={stores} zonas={zonas} categorias={categorias} onChange={cargar} />)}
-      {filtrados.length === 0 && <p className="muted">Sin resultados.</p>}
+      <div className="product-editor">
+        <aside className="product-list" aria-label="Productos del catálogo">
+          <div className="product-list__head"><strong>Catálogo</strong><span className="muted">{filtrados.length} productos</span></div>
+          {filtrados.map((p) => <button type="button" key={p.id} className={`product-list__item ${p.id === seleccionado ? 'product-list__item--on' : ''}`} onClick={() => setSeleccionado(p.id)}>
+            <span className="product-list__name">{p.nombre} {!p.active && <span className="chip chip--warn">inactivo</span>}</span>
+            <span className="product-list__meta">{p.store}{p.categoria ? ` · ${p.categoria}` : ''}</span>
+            <span className="product-list__meta">mín. {p.base_qty} {p.unidad_compra ?? 'unidades'}</span>
+          </button>)}
+          {filtrados.length === 0 && <p className="muted product-list__empty">Sin resultados.</p>}
+        </aside>
+        <main className="product-detail">
+          {productoSeleccionado ? <ProductoEditorPanel key={productoSeleccionado.id} p={productoSeleccionado} stores={stores} zonas={zonas} categorias={categorias} onChange={recargar} /> : <div className="empty-state"><strong>Selecciona un producto</strong><p>Elige un producto del catálogo para editarlo.</p></div>}
+        </main>
+      </div>
     </>
   );
 }
@@ -466,6 +513,9 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
   const [categoriaId, setCategoriaId] = useState<number | ''>('');
   const [baseQty, setBaseQty] = useState('');
   const [costo, setCosto] = useState('');
+  const [unidadBase, setUnidadBase] = useState('');
+  const [contenidoCompra, setContenidoCompra] = useState('');
+  const [unidadCompra, setUnidadCompra] = useState('');
   const [error, setError] = useState('');
   const [nuevaTienda, setNuevaTienda] = useState('');
 
@@ -485,12 +535,23 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
         <input style={{ flex: 1 }} placeholder="Nueva tienda…" value={nuevaTienda} onChange={(e) => setNuevaTienda(e.target.value)} />
         <button className="btn-secondary" onClick={async () => { if (!nuevaTienda.trim()) return; await api('/catalogo/stores', { method: 'POST', body: { nombre: nuevaTienda.trim() } }); setNuevaTienda(''); onNuevaTienda(); }}>+ Tienda</button>
       </div>
-      <label className="muted">Mínimo de compra (presentaciones)
+      <div className="form-grid form-grid--three">
+      <label>Mínimo de compra (presentaciones)
         <input type="number" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} placeholder="0" />
       </label>
-      <label className="muted">Costo por unidad (opcional)
+      <label>Costo de la presentación (opcional)
         <input type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="—" />
       </label>
+      <label>Presentación de compra
+        <select value={unidadCompra} onChange={(e) => setUnidadCompra(e.target.value)}><option value="">Selecciona…</option>{PRESENTACIONES.map((u) => <option key={u} value={u}>{u}</option>)}</select>
+      </label>
+      <label>Unidad FIFO
+        <select value={unidadBase} onChange={(e) => setUnidadBase(e.target.value)}><option value="">Selecciona…</option>{UNIDADES_BASE.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}</select>
+      </label>
+      <label>Contenido por presentación
+        <input type="number" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" />
+      </label>
+      </div>
       {error && <p className="error-msg">{error}</p>}
       <button className="btn-primary" onClick={async () => {
         if (!nombre.trim() || storeId === '') { setError('Nombre y tienda son obligatorios.'); return; }
@@ -498,6 +559,9 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
           await api('/catalogo/products', { method: 'POST', body: {
             nombre: nombre.trim(), store_id: storeId, base_qty: Number(baseQty) || 0,
             unit_cost: costo === '' ? null : Number(costo),
+            unidad_base: unidadBase || null,
+            contenido_compra: contenidoCompra === '' ? null : Number(contenidoCompra),
+            unidad_compra: unidadCompra || null,
             categoria_id: categoriaId === '' ? null : categoriaId,
           } });
           onCreado();
@@ -507,8 +571,16 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
   );
 }
 
-function ProductoRow({ p, stores, zonas, categorias, onChange }: { p: Producto; stores: Store[]; zonas: Zona[]; categorias: CategoriaInv[]; onChange: () => void }) {
-  const [abierto, setAbierto] = useState(false);
+const UNIDADES_BASE = [
+  { value: 'g', label: 'gramos (g)' },
+  { value: 'ml', label: 'mililitros (ml)' },
+  { value: 'pieza', label: 'piezas' },
+  { value: 'unidad', label: 'unidades' },
+];
+const PRESENTACIONES = ['botella', 'caja', 'paquete', 'bolsa', 'pieza', 'rollo', 'bote', 'litro', 'kilogramo', 'unidad'];
+const UNIDADES_CAPTURA = ['botellas', 'cajas', 'paquetes', 'bolsas', 'piezas', 'rollos', 'botes', 'unidades'];
+
+function ProductoEditorPanel({ p, stores, zonas, categorias, onChange }: { p: Producto; stores: Store[]; zonas: Zona[]; categorias: CategoriaInv[]; onChange: () => void }) {
   const [nombre, setNombre] = useState(p.nombre);
   const [storeId, setStoreId] = useState(p.store_id);
   const [categoriaId, setCategoriaId] = useState<number | ''>(p.categoria_id ?? '');
@@ -519,87 +591,63 @@ function ProductoRow({ p, stores, zonas, categorias, onChange }: { p: Producto; 
   const [unidadCompra, setUnidadCompra] = useState(p.unidad_compra ?? '');
   const [rendimiento, setRendimiento] = useState(String(p.rendimiento_util ?? 1));
   const [ok, setOk] = useState(false);
+  const [error, setError] = useState('');
 
   async function guardar() {
-    await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: {
-      nombre: nombre.trim(), store_id: storeId, base_qty: Number(baseQty) || 0,
-      unit_cost: costo === '' ? null : Number(costo),
-      unidad_base: unidadBase === '' ? null : unidadBase,
-      contenido_compra: contenidoCompra === '' ? null : Number(contenidoCompra),
-      unidad_compra: unidadCompra.trim() || null,
-      rendimiento_util: Number(rendimiento) || 1,
-      categoria_id: categoriaId === '' ? null : categoriaId,
-    } });
-    setOk(true); setTimeout(() => setOk(false), 1200); onChange();
+    setError('');
+    if (!nombre.trim() || storeId <= 0) { setError('Nombre y tienda son obligatorios.'); return; }
+    if (unidadBase && (!contenidoCompra || Number(contenidoCompra) <= 0)) { setError('Indica el contenido por presentación para convertir compras a FIFO.'); return; }
+    try {
+      await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: {
+        nombre: nombre.trim(), store_id: storeId, base_qty: Number(baseQty) || 0,
+        unit_cost: costo === '' ? null : Number(costo),
+        unidad_base: unidadBase === '' ? null : unidadBase,
+        contenido_compra: contenidoCompra === '' ? null : Number(contenidoCompra),
+        unidad_compra: unidadCompra.trim() || null,
+        rendimiento_util: Number(rendimiento) || 1,
+        categoria_id: categoriaId === '' ? null : categoriaId,
+      } });
+      setOk(true); setTimeout(() => setOk(false), 1500); onChange();
+    } catch (e) { setError(e instanceof Error ? e.message : 'No se pudo guardar'); }
   }
 
   return (
-    <div className={`resumen-card ${p.active ? '' : 'is-inactive'}`} style={{ gap: '0.4rem' }}>
-      <div className="kv" style={{ borderBottom: 'none', cursor: 'pointer' }} onClick={() => setAbierto((v) => !v)}>
-        <strong>{p.nombre} {!p.active && <span className="chip chip--warn">inactivo</span>}</strong>
-        <span className="muted">mín {p.base_qty} {p.unidad_compra ?? 'presentaciones'} · {mxn(p.unit_cost)} · {p.store}</span>
-      </div>
-      {abierto && (
-        <>
-          <input value={nombre} onChange={(e) => setNombre(e.target.value)} />
-          <select value={storeId} onChange={(e) => setStoreId(Number(e.target.value))}>
-            {stores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-          </select>
-          <label className="muted">Categoría
+    <div className={`product-editor__panel ${p.active ? '' : 'is-inactive'}`}>
+      <div className="product-editor__title"><div><span className="eyebrow">Producto #{p.id}</span><h2>{p.nombre}</h2></div><span className={`chip ${p.active ? 'chip--ok' : 'chip--warn'}`}>{p.active ? 'Activo' : 'Inactivo'}</span></div>
+      <section className="product-editor__section"><h3>Identidad</h3><div className="form-grid form-grid--three">
+          <label>Nombre<input value={nombre} onChange={(e) => setNombre(e.target.value)} /></label>
+          <label>Tienda de compra<select value={storeId} onChange={(e) => setStoreId(Number(e.target.value))}>{stores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}</select></label>
+          <label>Categoría
             <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value === '' ? '' : Number(e.target.value))}>
               <option value="">— Sin categoría —</option>
               {categorias.filter((c) => c.activo || c.id === p.categoria_id).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
             </select>
           </label>
-          <label className="muted">Mínimo de compra (presentaciones)
-            <input type="number" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} />
-          </label>
-          <label className="muted">Costo por unidad
-            <input type="number" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="—" />
-          </label>
-          <div className="dia-section">Costeo por presentación</div>
-          <p className="muted">El costo de receta se calcula con el contenido comprado, no con el precio completo del paquete.</p>
-          <div className="row-actions" style={{ flexWrap: 'wrap' }}>
-            <label className="muted" style={{ flex: 1, minWidth: 130 }}>Unidad base
-              <select value={unidadBase} onChange={(e) => setUnidadBase(e.target.value)}>
-                <option value="">— Pendiente —</option><option value="g">gramos</option><option value="ml">mililitros</option><option value="pieza">pieza</option><option value="unidad">unidad</option>
-              </select>
-            </label>
-            <label className="muted" style={{ flex: 1, minWidth: 130 }}>Contenido compra
-              <input type="number" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" />
-            </label>
-            <label className="muted" style={{ flex: 1, minWidth: 130 }}>Presentación
-              <input value={unidadCompra} onChange={(e) => setUnidadCompra(e.target.value)} placeholder="botella, bolsa…" />
-            </label>
-            <label className="muted" style={{ flex: 1, minWidth: 130 }}>Rendimiento útil
-              <input type="number" min="0.01" max="1" step="0.01" value={rendimiento} onChange={(e) => setRendimiento(e.target.value)} />
-            </label>
-          </div>
-          <div className="row-actions">
-            <button className="btn-primary" style={{ flex: 1 }} onClick={guardar}>{ok ? 'Guardado ✓' : 'Guardar'}</button>
-            <button className="btn-secondary" onClick={async () => { await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: { active: !p.active } }); onChange(); }}>
-              {p.active ? 'Quitar' : 'Reactivar'}
-            </button>
-          </div>
-
-          <div className="dia-section">Cómo se cuenta en cada zona</div>
-          {zonas.map((z) => {
-            const u = p.unidades.find((x) => x.zona_id === z.id);
-            return <UnidadZonaRow key={z.id} productId={p.id} zona={z} unidad={u} onChange={onChange} />;
-          })}
-        </>
-      )}
+      </div></section>
+      <section className="product-editor__section"><h3>Compra y FIFO</h3><p className="muted">El mínimo se expresa en presentaciones. FIFO convierte cada presentación a la unidad base automáticamente.</p><div className="form-grid form-grid--four">
+        <label>Mínimo de compra<input type="number" min="0" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} /></label>
+        <label>Presentación<select value={unidadCompra} onChange={(e) => setUnidadCompra(e.target.value)}><option value="">Selecciona…</option>{PRESENTACIONES.map((u) => <option key={u} value={u}>{u}</option>)}</select></label>
+        <label>Contenido por presentación<input type="number" min="0" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" /></label>
+        <label>Costo presentación<input type="number" min="0" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="—" /></label>
+      </div><div className="form-grid form-grid--three">
+        <label>Unidad base FIFO<select value={unidadBase} onChange={(e) => setUnidadBase(e.target.value)}><option value="">Pendiente</option>{UNIDADES_BASE.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}</select></label>
+        <label>Rendimiento útil<input type="number" min="0.01" max="1" step="0.01" value={rendimiento} onChange={(e) => setRendimiento(e.target.value)} /><small className="field-help">1 = 100% aprovechable</small></label>
+        <div className="conversion-preview"><span>Conversión</span><strong>{contenidoCompra && unidadBase ? `1 ${unidadCompra || 'presentación'} = ${contenidoCompra} ${unidadBase}` : 'Falta configurar'}</strong><small>{costo && contenidoCompra ? `${mxn(Number(costo) / Number(contenidoCompra))} por ${unidadBase || 'unidad base'}` : 'Agrega costo y contenido'}</small></div>
+      </div></section>
+      <section className="product-editor__section"><h3>Cómo se cuenta</h3><p className="muted">Selecciona la unidad que verá el equipo en cada zona. El factor indica cuántas unidades base representa una captura.</p><div className="zone-editor">{zonas.map((z) => { const u = p.unidades.find((x) => x.zona_id === z.id); return <UnidadZonaRow key={z.id} productId={p.id} zona={z} unidad={u} onChange={onChange} />; })}</div></section>
+      {error && <p className="error-msg">{error}</p>}
+      <div className="product-editor__actions"><button className="btn-primary" onClick={guardar}>{ok ? 'Guardado ✓' : 'Guardar cambios'}</button><button className="btn-secondary" onClick={async () => { await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: { active: !p.active } }); onChange(); }}>{p.active ? 'Desactivar producto' : 'Reactivar producto'}</button></div>
     </div>
   );
 }
 
 function UnidadZonaRow({ productId, zona, unidad, onChange }: { productId: number; zona: Zona; unidad?: UnidadZona; onChange: () => void }) {
-  const [tipo, setTipo] = useState(unidad?.unidad_captura ?? 'unidad');
+  const [tipo, setTipo] = useState(unidad?.unidad_captura ?? 'unidades');
   const [factor, setFactor] = useState(String(unidad?.factor ?? 1));
   return (
     <div className="kv" style={{ borderBottom: 'none', gap: '0.4rem', flexWrap: 'wrap' }}>
       <span style={{ minWidth: 60 }}>{zona.nombre}</span>
-      <input value={tipo} onChange={(e) => setTipo(e.target.value)} placeholder="unidad" className="field-sm" style={{ flex: 1, minWidth: 90 }} />
+      <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="field-sm" style={{ flex: 1, minWidth: 110 }}>{!UNIDADES_CAPTURA.includes(tipo) && <option value={tipo}>{tipo}</option>}{UNIDADES_CAPTURA.map((u) => <option key={u} value={u}>{u}</option>)}</select>
       <span className="muted">×</span>
       <input type="number" inputMode="decimal" value={factor} onChange={(e) => setFactor(e.target.value)} className="field-sm" style={{ width: 70, textAlign: 'right' }} />
       <button className="pill" onClick={async () => {

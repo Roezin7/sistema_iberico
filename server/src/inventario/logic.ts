@@ -10,6 +10,72 @@ export interface LineaConteo {
   factor: number;
 }
 
+/** Unidades en las que se expresa el inventario y las recetas.
+ * Las presentaciones comerciales (botella, bolsa, paquete, caja, etc.)
+ * nunca deben convertirse en una unidad base distinta: se describen con
+ * `unidad_compra` y `contenido_compra`.
+ */
+export const UNIDADES_BASE_CANONICAS = ['g', 'ml', 'pieza'] as const;
+export type UnidadBaseCanonica = typeof UNIDADES_BASE_CANONICAS[number];
+
+/** Normaliza abreviaturas y unidades discretas a la unidad física base. */
+export function normalizarUnidadBase(value?: string | null): UnidadBaseCanonica | null {
+  const unidad = (value ?? '')
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .trim();
+  if (!unidad) return null;
+  if (/^(g|gramo|gramos|gr)$/.test(unidad)) return 'g';
+  if (/^(ml|mililitro|mililitros|cc)$/.test(unidad)) return 'ml';
+  if (/^(pieza|piezas|pz|pzas|unidad|unidades|ud|rollo|rollos|paquete|paquetes|pack|packs|bolsa|bolsas|caja|cajas|lata|latas)$/.test(unidad)) return 'pieza';
+  return null;
+}
+
+/**
+ * Unidad operativa que debe ver una persona al contar inventario.
+ *
+ * El libro interno sigue usando g/ml para recetas y FIFO, pero el conteo
+ * cotidiano se expresa en unidades físicas comprables: botellas, bolsas,
+ * paquetes o piezas. Para productos que ya son discretos conservamos pieza;
+ * para líquidos y graneles usamos la presentación configurada, sin mostrar su
+ * contenido en g/ml en la interfaz de inventario.
+ */
+export function unidadOperativaInventario(unidadBase?: string | null, unidadCompra?: string | null): string {
+  if (normalizarUnidadBase(unidadBase) === 'pieza') return 'pieza';
+  const texto = (unidadCompra ?? '').trim().toLowerCase();
+  if (!texto) return 'unidad';
+  const primera = texto.split(/\s|\(|\//)[0] ?? texto;
+  if (/^(g|gr|gramo|gramos|ml|cc|mililitro|mililitros)$/.test(primera)) return 'unidad';
+  return primera || 'unidad';
+}
+
+/** Convierte una existencia interna a la unidad física que se cuenta. */
+export function cantidadOperativaInventario(input: {
+  totalBase: number;
+  unidadBase?: string | null;
+  contenidoCompra?: number | null;
+}): number {
+  const total = Number(input.totalBase);
+  if (!Number.isFinite(total)) return 0;
+  if (normalizarUnidadBase(input.unidadBase) === 'pieza') return redondear(total);
+  const contenido = input.contenidoCompra == null ? null : Number(input.contenidoCompra);
+  if (contenido == null || !Number.isFinite(contenido) || contenido <= 0) return redondear(total);
+  return redondear(total / contenido);
+}
+
+/** Faltante expresado en unidades físicas, no en g/ml. */
+export function faltanteOperativoInventario(minimo: number, actual: number): number {
+  const min = Number(minimo);
+  const existencia = Number(actual);
+  if (!Number.isFinite(min) || !Number.isFinite(existencia)) return 0;
+  return redondear(Math.max(0, min - existencia));
+}
+
+export function unidadBaseCanonicaValida(value?: string | null): value is UnidadBaseCanonica {
+  return normalizarUnidadBase(value) != null;
+}
+
 /** Suma qty_captura * factor sobre todas las líneas/zonas de un producto. */
 export function totalBaseProducto(lineas: LineaConteo[]): number {
   return redondear(lineas.reduce((acc, l) => acc + l.qty_captura * l.factor, 0));
@@ -88,6 +154,11 @@ export interface ProductoFaltante {
   minimo_base?: number;
   total_base: number;
   faltante: number;
+  /** Valores para el operador: siempre en presentaciones/piezas físicas. */
+  unidad_operativa?: string;
+  minimo_operativo?: number;
+  total_operativo?: number;
+  faltante_operativo?: number;
   unit_cost: number | null;
   valor_faltante: number; // faltante * unit_cost (0 si sin costo)
   /** Costo de una unidad base (g, ml o pieza), no de la presentación. */

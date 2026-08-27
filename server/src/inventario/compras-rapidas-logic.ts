@@ -161,12 +161,18 @@ export function validarDiscrepanciasCompra(total: number, lineas: LineaCompraVal
       errores.push(discrepancia('CANTIDAD_BASE_INVALIDA', 'error', 'La cantidad base debe ser mayor que cero.', n, producto.name));
       return;
     }
+    const contenido = Number(linea.contenido_compra ?? producto.contenido_compra ?? 0);
     const unidadLinea = normalizarUnidad(linea.unidad_compra);
     const unidadProducto = normalizarUnidad(producto.unidad_base);
-    if (unidadLinea && unidadProducto && unidadLinea !== unidadProducto) {
-      advertencias.push(discrepancia('UNIDAD_INCOMPATIBLE', 'advertencia', `La línea usa ${unidadLinea} y el catálogo usa ${unidadProducto}.`, n, producto.name));
+    // Una diferencia entre presentación y unidad base es esperada (kg→g,
+    // botella→ml, caja→piezas). Sólo se marca como incompatible cuando no
+    // existe contenido de presentación ni una conversión directa conocida.
+    const convertibleDirecto = (unidadLinea === 'kg' && unidadProducto === 'g')
+      || (unidadLinea === 'l' && unidadProducto === 'ml')
+      || (unidadLinea === unidadProducto);
+    if (unidadLinea && unidadProducto && contenido <= 0 && !convertibleDirecto) {
+      advertencias.push(discrepancia('UNIDAD_INCOMPATIBLE', 'advertencia', `La línea usa ${unidadLinea} y el catálogo usa ${unidadProducto}; captura contenido de la presentación.`, n, producto.name));
     }
-    const contenido = Number(linea.contenido_compra ?? producto.contenido_compra ?? 0);
     if (contenido > 0 && Number.isFinite(contenido)) {
       const paquetes = cantidad / contenido;
       if (Math.abs(paquetes - Math.round(paquetes)) > 0.02) {

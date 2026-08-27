@@ -56,6 +56,7 @@ describe('reglas de discrepancias en tickets', () => {
     }], productos);
     expect(resultado.valida).toBe(true);
     expect(resultado.advertencias.some((d) => d.codigo === 'DESCRIPCION_PRODUCTO_NO_COINCIDE')).toBe(false);
+    expect(resultado.advertencias.some((d) => d.codigo === 'UNIDAD_INCOMPATIBLE')).toBe(false);
   });
 
   it('detecta un paquete mal convertido, como pan de cebolla', () => {

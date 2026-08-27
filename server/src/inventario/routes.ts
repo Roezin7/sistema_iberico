@@ -37,6 +37,7 @@ inventarioRouter.get(
 
 const conteoSchema = z.object({
   tipo: z.enum(['apertura', 'cierre', 'ajuste', 'conteo_operativo']).default('conteo_operativo'),
+  unidad_conteo: z.enum(['captura', 'operativa']).default('captura'),
   semana_id: z.coerce.number().int().positive().nullable().optional(),
   motivo: z.string().trim().max(500).nullable().optional(),
   nota: z.string().trim().max(1000).nullable().optional(),
@@ -61,6 +62,7 @@ inventarioRouter.post(
     }
     const r = await crearConteo(req.auth!.negocioId, body.lineas, {
       tipo: body.tipo,
+      unidad_conteo: body.unidad_conteo,
       semana_id: body.semana_id ?? null,
       motivo: body.motivo,
       nota: body.nota,
