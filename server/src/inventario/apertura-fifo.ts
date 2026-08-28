@@ -221,8 +221,8 @@ export async function prepararAperturaFifo(input: {
       creados.push(creado);
     }
     if (modo === 'normal' && !omitidos.size) {
-      await tx.inventario_semanal.update({
-        where: { semana_id: semana.id },
+      await tx.inventario_semanal.updateMany({
+        where: { semana_id: semana.id, negocio_id: input.negocioId },
         data: { apertura_origen: 'fifo_lotes_iniciales', apertura_valor: valor },
       });
     }

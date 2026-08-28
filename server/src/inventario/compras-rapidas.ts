@@ -248,12 +248,12 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     const dataCompra = { fecha_recepcion: fecha, proveedor: input.proveedor === undefined ? actual.proveedor : input.proveedor?.trim() || null, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref?.trim() || null, total, origen_pago_id: origen.id };
     await tx.purchases.update({ where: { id: purchaseId }, data: dataCompra });
     const invTotal = resumen.inventario; const gastoTotal = resumen.gasto; const descripcionBase = `Compra ticket ${dataCompra.ticket_ref ?? purchaseId}`;
-    const invMov = await tx.movimientos.findFirst({ where: { compra_id: purchaseId, tipo: 'compra_inventario' } });
+    const invMov = await tx.movimientos.findFirst({ where: { negocio_id: negocioId, compra_id: purchaseId, tipo: 'compra_inventario' } });
     if (invTotal > 0) {
       if (invMov) await tx.movimientos.update({ where: { id: invMov.id }, data: { monto: invTotal, fecha, semana_id: semanaNueva.id, ubicacion_origen_id: origen.id, facturado: origen.tipo === 'banco', descripcion: descripcionBase, usuario_id: usuarioId } });
       else await tx.movimientos.create({ data: { negocio_id: negocioId, semana_id: semanaNueva.id, fecha, tipo: 'compra_inventario', monto: invTotal, ubicacion_origen_id: origen.id, facturado: origen.tipo === 'banco', descripcion: descripcionBase, usuario_id: usuarioId, compra_id: purchaseId } });
     } else if (invMov) await tx.movimientos.delete({ where: { id: invMov.id } });
-    const gastoMov = await tx.movimientos.findFirst({ where: { compra_id: purchaseId, tipo: 'gasto' } });
+    const gastoMov = await tx.movimientos.findFirst({ where: { negocio_id: negocioId, compra_id: purchaseId, tipo: 'gasto' } });
     const categoria = gastoTotal > 0 ? await tx.categorias_gasto.findFirst({ where: { negocio_id: negocioId, nombre: 'Otros', activo: true }, select: { id: true } }) : null;
     if (gastoTotal > 0) {
       if (gastoMov) await tx.movimientos.update({ where: { id: gastoMov.id }, data: { monto: gastoTotal, fecha, semana_id: semanaNueva.id, ubicacion_origen_id: origen.id, categoria_id: categoria?.id ?? null, facturado: origen.tipo === 'banco', descripcion: `${descripcionBase} · gasto operativo`, usuario_id: usuarioId } });

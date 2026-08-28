@@ -192,6 +192,16 @@ const mov = (o: Partial<MovimientoPnl> & Pick<MovimientoPnl, 'fecha' | 'tipo' | 
 });
 
 describe('estadoResultadosMensual', () => {
+  it('prioriza el costo FIFO activo cuando el reporte lo recibe', () => {
+    const [fila] = estadoResultadosMensual(
+      ['2026-02'],
+      [{ fecha: '2026-02-10', tipo: 'venta_efectivo', monto: 1000, categoria: null, facturado: false }],
+      {},
+      { '2026-02': 275 },
+    );
+    expect(fila!.costo_ventas).toBe(275);
+    expect(fila!.costo_ventas_metodo).toBe('fifo');
+  });
   const movs: MovimientoPnl[] = [
     mov({ fecha: '2026-02-03', tipo: 'venta_efectivo', monto: 6000 }),
     mov({ fecha: '2026-02-04', tipo: 'venta_tarjeta', monto: 4000 }),

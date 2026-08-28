@@ -55,6 +55,9 @@ export interface ResumenInput {
 
 export interface ResumenSemana {
   ventasTotales: number;
+  /** Variación de saldos líquidos; no es utilidad contable. */
+  flujoCajaNeto: number;
+  /** Alias histórico de flujoCajaNeto para clientes antiguos. */
   utilidad: number;
   margen: number; // utilidad / ventas
   utilidadPct: number; // utilidad / compras_inventario
@@ -69,6 +72,7 @@ export function resumenSemana(i: ResumenInput): ResumenSemana {
   const tarjetaFacturable = redondear(i.ventaTarjeta + i.propinaTarjeta);
   return {
     ventasTotales,
+    flujoCajaNeto: utilidad,
     utilidad,
     margen: ventasTotales ? redondear(utilidad / ventasTotales) : 0,
     utilidadPct: i.comprasInventario ? redondear(utilidad / i.comprasInventario) : 0,
@@ -154,7 +158,7 @@ export interface FilaPnl {
   compras_inventario: number;
   variacion_inventario: number | null;
   costo_ventas: number;
-  costo_ventas_metodo: 'inventario' | 'compras';
+  costo_ventas_metodo: 'fifo' | 'inventario' | 'compras';
   utilidad_bruta: number;
   margen_bruto: number;
   sueldos: number;
@@ -183,15 +187,16 @@ function margen(utilidad: number, ventas: number): number {
  * Arma una fila de P&L por cada mes pedido. `movs` puede traer movimientos de
  * cualquier fecha: los que caen fuera de `meses` se ignoran.
  *
- * El costo de ventas usa la variación de inventario cuando hay snapshots que
- * enmarquen el mes (compras − lo que se quedó en el almacén); si no los hay
- * —el histórico no tiene inventario valuado— cae a las compras del mes y lo
- * declara en `costo_ventas_metodo`.
+ * El costo de ventas usa el ledger FIFO activo cuando el servicio entrega un
+ * valor para el mes. La variación física y las compras sólo son respaldos para
+ * periodos históricos sin consumos FIFO; el método queda declarado para que no
+ * se mezclen cifras de naturaleza distinta.
  */
 export function estadoResultadosMensual(
   meses: string[],
   movs: MovimientoPnl[],
   inventarioPorMes: Record<string, InventarioMes> = {},
+  costoVentasFifoPorMes: Record<string, number | null> = {},
 ): FilaPnl[] {
   const porMes = new Map<string, MovimientoPnl[]>(meses.map((m) => [m, []]));
   for (const m of movs) {
@@ -216,8 +221,13 @@ export function estadoResultadosMensual(
     const inv = inventarioPorMes[mes] ?? null;
     const variacion =
       inv && inv.inicial != null && inv.final != null ? redondear(inv.final - inv.inicial) : null;
-    // Compras que no se consumieron se quedan en el almacén: no son costo del mes.
-    const costoVentas = variacion == null ? compras : redondear(compras - variacion);
+    // Cuando existe ledger FIFO, éste es la única fuente del costo de ventas.
+    // La variación física queda como control, no como sustituto contable.
+    const tieneCostoFifo = Object.prototype.hasOwnProperty.call(costoVentasFifoPorMes, mes);
+    const costoFifo = costoVentasFifoPorMes[mes] ?? null;
+    const costoVentas = tieneCostoFifo
+      ? (costoFifo ?? 0)
+      : (variacion == null ? compras : redondear(compras - variacion));
     const utilidadBruta = redondear(ventasNetas - costoVentas);
 
     const sueldos = porTipo('sueldo');
@@ -248,7 +258,7 @@ export function estadoResultadosMensual(
       compras_inventario: compras,
       variacion_inventario: variacion,
       costo_ventas: costoVentas,
-      costo_ventas_metodo: variacion == null ? 'compras' : 'inventario',
+      costo_ventas_metodo: tieneCostoFifo ? 'fifo' : (variacion == null ? 'compras' : 'inventario'),
       utilidad_bruta: utilidadBruta,
       margen_bruto: margen(utilidadBruta, ventasTotal),
       sueldos,

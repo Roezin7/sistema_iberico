@@ -6,6 +6,7 @@ import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { costoLinea } from './costeo.js';
 import { consumirFIFO } from '../inventario/fifo.js';
+import { filtroConsumoFifoActivo } from '../inventario/fuentes.js';
 
 export const recetasRouter = Router();
 recetasRouter.use(requireAuth);
@@ -142,8 +143,7 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
     where: {
       negocio_id: req.auth!.negocioId,
       product_id: { in: productIds },
-      cantidad: { gt: 0 },
-      OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+      ...filtroConsumoFifoActivo(),
     },
     orderBy: [{ fecha: 'desc' }, { id: 'desc' }],
     select: { product_id: true, costo_unitario: true, fecha: true },

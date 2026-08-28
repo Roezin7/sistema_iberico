@@ -90,7 +90,7 @@ export async function crearCorreccionInventario(input: AjusteInput) {
       if (existente) return { id: Number(existente.id), repetida: true, ...await serializarAjuste(tx, existente.id) };
     }
 
-    const semanal = await tx.inventario_semanal.findUnique({ where: { semana_id: input.semanaId } });
+    const semanal = await tx.inventario_semanal.findFirst({ where: { semana_id: input.semanaId, negocio_id: input.negocioId } });
     if (!semanal?.cierre_snapshot_id) throw new HttpError(409, 'La semana debe tener un cierre físico para aplicar una corrección.');
     const semana = await tx.semanas.findFirst({ where: { id: input.semanaId, negocio_id: input.negocioId } });
     if (!semana) throw new HttpError(404, 'Semana no encontrada');
@@ -169,9 +169,9 @@ export async function crearCorreccionInventario(input: AjusteInput) {
       }
     }
 
-    await tx.inventario_semanal.update({ where: { semana_id: input.semanaId }, data: { cierre_snapshot_id: nuevo.id, cierre_valor: nuevoValor } });
+    await tx.inventario_semanal.updateMany({ where: { semana_id: input.semanaId, negocio_id: input.negocioId }, data: { cierre_snapshot_id: nuevo.id, cierre_valor: nuevoValor } });
     if (siguiente?.estado === 'abierta' && siguiente.inventario_semanal?.apertura_snapshot_id === semanal.cierre_snapshot_id) {
-      await tx.inventario_semanal.update({ where: { semana_id: siguiente.id }, data: { apertura_snapshot_id: nuevo.id, apertura_valor: nuevoValor, apertura_origen: 'correccion_cierre_semana_anterior' } });
+      await tx.inventario_semanal.updateMany({ where: { semana_id: siguiente.id, negocio_id: input.negocioId }, data: { apertura_snapshot_id: nuevo.id, apertura_valor: nuevoValor, apertura_origen: 'correccion_cierre_semana_anterior' } });
     }
     return { id: Number(ajuste.id), repetida: false, ...(await serializarAjuste(tx, ajuste.id)), nuevo_valor_cierre: nuevoValor };
   }, { timeout: 20000, maxWait: 15000 });

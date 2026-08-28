@@ -592,10 +592,11 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
     : utilidadBruta - r.comision_terminal_estimada - gastos - sueldos - propinasPagadas);
   const margenOperativo = utilidadOperativa == null || ventasOperativas === 0 ? null : utilidadOperativa / ventasOperativas;
   const inventarioCerrado = r.inventario.estado === 'cerrado' && r.inventario.cierre_valor != null;
-  const inventarioAlCorte = inventarioCerrado
-    ? Number(r.inventario.cierre_valor)
-    : Number(r.inventario.valor_fifo_corte);
-  const patrimonioOperativo = r.saldo_real_final_total + inventarioAlCorte;
+  // Patrimonio uses the same authoritative valuation as the API: cash plus
+  // the continuous FIFO ledger. The physical closing snapshot remains a
+  // control value and is shown separately below, never silently substituted.
+  const inventarioAlCorte = Number(r.inventario.valor_fifo_corte);
+  const patrimonioOperativo = Number(r.patrimonio_activos);
   const diferenciaCierreVsFifo = inventarioCerrado
     ? Math.round((r.inventario.valor_fifo_corte - Number(r.inventario.cierre_valor)) * 100) / 100
     : 0;
@@ -614,7 +615,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
       <div className="vision-grid">
         <section className="vision-card vision-card--cash">
           <div className="vision-card__head"><div><span className="vision-card__eyebrow">Flujo de caja</span><h3>Cambio de efectivo</h3></div><span className="vision-card__icon">$</span></div>
-          <strong className="vision-card__value">{mxn(r.utilidad)}</strong>
+          <strong className="vision-card__value">{mxn(r.flujo_caja_neto)}</strong>
           <p className="vision-card__definition">Dinero que entró o salió de banco y caja durante la semana.</p>
           <div className="vision-card__rows">
             {fila('Ventas registradas + propinas', mxn(r.ventas.total))}
@@ -644,12 +645,13 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         <div className="section-heading"><div><strong>Patrimonio operativo al corte</strong><p className="muted">La foto del negocio: dinero disponible más inventario, sin llamarlo utilidad.</p></div><span className="big-number">{mxn(patrimonioOperativo)}</span></div>
         <div className="patrimonio-grid">
           <div><small>Banco y caja</small><strong>{mxn(r.saldo_real_final_total)}</strong></div>
-          <div><small>{inventarioCerrado ? 'Inventario registrado al cierre' : 'FIFO del libro al corte'}</small><strong>{mxn(inventarioAlCorte)}</strong></div>
-          <div><small>Estado del inventario</small><strong>{inventarioCerrado ? 'Congelado' : 'En curso'}</strong></div>
+          <div><small>Inventario FIFO al corte</small><strong>{mxn(inventarioAlCorte)}</strong></div>
+          <div><small>Pasivos activos</small><strong>{mxn(r.pasivos_activos)}</strong></div>
+          <div><small>Patrimonio neto</small><strong>{mxn(r.patrimonio_neto)}</strong></div>
         </div>
         <p className="muted" style={{ margin: '0.8rem 0 0', fontSize: '0.82rem' }}>
           {inventarioCerrado
-            ? 'El patrimonio usa el valor guardado al cerrar esta semana; el FIFO vivo se muestra sólo como referencia independiente.'
+            ? 'El patrimonio usa dinero disponible más FIFO activo; el conteo físico de cierre se conserva como control independiente.'
             : 'El patrimonio usa el valor FIFO reconstruido al último día del periodo; todavía no hay un cierre físico registrado para esta semana.'}
         </p>
         {inventarioCerrado && Math.abs(diferenciaCierreVsFifo) > 0.01 && (
@@ -682,7 +684,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         {fila('Compras de la semana', mxn(r.inventario.compras))}
         {fila(inventarioCerrado ? 'Inventario registrado al cierre' : 'Inventario de cierre (pendiente)', mxn(r.inventario.cierre_valor))}
         {inventarioCerrado && Math.abs(diferenciaCierreVsFifo) > 0.01 && fila('FIFO vivo al corte (referencia)', mxn(r.inventario.valor_fifo_corte))}
-        {fila(r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' ? 'Costo de ventas FIFO en vivo' : 'Costo de ventas (apertura + compras − cierre)', mxn(r.inventario.costo_ventas))}
+        {fila(r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' ? 'Costo de ventas FIFO en vivo' : 'Costo de ventas FIFO pendiente', mxn(r.inventario.costo_ventas))}
         {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <div className="kv"><span className="muted">FIFO normal / excepciones</span><span>{mxn(r.inventario.control_fifo.costo_normal)} / {mxn(r.inventario.control_fifo.costo_excepcion)}</span></div>}
         {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>El valor del corte FIFO se reconstruye con los lotes que siguen abiertos; los lotes pasan a la siguiente semana sin reiniciarse.</p>}
         <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>

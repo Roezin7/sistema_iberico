@@ -51,8 +51,16 @@ export async function aplicarMapeoEpos(input: { negocioId: bigint; from?: Date; 
   for (const p of propuestas) {
     if (p.estado !== 'mapeado' || p.epos_product_id == null || p.menu_id == null) continue;
     if (p.menu_epos_product_id != null && p.menu_epos_product_id !== p.epos_product_id) continue;
-    await prisma.productos_menu.update({ where: { id: BigInt(p.menu_id) }, data: { epos_product_id: p.epos_product_id } });
-    aplicadas.push({ menu_id: p.menu_id, epos_product_id: p.epos_product_id });
+    const ocupado = await prisma.productos_menu.findFirst({
+      where: { negocio_id: input.negocioId, epos_product_id: p.epos_product_id, id: { not: BigInt(p.menu_id) } },
+      select: { id: true },
+    });
+    if (ocupado) continue;
+    const updated = await prisma.productos_menu.updateMany({
+      where: { id: BigInt(p.menu_id), negocio_id: input.negocioId, activo: true },
+      data: { epos_product_id: p.epos_product_id },
+    });
+    if (updated.count === 1) aplicadas.push({ menu_id: p.menu_id, epos_product_id: p.epos_product_id });
   }
   return { propuestas, aplicadas };
 }

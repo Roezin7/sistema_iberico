@@ -4,6 +4,7 @@ import { HttpError } from '../middleware/error.js';
 import { convertirCantidad } from '../recetas/costeo.js';
 import { consumirFIFO } from './fifo.js';
 import { normalizarNombreEpos } from '../epos/mapeo-menu.js';
+import { filtroConsumoFifoActivo } from './fuentes.js';
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
@@ -73,8 +74,7 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
       where: {
         negocio_id: negocioId,
         epos_venta_id: venta.id,
-        cantidad: { gt: 0 },
-        OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+        ...filtroConsumoFifoActivo(),
       },
       select: { id: true },
     });
@@ -173,8 +173,7 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
     where: {
       negocio_id: negocioId,
       epos_venta_id: { in: ventas.map((venta) => venta.id) },
-      cantidad: { gt: 0 },
-      OR: [{ fuente: { startsWith: 'venta_fifo_vivo' } }, { fuente: 'venta_receta' }],
+      ...filtroConsumoFifoActivo(),
     },
     select: { epos_venta_id: true },
   });
@@ -228,23 +227,45 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
     const costeables = planes.filter(({ plan }) => plan.estado === 'costeable');
     const excepciones = planes.filter(({ plan }) => plan.estado === 'excepcion');
     const pendientes = planes.filter(({ plan }) => plan.estado === 'pendiente');
-    const lotes = new Map<string, number>();
-    for (const { plan } of costeables) {
-      for (const consumo of plan.consumos) lotes.set(consumo.loteId.toString(), (lotes.get(consumo.loteId.toString()) ?? 0) + consumo.cantidad);
-    }
-    const consumos = costeables.flatMap(({ venta, plan }) => plan.consumos.map((consumo) => ({
-      negocio_id: input.negocioId,
-      product_id: consumo.productId,
-      lote_id: consumo.loteId,
-      epos_venta_id: venta.id,
-      fecha: venta.fecha,
-      cantidad: consumo.cantidad,
-      costo_unitario: consumo.costoUnitario,
-      costo_total: consumo.costoTotal,
-      fuente: modo === 'historico_prueba' ? 'venta_receta_historica' : 'venta_receta',
-    })));
+    let costeablesNuevas = costeables;
+    let consumos: Prisma.inventory_consumptionsCreateManyInput[] = [];
+    let lotes = new Map<string, number>();
 
     await prisma.$transaction(async (tx) => {
+      // Idempotencia fuerte: bloqueamos las ventas antes de volver a leer el
+      // ledger. Dos sincronizaciones concurrentes no pueden consumir dos veces
+      // los mismos lotes aunque ambas hayan planificado fuera de la transacción.
+      const idsVenta = costeables.map(({ venta }) => venta.id);
+      if (idsVenta.length) {
+        await tx.$queryRaw(Prisma.sql`SELECT id FROM epos_ventas WHERE negocio_id = ${input.negocioId} AND id IN (${Prisma.join(idsVenta)}) FOR UPDATE`);
+        const existentes = await tx.inventory_consumptions.findMany({
+          where: { negocio_id: input.negocioId, epos_venta_id: { in: idsVenta }, ...filtroConsumoFifoActivo() },
+          select: { epos_venta_id: true },
+        });
+        const yaCosteadas = new Set(existentes.flatMap((row) => row.epos_venta_id == null ? [] : [row.epos_venta_id.toString()]));
+        costeablesNuevas = costeables.filter(({ venta }) => !yaCosteadas.has(venta.id.toString()));
+        for (const { venta, plan } of costeables) {
+          if (yaCosteadas.has(venta.id.toString())) {
+            plan.estado = 'ya_costeada';
+            plan.costoTotal = 0;
+            plan.consumos = [];
+          }
+        }
+      }
+      for (const { plan } of costeablesNuevas) {
+        for (const consumo of plan.consumos) lotes.set(consumo.loteId.toString(), (lotes.get(consumo.loteId.toString()) ?? 0) + consumo.cantidad);
+      }
+      consumos = costeablesNuevas.flatMap(({ venta, plan }) => plan.consumos.map((consumo) => ({
+        negocio_id: input.negocioId,
+        product_id: consumo.productId,
+        lote_id: consumo.loteId,
+        epos_venta_id: venta.id,
+        fecha: venta.fecha,
+        cantidad: consumo.cantidad,
+        costo_unitario: consumo.costoUnitario,
+        costo_total: consumo.costoTotal,
+        fuente: modo === 'historico_prueba' ? 'venta_receta_historica' : 'venta_receta',
+      })));
       if (lotes.size) {
         const entradas = [...lotes.entries()];
         const params = entradas.flatMap(([id, cantidad]) => [id, cantidad]);
@@ -261,9 +282,9 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
         await tx.$executeRawUnsafe(`UPDATE inventory_lots SET estado = 'agotado' WHERE negocio_id = $1::bigint AND id IN (${ids}) AND cantidad_restante <= 0`, input.negocioId.toString());
       }
       if (consumos.length) await tx.inventory_consumptions.createMany({ data: consumos });
-      if (costeables.length) {
-        const params = costeables.flatMap(({ venta, plan }) => [venta.id.toString(), plan.costoTotal]);
-        const values = costeables.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::numeric)`).join(',');
+      if (costeablesNuevas.length) {
+        const params = costeablesNuevas.flatMap(({ venta, plan }) => [venta.id.toString(), plan.costoTotal]);
+        const values = costeablesNuevas.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::numeric)`).join(',');
         await tx.$executeRawUnsafe(
           `UPDATE epos_ventas AS e SET costo_fifo = v.costo, costeo_estado = 'costeada', costeo_error = NULL, costeado_at = NOW()
            FROM (VALUES ${values}) AS v(id, costo) WHERE e.id = v.id AND e.negocio_id = $${params.length + 1}::bigint`,
@@ -388,7 +409,7 @@ export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date, modo
     .flatMap((productId) => seleccionarLotesOperativos(lotes.filter((lote) => lote.product_id.toString() === productId), modo));
   if (!lotesSeleccionados.length) return { valor: 0, unidades: 0, lotes: 0 };
   const consumos = await prisma.inventory_consumptions.findMany({
-    where: { negocio_id: negocioId, fecha: { lte: fechaCorte }, lote_id: { in: lotesSeleccionados.map((lote) => lote.id) } },
+    where: { negocio_id: negocioId, fecha: { lte: fechaCorte }, lote_id: { in: lotesSeleccionados.map((lote) => lote.id) }, ...filtroConsumoFifoActivo({ incluirAjustes: true }) },
     select: { lote_id: true, cantidad: true },
   });
   const consumido = new Map<string, number>();

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { consumirVentasEpos } from '../inventario/consumo-epos.js';
+import { aplicarMapeoEpos } from './mapeo-menu.js';
 import {
   buildReconcilePreview,
   fetchReconcileData,
@@ -131,6 +132,10 @@ export async function importarVentasEpos(input: {
     confirmar: true,
     modo: 'normal',
   });
+  // Cada sincronización completa las asociaciones determinísticas por ID y
+  // nombre. Los productos ambiguos permanecen visibles en la auditoría y no
+  // se asignan de forma silenciosa.
+  const mapeo = await aplicarMapeoEpos({ negocioId: input.negocioId, from: fromDate, to: toDate });
 
   return {
     ...preview, persistido: true, importacion_id: Number(result.importacion.id),
@@ -142,6 +147,7 @@ export async function importarVentasEpos(input: {
       pendientes: costeoEnVivo.pendientes,
       costo_fifo: costeoEnVivo.costo_fifo,
     },
+    mapeo_epos: { aplicadas: mapeo.aplicadas.length, sin_mapeo: mapeo.propuestas.filter((p) => p.estado === 'sin_mapeo').length },
     nota: 'Las ventas se costean automáticamente contra el libro FIFO abierto; sólo quedan pendientes las recetas o productos que requieren revisión.',
   };
 }

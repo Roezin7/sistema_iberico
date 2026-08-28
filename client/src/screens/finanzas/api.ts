@@ -28,6 +28,10 @@ export interface Resumen {
   ventas: { efectivo: number; tarjeta: number; propinas: number; total: number };
   comision_terminal_estimada: number;
   compras_inventario: number;
+  flujo_caja_neto: number;
+  patrimonio_activos: number;
+  pasivos_activos: number;
+  patrimonio_neto: number;
   utilidad: number; margen: number; utilidad_pct: number;
   ventas_operativas: number | null;
   utilidad_bruta: number | null;
@@ -39,7 +43,7 @@ export interface Resumen {
   inventario: {
     apertura_snapshot_id: number | null; cierre_snapshot_id: number | null;
     apertura_valor: number | null; compras: number; cierre_valor: number | null;
-    costo_ventas: number | null; costo_ventas_fuente: 'ledger_fifo_en_vivo' | 'conciliacion_inventario';
+    costo_ventas: number | null; costo_ventas_fuente: 'ledger_fifo_en_vivo' | 'pendiente_fifo';
     valor_fifo_corte: number; unidades_fifo_corte: number;
     control_fifo: {
       costo_movimientos_activos: number | null; costo_reversiones_historial: number;

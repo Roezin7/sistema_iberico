@@ -164,7 +164,7 @@ export async function crearSnapshotConsolidado(
  * separado, agregado por producto. Volver a contar una zona reemplaza SOLO esa
  * zona: no borra lo ya contado en las demás.
  */
-export async function inventarioActual(negocioId: bigint): Promise<InventarioActual> {
+export async function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date } = {}): Promise<InventarioActual> {
   const [productos, snaps, lotes] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
@@ -172,7 +172,11 @@ export async function inventarioActual(negocioId: bigint): Promise<InventarioAct
       orderBy: { name: 'asc' },
     }),
     prisma.inventory_snapshot.findMany({
-      where: { negocio_id: negocioId },
+      where: {
+        negocio_id: negocioId,
+        ...(options.semanaId != null ? { semana_id: options.semanaId } : {}),
+        ...(options.hasta ? { created_at: { lte: options.hasta } } : {}),
+      },
       select: { id: true, created_at: true, tipo: true, semana_id: true },
     }),
     prisma.inventory_lots.findMany({
@@ -497,8 +501,8 @@ export async function crearConteo(
     // usuario necesita corregirlos, debe usar un ajuste documentado; de esa
     // forma nunca queda ambiguo qué conteo alimenta el FIFO de la semana.
     if (metadata.semana_id != null && (metadata.tipo === 'apertura' || metadata.tipo === 'cierre')) {
-      const semanal = await tx.inventario_semanal.findUnique({
-        where: { semana_id: BigInt(metadata.semana_id) },
+      const semanal = await tx.inventario_semanal.findFirst({
+        where: { semana_id: BigInt(metadata.semana_id), negocio_id: negocioId },
         select: { apertura_snapshot_id: true, cierre_snapshot_id: true },
       });
       const existente = metadata.tipo === 'apertura' ? semanal?.apertura_snapshot_id : semanal?.cierre_snapshot_id;
