@@ -14,6 +14,7 @@ import {
   faltanteOperativoInventario,
   normalizarUnidadBase,
   unidadOperativaInventario,
+  seleccionarExistenciaOperativa,
   type ProductoFaltante,
 } from './logic.js';
 
@@ -46,6 +47,16 @@ export interface ProductoActual {
   cantidad_con_lote: number;
   /** Parte del conteo físico sin lote; se valora al catálogo y requiere conciliación. */
   cantidad_sin_lote: number;
+  /** Saldo en unidad base de los lotes FIFO abiertos (compras menos consumos). */
+  cantidad_fifo_base: number | null;
+  /** Saldo FIFO convertido a la unidad que ve el operador. */
+  cantidad_fifo_operativa: number | null;
+  /** Valor de todos los lotes FIFO abiertos, sin truncarlo al conteo físico. */
+  valor_fifo_actual: number | null;
+  /** Existencia recomendada para operación: FIFO si existe, físico si no. */
+  existencia_actual_base: number;
+  existencia_actual_operativa: number;
+  fuente_existencia_actual: 'fifo' | 'fisico';
   fuente_valoracion: 'fifo' | 'catalogo' | 'mixta' | 'sin_costo';
   valor: number;
   categoria_id: number | null;
@@ -62,6 +73,9 @@ export interface InventarioActual {
   valor_total: number;
   valor_fifo_total: number;
   valor_catalogo_total: number;
+  /** Valuación del saldo FIFO operativo actual (no del último conteo). */
+  valor_fifo_actual_total: number;
+  fuente_existencia_actual: 'fifo' | 'fisico' | 'mixta';
   sin_costo: { product_id: number; nombre: string }[];
 }
 
@@ -164,7 +178,7 @@ export async function crearSnapshotConsolidado(
  * separado, agregado por producto. Volver a contar una zona reemplaza SOLO esa
  * zona: no borra lo ya contado en las demás.
  */
-export async function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date } = {}): Promise<InventarioActual> {
+export async function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
   const [productos, snaps, lotes] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
@@ -180,7 +194,12 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       select: { id: true, created_at: true, tipo: true, semana_id: true },
     }),
     prisma.inventory_lots.findMany({
-      where: { negocio_id: negocioId, estado: 'abierto', cantidad_restante: { gt: 0 } },
+      where: {
+        negocio_id: negocioId,
+        estado: 'abierto',
+        cantidad_restante: { gt: 0 },
+        ...(options.hasta ? { recibido_at: { lte: options.hasta } } : {}),
+      },
       select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true },
       orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
     }),
@@ -276,6 +295,21 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const valorCatalogo = valorProducto(totalBase, unitCostBase);
     const valorado = valorarFisicoConLotes(totalBase, lotesProducto, unitCostBase);
     const cantidadesLotes = lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante), 0);
+    const existenciaOperativa = seleccionarExistenciaOperativa({
+      fisicoBase: totalBase,
+      fifoBase: cantidadesLotes,
+      tieneLotes: lotesProducto.length > 0,
+    });
+    const cantidadFifoOperativa = lotesProducto.length
+      ? cantidadOperativaInventario({
+          totalBase: cantidadesLotes,
+          unidadBase: p.unidad_base,
+          contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
+        })
+      : null;
+    const valorFifoActual = lotesProducto.length
+      ? Math.round(lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) * 100) / 100
+      : null;
     const costoFifoBase = cantidadesLotes > 0
       ? lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) / cantidadesLotes
       : null;
@@ -311,6 +345,16 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       costo_fifo_base: costoFifoBase == null ? null : Math.round(costoFifoBase * 1_000_000) / 1_000_000,
       cantidad_con_lote: Math.round(valorado.consumido * 1_000_000) / 1_000_000,
       cantidad_sin_lote: Math.round(Math.max(0, totalBase - valorado.consumido) * 1_000_000) / 1_000_000,
+      cantidad_fifo_base: lotesProducto.length ? Math.round(cantidadesLotes * 1_000_000) / 1_000_000 : null,
+      cantidad_fifo_operativa: cantidadFifoOperativa,
+      valor_fifo_actual: valorFifoActual,
+      existencia_actual_base: existenciaOperativa.base,
+      existencia_actual_operativa: cantidadOperativaInventario({
+        totalBase: existenciaOperativa.base,
+        unidadBase: p.unidad_base,
+        contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
+      }),
+      fuente_existencia_actual: existenciaOperativa.fuente,
       fuente_valoracion: valorado.fuente,
       valor: Math.round(valorado.valor * 100) / 100,
       categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
@@ -328,6 +372,8 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
   const valorTotal = Math.round(result.reduce((a, p) => a + p.valor, 0) * 100) / 100;
   const valorFifoTotal = Math.round(result.reduce((a, p) => a + p.valor_fifo, 0) * 100) / 100;
   const valorCatalogoTotal = Math.round(result.reduce((a, p) => a + p.valor_catalogo, 0) * 100) / 100;
+  const valorFifoActualTotal = Math.round(result.reduce((a, p) => a + (p.valor_fifo_actual ?? p.valor_fifo), 0) * 100) / 100;
+  const fuentes = new Set(result.map((p) => p.fuente_existencia_actual));
 
   return {
     snapshot_id: snapIdActual != null ? Number(snapIdActual) : null,
@@ -340,6 +386,8 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     valor_total: valorTotal,
     valor_fifo_total: valorFifoTotal,
     valor_catalogo_total: valorCatalogoTotal,
+    valor_fifo_actual_total: valorFifoActualTotal,
+    fuente_existencia_actual: fuentes.size === 1 ? [...fuentes][0]! : 'mixta',
     sin_costo: sinCosto,
   };
 }
@@ -369,14 +417,16 @@ export async function listarSnapshots(
 
 /** Lista de compras: faltantes (base_qty - total_base) agrupados por tienda. */
 export async function listaCompras(negocioId: bigint) {
-  const actual = await inventarioActual(negocioId);
+  const actual = await inventarioActual(negocioId, { vista: 'operativa' });
   const faltantes: ProductoFaltante[] = actual.productos.map((p) => {
     // `base_qty` es el mínimo configurado en presentaciones de compra
     // (botellas, bolsas, paquetes, etc.). El conteo ya está normalizado a la
     // unidad base, por lo que primero convertimos el mínimo al mismo espacio.
     const minimoBase = p.minimo_base;
-    const faltante = faltanteCompra(minimoBase, p.total_base);
-    const faltanteOperativo = faltanteOperativoInventario(p.minimo_operativo, p.total_operativo);
+    const existenciaBaseActual = p.existencia_actual_base;
+    const existenciaOperativaActual = p.existencia_actual_operativa;
+    const faltante = faltanteCompra(minimoBase, existenciaBaseActual);
+    const faltanteOperativo = faltanteOperativoInventario(p.minimo_operativo, existenciaOperativaActual);
     const presentaciones = presentacionesNecesarias(faltante, p.contenido_compra);
     return {
       product_id: p.product_id,
@@ -390,6 +440,9 @@ export async function listaCompras(negocioId: bigint) {
       unidad_operativa: p.unidad_operativa,
       minimo_operativo: p.minimo_operativo,
       total_operativo: p.total_operativo,
+      existencia_actual_base: existenciaBaseActual,
+      existencia_actual_operativa: existenciaOperativaActual,
+      fuente_existencia_actual: p.fuente_existencia_actual,
       faltante_operativo: faltanteOperativo,
       unit_cost: p.unit_cost,
       unit_cost_base: p.unit_cost_base,

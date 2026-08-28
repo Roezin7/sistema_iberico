@@ -11,6 +11,7 @@ import {
   unidadOperativaInventario,
   cantidadOperativaInventario,
   faltanteOperativoInventario,
+  seleccionarExistenciaOperativa,
   type ProductoFaltante,
 } from './logic.js';
 import { costoUnitarioBaseDesdeCatalogo, conversionAperturaDesdeCatalogo } from './apertura-fifo.js';
@@ -52,6 +53,18 @@ describe('unidades base canónicas', () => {
     expect(cantidadOperativaInventario({ totalBase: 70, unidadBase: 'pieza', contenidoCompra: 14 })).toBe(70);
     expect(faltanteOperativoInventario(4, 2)).toBe(2);
     expect(faltanteOperativoInventario(4, 5)).toBe(0);
+  });
+});
+
+describe('existencia operativa FIFO', () => {
+  it('usa el saldo FIFO sin sumar de nuevo el conteo físico', () => {
+    expect(seleccionarExistenciaOperativa({ fisicoBase: 100, fifoBase: 148, tieneLotes: true }))
+      .toEqual({ base: 148, fuente: 'fifo' });
+  });
+
+  it('usa el conteo físico cuando todavía no hay lotes FIFO', () => {
+    expect(seleccionarExistenciaOperativa({ fisicoBase: 12, fifoBase: null, tieneLotes: false }))
+      .toEqual({ base: 12, fuente: 'fisico' });
   });
 });
 

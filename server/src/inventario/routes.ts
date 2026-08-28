@@ -14,11 +14,11 @@ export const inventarioRouter = Router();
 // Inventario y tareas son accesibles para admin y empleado.
 inventarioRouter.use(requireAuth);
 
-/** GET /inventario/current — total base por producto + valor de inventario. */
+/** GET /inventario/current — conteo físico y existencia operativa FIFO actual. */
 inventarioRouter.get(
   '/current',
   asyncHandler(async (req, res) => {
-    res.json(await inventarioActual(req.auth!.negocioId));
+    res.json(await inventarioActual(req.auth!.negocioId, { vista: 'operativa' }));
   }),
 );
 

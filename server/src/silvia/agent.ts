@@ -29,7 +29,7 @@ Reglas:
 - Piensa como negocio de bar en México: margen, rotación de inventario, comisión de terminal (1.99%), control de efectivo y faltantes, costos de cerveza/licor, propinas, sueldos.
 - Tienes acceso al inventario detallado y actualizado mediante consultar_inventario. Úsala siempre que pregunten por productos, categorías, tiendas, zonas, faltantes, excedentes, compras o capital parado. Aplica exactamente filtros como "sin alcohol" y no afirmes que falta el desglose sin consultar primero.
 - Tienes el estado de resultados mes a mes mediante estado_resultados, con historia desde julio 2025. Úsala siempre que pregunten por P&L, utilidad, rentabilidad, márgenes, costos, gastos o cómo va el negocio contra meses anteriores; el contexto de abajo sólo trae las últimas semanas, así que no respondas de memoria ni digas que no hay histórico sin consultar. Lee las notas que devuelve y respeta lo que dicen sobre meses parciales, propinas y el método del costo de ventas.
-- Para inventario, "capital parado" es el valor a costo de existencias que exceden el nivel objetivo en unidad base (minimo_base): max(total_base - minimo_base, 0) × costo por unidad base. Distingue ese excedente del valor total existente y aclara cuando un producto no tenga costo o categoría.
+- Para inventario, "capital parado" es el valor a costo de la existencia operativa FIFO que excede el nivel objetivo en unidad base (minimo_base): max(existencia_actual_base - minimo_base, 0) × costo por unidad base. Distingue ese excedente del valor total existente y aclara cuando un producto no tenga costo o categoría.
 - Si detectas algo relevante y duradero del negocio (un patrón, una decisión, una preferencia, el efecto de un cambio), guárdalo con la herramienta recordar_aprendizaje para recordarlo en el futuro. No guardes trivialidades ni datos que ya están en los números.
 - Toma en cuenta los eventos y aprendizajes previos (memoria) para dar continuidad: si el dueño hizo un cambio, evalúa su efecto.
 - Responde en Markdown breve. Usa viñetas para las acciones. Nada de saludos largos ni disculpas.
@@ -157,20 +157,21 @@ async function loopHerramientas(
 
         if (block.name === 'consultar_inventario') {
           const [inv, compras] = await Promise.all([
-            inventarioActual(negocioId),
+            inventarioActual(negocioId, { vista: 'operativa' }),
             listaCompras(negocioId),
           ]);
           const productos = inv.productos.map((p) => {
-            const excedente = Math.max(p.total_base - p.minimo_base, 0);
-            const faltante = Math.max(p.minimo_base - p.total_base, 0);
+            const existenciaActual = p.existencia_actual_base;
+            const excedente = Math.max(existenciaActual - p.minimo_base, 0);
+            const faltante = Math.max(p.minimo_base - existenciaActual, 0);
             return {
               producto: p.nombre,
               categoria: p.categoria,
               tienda: p.store,
               objetivo: p.minimo_base,
-              existencia: p.total_base,
+              existencia: existenciaActual,
               costo_unitario: p.unit_cost,
-              valor_existente: p.valor,
+              valor_existente: p.valor_fifo_actual ?? p.valor,
               excedente,
               capital_parado: p.unit_cost == null ? null : Math.round(excedente * p.unit_cost * 100) / 100,
               faltante,

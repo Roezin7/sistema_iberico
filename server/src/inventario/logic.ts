@@ -72,6 +72,29 @@ export function faltanteOperativoInventario(minimo: number, actual: number): num
   return redondear(Math.max(0, min - existencia));
 }
 
+/**
+ * Selecciona la existencia que debe ver la operación.
+ *
+ * El conteo físico sigue siendo la referencia para conciliación, pero cuando
+ * existen lotes FIFO abiertos éstos representan el saldo operativo vigente
+ * (incluyen compras recientes y consumos ya aplicados). Nunca se suman ambos:
+ * el lote de apertura ya nació del conteo físico y sumarlo de nuevo duplicaría
+ * existencias.
+ */
+export function seleccionarExistenciaOperativa(input: {
+  fisicoBase: number;
+  fifoBase?: number | null;
+  tieneLotes: boolean;
+}): { base: number; fuente: 'fifo' | 'fisico' } {
+  const fisico = Number(input.fisicoBase);
+  const fallback = Number.isFinite(fisico) ? Math.max(0, fisico) : 0;
+  const fifo = input.fifoBase == null ? null : Number(input.fifoBase);
+  if (input.tieneLotes && fifo != null && Number.isFinite(fifo) && fifo >= 0) {
+    return { base: redondear(fifo), fuente: 'fifo' };
+  }
+  return { base: redondear(fallback), fuente: 'fisico' };
+}
+
 export function unidadBaseCanonicaValida(value?: string | null): value is UnidadBaseCanonica {
   return normalizarUnidadBase(value) != null;
 }
@@ -158,6 +181,9 @@ export interface ProductoFaltante {
   unidad_operativa?: string;
   minimo_operativo?: number;
   total_operativo?: number;
+  existencia_actual_base?: number;
+  existencia_actual_operativa?: number;
+  fuente_existencia_actual?: 'fifo' | 'fisico';
   faltante_operativo?: number;
   unit_cost: number | null;
   valor_faltante: number; // faltante * unit_cost (0 si sin costo)
