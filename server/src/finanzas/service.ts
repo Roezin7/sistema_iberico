@@ -1146,7 +1146,12 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
   // La semana debe tener una apertura congelada antes de registrar su cierre.
   await asegurarInventarioSemanal(negocioId, semanaId);
 
-  const limiteSnapshot = new Date(`${iso(semana.fecha_fin)}T23:59:59.999Z`);
+  // Los snapshots se crean con un instante real (timestamptz), mientras que
+  // `fecha_fin` representa el domingo civil de la operación en México. El
+  // domingo termina a las 06:00Z del lunes siguiente; usar 23:59Z del domingo
+  // excluía conteos capturados el domingo por la noche (que aparecen como
+  // lunes en UTC) y hacía que el cierre no encontrara el inventario físico.
+  const limiteSnapshot = rangoEposSemana(semana.fecha_inicio, semana.fecha_fin).fin;
   const [ubicaciones, banco, inventarioSemana, fifoCorte] = await Promise.all([
     prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true } }),
     prisma.ubicaciones_fondos.findFirst({ where: { negocio_id: negocioId, tipo: 'banco' }, orderBy: { id: 'asc' } }),

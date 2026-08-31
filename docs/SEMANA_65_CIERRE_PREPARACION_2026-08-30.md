@@ -131,3 +131,32 @@ La consulta productiva quedó validada con el rango local de la semana 65
 (24–30 agosto, zona operativa de México). Antes de cerrar, se debe volver a
 ejecutar la conciliación para comprobar cuánto del lote 407 fue consumido y si
 el snapshot físico confirma o contradice los 8 L registrados en la apertura.
+
+## Actualización — conteo de cierre enlazado
+
+El conteo físico que se realizó el domingo ya estaba guardado en producción:
+
+- snapshot **60**, tipo `cierre`, semana 65;
+- creado el 30 de agosto a las 20:50 hora de México;
+- 152 líneas capturadas;
+- valor físico calculado: **$35,237.42**.
+
+El snapshot quedó enlazado a `inventario_semanal` de la semana 65 y se guardó el
+valor de cierre sin cerrar todavía la semana. Se corrigió además el límite de
+fecha del cierre: ahora considera el domingo operativo completo hasta las
+06:00 UTC del lunes. Esto evita excluir conteos nocturnos por el cambio de zona
+horaria.
+
+### Domingo 30: estado de ventas y gastos
+
+- Ya existe una línea Epos local del domingo por **$300.00**, 3 unidades de
+  `CBA Doble D`, costeada contra FIFO por **$215.6143**. La importación diaria
+  posterior fue idempotente y recibió cero filas, por lo que no se duplicó esa
+  venta.
+- No hay movimientos de gastos ni sueldos registrados para el 30 de agosto.
+- La conciliación diaria del domingo permanece en `revision`, con Epos tarjeta
+  por $300.00; todavía requiere confirmación humana.
+
+No se añadió ningún gasto ni venta supuesto. Antes de cerrar la semana 65 se
+debe confirmar si el corte de Epos del domingo sólo contiene esos $300.00 y
+capturar los gastos reales del día, si existieron.
