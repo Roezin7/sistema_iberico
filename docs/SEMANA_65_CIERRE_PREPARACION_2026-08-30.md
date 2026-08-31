@@ -160,3 +160,13 @@ horaria.
 No se añadió ningún gasto ni venta supuesto. Antes de cerrar la semana 65 se
 debe confirmar si el corte de Epos del domingo sólo contiene esos $300.00 y
 capturar los gastos reales del día, si existieron.
+
+### Corrección del detalle persistido
+
+La vista podía mostrar simultáneamente los $300.00 leídos de Epos y el mensaje
+“No hay ventas persistidas”. La causa era una importación idempotente diaria con
+cero filas: el listado filtraba sólo por esa importación y ocultaba la línea
+que ya estaba guardada en una importación anterior, aunque su fecha sí pertenecía
+al domingo operativo. El listado ahora combina la importación coincidente con el
+rango temporal solicitado. Así se conserva la venta nocturna sin duplicarla y el
+detalle de productos queda alineado con el importe del corte.

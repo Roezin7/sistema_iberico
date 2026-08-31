@@ -187,15 +187,21 @@ export async function listarVentasEpos(input: { negocioId: bigint; from?: string
     });
     if (importaciones.length) importacionIds = importaciones.map((row) => row.id);
   }
+  // Una sincronización puede haber creado una importación idempotente con
+  // cero filas (por ejemplo, cuando Epos respondió vacío). No debemos usar
+  // esa importación como filtro exclusivo: las ventas del mismo rango pueden
+  // haber quedado persistidas en una importación anterior o haberse capturado
+  // unos minutos después del límite del reporte. El rango temporal sigue
+  // siendo la fuente de pertenencia del día y la importación sólo amplía la
+  // búsqueda para conservar ventas nocturnas asociadas al corte.
+  const fechaFiltro = from || to
+    ? { fecha: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } }
+    : null;
+  const pertenencia = importacionIds
+    ? (fechaFiltro ? { OR: [{ importacion_id: { in: importacionIds } }, fechaFiltro] } : { importacion_id: { in: importacionIds } })
+    : (fechaFiltro ?? {});
   const rows = await prisma.epos_ventas.findMany({
-    where: {
-      negocio_id: input.negocioId,
-      ...(importacionIds
-        ? { importacion_id: { in: importacionIds } }
-        : from || to
-          ? { fecha: { ...(from ? { gte: from } : {}), ...(to ? { lt: to } : {}) } }
-          : {}),
-    },
+    where: { negocio_id: input.negocioId, ...pertenencia },
     orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
     take: Math.min(Math.max(input.limite ?? 5000, 1), 20000),
   });
