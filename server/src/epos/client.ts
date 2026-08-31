@@ -86,18 +86,29 @@ async function get<T>(path: string, params: Record<string, string | number | und
   }
 }
 
+/**
+ * Epos Now interpreta FromDate/ToDate como hora local de la cuenta y no
+ * admite de forma consistente un sufijo ISO con zona horaria. Cuando recibe
+ * `-06:00` puede omitir las ventas cercanas al cambio de día. Conservamos la
+ * hora local indicada por la aplicación y retiramos únicamente el sufijo al
+ * construir la consulta; las fechas persistidas siguen llevando zona.
+ */
+export function fechaConsultaEpos(value: string) {
+  return value.replace(/(?:Z|[+-]\d{2}:?\d{2})$/i, '');
+}
+
 export async function dailySales(from: string, to: string, locationId?: number) {
   return get<EposDailySalesRow[]>('V2/DailySales', {
-    FromDate: from,
-    ToDate: to,
+    FromDate: fechaConsultaEpos(from),
+    ToDate: fechaConsultaEpos(to),
     LocationID: locationId ?? env.EPOS_LOCATION_ID,
   });
 }
 
 export async function bookkeepingReport(from: string, to: string, locationId?: number) {
   return get<EposReportRow[]>('Reports/BookkeepingReport', {
-    FromDate: from,
-    ToDate: to,
+    FromDate: fechaConsultaEpos(from),
+    ToDate: fechaConsultaEpos(to),
     LocationID: locationId ?? env.EPOS_LOCATION_ID,
     ExtendedDetails: 1,
   });

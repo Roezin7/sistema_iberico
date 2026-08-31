@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fechaDeFila } from './imports.js';
-import { buildReconcilePreview, eposDiscount, eposProductId, summarizeBookkeeping, summarizeDailySales } from './client.js';
+import { buildReconcilePreview, eposDiscount, eposProductId, fechaConsultaEpos, summarizeBookkeeping, summarizeDailySales } from './client.js';
 
 describe('puente Epos', () => {
   it('resume ventas por producto, método y día', () => {
@@ -41,5 +41,11 @@ describe('puente Epos', () => {
     const bookkeeping = summarizeBookkeeping([{ Product: 'Mojito', Quantity: 1, TotalSales: 200, Tender: 'Cash' }]);
     const result = buildReconcilePreview('2026-08-21T00:00:00-06:00', '2026-08-22T00:00:00-06:00', daily, bookkeeping);
     expect(result.diferencias).toEqual({ ventas: 0, unidades: null, transacciones: null });
+  });
+
+  it('envía a Epos la hora local sin sufijo de zona', () => {
+    expect(fechaConsultaEpos('2026-08-30T00:00:00-06:00')).toBe('2026-08-30T00:00:00');
+    expect(fechaConsultaEpos('2026-08-31T00:00:00Z')).toBe('2026-08-31T00:00:00');
+    expect(fechaConsultaEpos('2026-08-30T00:00:00')).toBe('2026-08-30T00:00:00');
   });
 });
