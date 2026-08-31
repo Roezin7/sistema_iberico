@@ -410,11 +410,11 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
     <label>{emoji} {label}<input type="number" inputMode="decimal" value={val} disabled={bloqueado} onChange={(e) => set(e.target.value)} placeholder="0" /></label>
   );
   const corteConfirmado = conciliacion != null;
-  const importacionLabel = eposCorte
-    ? 'Actualizar ventas Epos'
-    : corteConfirmado
-      ? 'Revisar ventas persistidas'
-      : 'Importar ventas Epos';
+  // La conciliación guardada es evidencia histórica, no debe impedir volver
+  // a consultar Epos. Esto es importante cuando el primer sync llegó vacío o
+  // incompleto (por ejemplo, ventas que Epos entrega unos minutos después del
+  // cierre). La acción principal siempre actualiza la fuente externa.
+  const importacionLabel = eposCorte ? 'Actualizar ventas Epos' : 'Sincronizar ventas Epos';
 
   return (
     <div className="dia-card">
@@ -434,13 +434,13 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
           <div style={{ marginTop: '0.6rem' }}>
             <button
               className="pill"
-              onClick={() => corteConfirmado && !eposCorte ? void cargarVentasDetalle() : void consultarEpos()}
-              disabled={consultandoEpos || (corteConfirmado && !eposCorte && cargandoVentas)}
+              onClick={() => void consultarEpos()}
+              disabled={consultandoEpos}
             >
-              {consultandoEpos ? 'Importando ventas…' : cargandoVentas && corteConfirmado && !eposCorte ? 'Cargando ventas…' : importacionLabel}
+              {consultandoEpos ? 'Sincronizando ventas…' : importacionLabel}
             </button>
             <button className="btn-secondary" style={{ marginLeft: '0.5rem' }} onClick={() => void cargarVentasDetalle()} disabled={cargandoVentas}>
-              {cargandoVentas ? 'Cargando detalle…' : verVentas ? 'Actualizar productos vendidos' : 'Ver productos vendidos'}
+              {cargandoVentas ? 'Cargando ventas guardadas…' : verVentas ? 'Actualizar ventas guardadas' : 'Ver ventas guardadas'}
             </button>
             {eposNota && <small className="muted" style={{ display: 'block', marginTop: '0.4rem' }}>{eposNota}</small>}
             {eposCorte && <button className="link-btn" style={{ marginTop: '0.45rem' }} onClick={() => setCorreccionManual((v) => !v)}>{correccionManual ? 'Ocultar corrección manual' : 'Corregir manualmente'}</button>}
