@@ -29,13 +29,19 @@ export interface Resumen {
   comision_terminal_estimada: number;
   compras_inventario: number;
   flujo_caja_neto: number;
-  patrimonio_activos: number;
+  patrimonio_activos: number | null;
   pasivos_activos: number;
-  patrimonio_neto: number;
+  patrimonio_neto: number | null;
   utilidad: number; margen: number; utilidad_pct: number;
   ventas_operativas: number | null;
   utilidad_bruta: number | null;
+  utilidad_bruta_estado: 'pendiente' | 'verificada' | 'provisional_fifo';
   resultado_operativo: number | null;
+  resultado_operativo_estado: 'pendiente' | 'verificado' | 'provisional_fifo';
+  costo_ventas_fifo_activo: number | null;
+  ventas_epos_pendientes: number;
+  importe_ventas_epos_pendientes: number;
+  resultado_independiente: boolean;
   diferencia_fisica_valor: number | null;
   facturado: { tarjeta_facturable: number; gastos_facturados: number; balance: number };
   capital_socios: { socio_id: number; nombre: string; transferencias: number; retiros: number; capital: number }[];
@@ -43,8 +49,11 @@ export interface Resumen {
   inventario: {
     apertura_snapshot_id: number | null; cierre_snapshot_id: number | null;
     apertura_valor: number | null; compras: number; cierre_valor: number | null;
+    valor_fisico_actual: number | null;
+    valor_patrimonio: number | null;
+    valor_patrimonio_fuente: 'inventario_fisico_cierre' | 'inventario_fisico_actual' | 'pendiente_cierre';
     costo_ventas: number | null; costo_ventas_fuente: 'ledger_fifo_en_vivo' | 'pendiente_fifo';
-    valor_fifo_corte: number; unidades_fifo_corte: number;
+    valor_fifo_corte: number; unidades_fifo_corte: number; diferencia_fifo_vs_fisico: number | null;
     control_fifo: {
       costo_movimientos_activos: number | null; costo_reversiones_historial: number;
       costo_normal: number; costo_excepcion: number; filas_normal: number; filas_excepcion: number;
@@ -58,16 +67,22 @@ export interface Resumen {
     estado: 'pendiente_cierre' | 'calculada';
     apertura_snapshot_id: number | null; cierre_snapshot_id: number | null;
     total_diferencia_valor: number | null; productos_con_incidencia: number;
+    diferencia_apertura_valor: number | null; diferencia_conversion_valor: number | null; diferencia_semana_valor: number | null;
+    conciliacion_apertura: { inventario_fisico: number; fifo: number; diferencia_historica: number; diferencia_conversion: number } | null;
     consumo_fifo_activo_filas: number; reversiones_historial_filas: number;
     productos_con_diferencia_consumo: number; reporte_independiente: boolean;
     alerta_independencia: string | null;
     filas: {
       product_id: number; producto: string; unidad_base: string | null;
+      presentacion_apertura: { zona_id: number; unidad: string; cantidad: number; factor: number }[];
+      presentacion_cierre: { zona_id: number; unidad: string; cantidad: number; factor: number }[];
       inventario_inicial: number; compras_recibidas: number; ajustes_inventario: number; consumo_teorico: number;
       consumo_fifo_activo: number;
       consumo_fisico_inferido: number; diferencia_consumo: number;
       existencia_fifo_esperada: number; inventario_fisico_final: number;
-      diferencia_cantidad: number; costo_fifo: number | null;
+      existencia_esperada_movimientos: number; diferencia_semana: number;
+      diferencia_fifo: number; diferencia_fifo_valor: number | null;
+      diferencia_cantidad: number; costo_fifo: number | null; costo_fifo_apertura: number | null;
       diferencia_valor: number | null;
       incidencia_tipo: 'conversion' | 'compra_faltante' | 'receta' | 'captura' | 'posible_merma' | 'sin_diferencia';
       incidencia: string;

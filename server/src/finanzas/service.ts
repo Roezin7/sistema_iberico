@@ -13,6 +13,7 @@ import {
   mesesRecientes,
   estadoResultadosMensual,
   totalizarPnl,
+  seleccionarValorPatrimonio,
   type MovBalance,
   type InventarioMes,
 } from './logic.js';
@@ -66,6 +67,8 @@ function unidadComparable(unidad: string | null): string | null {
 function clasificarIncidencia(args: {
   diferencia: number;
   diferenciaConsumo: number;
+  diferenciaApertura: number;
+  diferenciaConversion: number;
   inicial: number;
   compras: number;
   unidadBase: string | null;
@@ -75,6 +78,12 @@ function clasificarIncidencia(args: {
   factoresCierre: number[];
   tieneAperturaFifo: boolean;
 }): { tipo: IncidenciaTipo; texto: string } {
+  if (Math.abs(args.diferenciaConversion) > 0.01) {
+    return { tipo: 'conversion', texto: 'Revisar conversión de presentación entre apertura y cierre' };
+  }
+  if (Math.abs(args.diferenciaApertura) > 0.01) {
+    return { tipo: 'captura', texto: 'Diferencia histórica: apertura física no coincide con FIFO de apertura' };
+  }
   if (!args.tieneAperturaFifo && args.inicial > 0) return { tipo: 'captura', texto: 'Captura: apertura FIFO pendiente de validar' };
   if (Math.abs(args.diferencia) <= 0.01 && Math.abs(args.diferenciaConsumo) <= 0.01) return { tipo: 'sin_diferencia', texto: 'Sin incidencia' };
   // Sólo llamamos "conversión" cuando la diferencia observada es compatible
@@ -304,18 +313,27 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
   const semanal = await asegurarInventarioSemanal(negocioId, semanaId);
   const semana = await prisma.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId }, select: { fecha_inicio: true, fecha_fin: true } });
   if (!semana) throw new HttpError(404, 'Semana no encontrada');
-  const [movs, fifoCorte, consumosPeriodo, consumosActivosDetalle, consumosCostoDetalle, reversionesPeriodo] = await Promise.all([
+  // El ledger guarda el día operativo al mediodía UTC. Este límite incluye el
+  // domingo completo y evita que la conciliación quede artificialmente corta.
+  const limiteSemanaDb = new Date(`${iso(semana.fecha_fin)}T23:59:59.999Z`);
+  const limiteCorte = rangoEposSemana(semana.fecha_inicio, semana.fecha_fin).fin;
+  const [movs, fifoCorte, inventarioFisico, consumosPeriodo, consumosActivosDetalle, consumosCostoDetalle, reversionesPeriodo] = await Promise.all([
     prisma.movimientos.findMany({
       where: { negocio_id: negocioId, semana_id: semanaId, tipo: 'compra_inventario' },
       select: { monto: true },
     }),
-    valorFifoAlCorte(negocioId, semana.fecha_fin),
+    // El corte termina el lunes a las 06:00Z para incluir todo el domingo
+    // civil. Usar fecha_fin a medianoche excluía ventas y lotes del domingo.
+    valorFifoAlCorte(negocioId, limiteCorte),
+    // Este snapshot pertenece a la semana consultada. Nunca se usa el último
+    // snapshot global, porque eso mezclaría periodos.
+    inventarioActual(negocioId, { semanaId, hasta: limiteCorte, vista: 'fisica' }),
     // Sólo movimientos FIFO activos. Las reversiones quedan en el ledger
     // para auditoría, pero no son costo de ventas.
     prisma.inventory_consumptions.aggregate({
       where: {
         negocio_id: negocioId,
-        fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin },
+        fecha: { gte: semana.fecha_inicio, lte: limiteSemanaDb },
         epos_venta_id: { not: null },
         ...filtroConsumoFifoActivo(),
       },
@@ -325,7 +343,7 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     prisma.inventory_consumptions.findMany({
       where: {
         negocio_id: negocioId,
-        fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin },
+        fecha: { gte: semana.fecha_inicio, lte: limiteSemanaDb },
         epos_venta_id: { not: null },
         ...filtroConsumoFifoActivo(),
       },
@@ -334,14 +352,14 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     prisma.inventory_consumptions.findMany({
       where: {
         negocio_id: negocioId,
-        fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin },
+        fecha: { gte: semana.fecha_inicio, lte: limiteSemanaDb },
         epos_venta_id: { not: null },
         ...filtroConsumoFifoActivo(),
       },
       select: { fuente: true, costo_total: true, epos_venta_id: true },
     }),
     prisma.inventory_consumptions.aggregate({
-      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin }, fuente: { startsWith: 'reversion_' } },
+      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: limiteSemanaDb }, fuente: { startsWith: 'reversion_' } },
       _sum: { costo_total: true },
       _count: { _all: true },
     }),
@@ -354,6 +372,10 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
   const cierreRegistrado = semanal.cierre_snapshot_id == null || semanal.cierre_valor == null
     ? null
     : num0(semanal.cierre_valor);
+  const fisicoActual = inventarioFisico.snapshot_id == null ? null : redondear(inventarioFisico.valor_total);
+  // Una semana cerrada conserva su snapshot de cierre como autoridad. Si aún
+  // está abierta, el último conteo físico de esa semana es provisional.
+  const patrimonioInventario = seleccionarValorPatrimonio(cierreRegistrado, fisicoActual);
   const costoVentasLedger = consumosPeriodo._count._all > 0 ? num0(consumosPeriodo._sum.costo_total) : null;
   // Los lotes normales llevan un sufijo de semana (p. ej. venta_fifo_vivo_w64).
   // Sólo las filas marcadas explícitamente como `_exception` son excepciones.
@@ -389,10 +411,16 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     apertura_valor: apertura,
     compras,
     cierre_valor: cierreRegistrado,
+    valor_fisico_actual: fisicoActual,
+    valor_patrimonio: patrimonioInventario.valor,
+    valor_patrimonio_fuente: patrimonioInventario.fuente,
     costo_ventas: costoVentas,
     costo_ventas_fuente: costoVentasLedger == null ? 'pendiente_fifo' : 'ledger_fifo_en_vivo',
     valor_fifo_corte: fifoCorte.valor,
     unidades_fifo_corte: fifoCorte.unidades,
+    diferencia_fifo_vs_fisico: patrimonioInventario.valor == null
+      ? null
+      : redondear(fifoCorte.valor - patrimonioInventario.valor),
     control_fifo: {
       costo_movimientos_activos: costoVentasLedger,
       costo_normal: costoNormal,
@@ -421,17 +449,28 @@ interface FilaConciliacionInventario {
   product_id: number;
   producto: string;
   unidad_base: string | null;
+  presentacion_apertura: { zona_id: number; unidad: string; cantidad: number; factor: number }[];
+  presentacion_cierre: { zona_id: number; unidad: string; cantidad: number; factor: number }[];
   inventario_inicial: number;
+  fifo_apertura: number;
+  diferencia_apertura: number;
+  diferencia_apertura_valor: number | null;
   compras_recibidas: number;
   ajustes_inventario: number;
   consumo_teorico: number;
   consumo_fifo_activo: number;
   consumo_fisico_inferido: number;
   diferencia_consumo: number;
+  diferencia_conversion: number;
+  existencia_esperada_movimientos: number;
+  diferencia_semana: number;
   existencia_fifo_esperada: number;
   inventario_fisico_final: number;
+  diferencia_fifo: number;
+  diferencia_fifo_valor: number | null;
   diferencia_cantidad: number;
   costo_fifo: number | null;
+  costo_fifo_apertura: number | null;
   diferencia_valor: number | null;
   incidencia_tipo: IncidenciaTipo;
   incidencia: string;
@@ -455,6 +494,15 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     consumo_fifo_activo_filas: 0,
     reversiones_historial_filas: 0,
     productos_con_diferencia_consumo: 0,
+    diferencia_apertura_valor: null as number | null,
+    diferencia_conversion_valor: null as number | null,
+    diferencia_semana_valor: null as number | null,
+    conciliacion_apertura: null as {
+      inventario_fisico: number;
+      fifo: number;
+      diferencia_historica: number;
+      diferencia_conversion: number;
+    } | null,
     reporte_independiente: false,
     alerta_independencia: null as string | null,
   };
@@ -462,13 +510,16 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
 
   const semana = await prisma.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId }, select: { fecha_inicio: true, fecha_fin: true } });
   if (!semana) throw new HttpError(404, 'Semana no encontrada');
+  // Las fechas de consumo y recepción se normalizan al día civil local;
+  // este límite incluye completo el domingo de la semana consultada.
+  const limiteSemanaDb = new Date(`${iso(semana.fecha_fin)}T23:59:59.999Z`);
 
-  const [productos, aperturaLineas, cierreLineas, comprasLotes, ajustesLotes, lotesLedger, consumos, consumosLedger, consumosAjuste] = await Promise.all([
+  const [productos, aperturaLineas, cierreLineas, comprasLotes, ajustesLotes, lotesLedger, consumos, consumosLedger, consumosAjuste, consumosAnteriores, unidadesCaptura, reversionesHistorial] = await Promise.all([
     prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, unidad_compra: true, contenido_compra: true, unit_cost: true } }),
-    prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.apertura_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
-    prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.cierre_snapshot_id }, select: { product_id: true, qty_captura: true, factor: true } }),
+    prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.apertura_snapshot_id }, select: { product_id: true, zona_id: true, qty_captura: true, factor: true } }),
+    prisma.inventory_lines.findMany({ where: { snapshot_id: semanal.cierre_snapshot_id }, select: { product_id: true, zona_id: true, qty_captura: true, factor: true } }),
     prisma.inventory_lots.findMany({
-      where: { negocio_id: negocioId, purchase_id: { not: null }, recibido_at: { gte: semana.fecha_inicio, lte: semana.fecha_fin } },
+      where: { negocio_id: negocioId, purchase_id: { not: null }, recibido_at: { gte: semana.fecha_inicio, lte: limiteSemanaDb } },
       select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
     }),
     prisma.inventory_lots.findMany({
@@ -481,26 +532,38 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     // si existe lote operativo se usa ese libro; si no, se conserva el saldo
     // histórico para no convertir una línea omitida del snapshot en faltante.
     prisma.inventory_lots.findMany({
-      where: { negocio_id: negocioId, recibido_at: { lte: semana.fecha_fin }, estado: { in: ['abierto', 'agotado'] } },
-      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true, fuente: true },
+      where: { negocio_id: negocioId, recibido_at: { lte: limiteSemanaDb }, estado: { in: ['abierto', 'agotado'] } },
+      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true, fuente: true, purchase_id: true },
     }),
     prisma.inventory_consumptions.findMany({
       // Esta colección alimenta consumo teórico: sólo ventas FIFO activas.
       // Las reversiones no se vuelven a restar en una conciliación.
       where: {
         negocio_id: negocioId,
-        fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin },
+        fecha: { gte: semana.fecha_inicio, lte: limiteSemanaDb },
         ...filtroConsumoFifoActivo(),
       },
       select: { product_id: true, lote_id: true, cantidad: true, fuente: true },
     }),
     prisma.inventory_consumptions.findMany({
-      where: { negocio_id: negocioId, fecha: { lte: semana.fecha_fin }, ...filtroConsumoFifoActivo({ incluirAjustes: true }) },
+      where: { negocio_id: negocioId, fecha: { lte: limiteSemanaDb }, ...filtroConsumoFifoActivo({ incluirAjustes: true }) },
       select: { product_id: true, lote_id: true, cantidad: true, fuente: true },
     }),
     prisma.inventory_consumptions.findMany({
-      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: semana.fecha_fin }, fuente: 'ajuste_inventario' },
+      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: limiteSemanaDb }, fuente: 'ajuste_inventario' },
       select: { product_id: true, cantidad: true },
+    }),
+    prisma.inventory_consumptions.findMany({
+      where: { negocio_id: negocioId, fecha: { lt: semana.fecha_inicio }, ...filtroConsumoFifoActivo({ incluirAjustes: true }) },
+      select: { product_id: true, lote_id: true, cantidad: true, fuente: true },
+    }),
+    prisma.product_zone_units.findMany({
+      where: { products: { negocio_id: negocioId } },
+      select: { product_id: true, zona_id: true, unidad_captura: true, factor: true },
+    }),
+    prisma.inventory_consumptions.findMany({
+      where: { negocio_id: negocioId, fecha: { gte: semana.fecha_inicio, lte: limiteSemanaDb }, fuente: { startsWith: 'reversion_' } },
+      select: { id: true },
     }),
   ]);
 
@@ -529,6 +592,18 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
   };
   const factoresApertura = factoresDe(aperturaLineas);
   const factoresCierre = factoresDe(cierreLineas);
+  const unidadCapturaPorZona = new Map(unidadesCaptura.map((u) => [`${u.product_id}:${u.zona_id}`, { unidad: u.unidad_captura, factor: num0(u.factor) }]));
+  const presentacionesDe = (lineas: { product_id: bigint; zona_id: bigint; qty_captura: unknown; factor: unknown }[], productId: string, producto: { unidad_base: string | null } | undefined) => lineas
+    .filter((linea) => linea.product_id.toString() === productId)
+    .map((linea) => {
+      const ref = unidadCapturaPorZona.get(`${linea.product_id}:${linea.zona_id}`);
+      return {
+        zona_id: Number(linea.zona_id),
+        unidad: ref?.unidad ?? producto?.unidad_base ?? 'unidad base',
+        cantidad: redondearCantidad(num0(linea.qty_captura as never)),
+        factor: redondearCantidad(num0(linea.factor as never)),
+      };
+    });
   const compras = new Map<string, number>();
   for (const lote of comprasLotes) {
     const key = lote.product_id.toString();
@@ -555,6 +630,11 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     const loteKey = consumo.lote_id.toString();
     consumosLedgerPorLote.set(loteKey, redondearCantidad((consumosLedgerPorLote.get(loteKey) ?? 0) + num0(consumo.cantidad)));
   }
+  const consumosAnterioresPorLote = new Map<string, number>();
+  for (const consumo of consumosAnteriores) {
+    const loteKey = consumo.lote_id.toString();
+    consumosAnterioresPorLote.set(loteKey, redondearCantidad((consumosAnterioresPorLote.get(loteKey) ?? 0) + num0(consumo.cantidad)));
+  }
   const lotesPorProducto = new Map<string, { id: bigint; cantidad: number; costo: number }[]>();
   const lotesPorProductoRaw = new Map<string, typeof lotesLedger>();
   for (const lote of lotesLedger) {
@@ -569,6 +649,27 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     lotesPorProducto.set(key, seleccionados.map((lote) => ({ id: lote.id, cantidad: num0(lote.cantidad_inicial), costo: num0(lote.costo_unitario) })));
   }
   const lotesSeleccionadosIds = new Set([...lotesPorProducto.values()].flatMap((lista) => lista.map((lote) => lote.id.toString())));
+  const lotesAperturaPorProducto = new Map<string, { id: bigint; cantidad: number; costo: number }[]>();
+  const lotesAperturaRaw = new Map<string, typeof lotesLedger>();
+  for (const lote of lotesLedger) {
+    // La apertura incluye todo lo recibido antes del lunes y también los
+    // lotes de inventario inicial creados ese mismo lunes. Una compra real
+    // recibida el lunes no pertenece a la apertura: se suma en
+    // `compras_recibidas` para no contarla dos veces.
+    const fechaLote = iso(lote.recibido_at);
+    const fechaInicio = iso(semana.fecha_inicio);
+    const esLoteInicialDelDia = fechaLote === fechaInicio && lote.fuente === 'inventario_inicial' && lote.purchase_id == null;
+    if (fechaLote > fechaInicio || (fechaLote === fechaInicio && !esLoteInicialDelDia)) continue;
+    const key = lote.product_id.toString();
+    const lista = lotesAperturaRaw.get(key) ?? [];
+    lista.push(lote);
+    lotesAperturaRaw.set(key, lista);
+  }
+  for (const [key, lista] of lotesAperturaRaw) {
+    const vivos = lista.filter((lote) => lote.fuente !== 'historico_prueba');
+    const seleccionados = vivos.length ? vivos : lista;
+    lotesAperturaPorProducto.set(key, seleccionados.map((lote) => ({ id: lote.id, cantidad: num0(lote.cantidad_inicial), costo: num0(lote.costo_unitario) })));
+  }
   // Durante la transición puede haber ventas de esta semana que fueron
   // consumidas contra un lote histórico antes de que existiera el lote
   // operativo de apertura. No sumamos ese lote histórico, pero sí descontamos
@@ -603,7 +704,7 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
       : producto?.unidad_base && contenidoCompra != null && contenidoCompra > 0
         ? costoPresentacion / contenidoCompra
         : costoPresentacion;
-    const tieneAperturaFifo = lotesLedger.some((lote) => lote.product_id.toString() === key && lote.recibido_at <= semana.fecha_inicio);
+    const tieneAperturaFifo = lotesAperturaPorProducto.has(key);
     const saldoSeleccionado = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)), 0);
     const valorSeleccionado = lotes.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosLedgerPorLote.get(lote.id.toString()) ?? 0)) * lote.costo, 0);
     const consumoHistoricoDeLaSemana = consumosHistoricosSemanaPorProducto.get(key) ?? 0;
@@ -611,15 +712,37 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     const costoSeleccionado = saldoSeleccionado > 0.0001 ? valorSeleccionado / saldoSeleccionado : 0;
     const fifoValorRestante = Math.max(0, valorSeleccionado - consumoHistoricoDeLaSemana * costoSeleccionado);
     const esperado = redondearCantidad(fifoRestante);
-    const diferencia = redondearCantidad(fisico - esperado);
+    // Diferencia contra el libro FIFO (informativa) y residuo de la semana
+    // contra el movimiento físico independiente. Sólo el segundo puede
+    // convertirse en una posible merma después de resolver apertura,
+    // conversiones y compras faltantes.
+    const diferenciaFifo = redondearCantidad(fisico - esperado);
+    const lotesApertura = lotesAperturaPorProducto.get(key) ?? [];
+    const saldoFifoApertura = lotesApertura.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosAnterioresPorLote.get(lote.id.toString()) ?? 0)), 0);
+    const valorFifoApertura = lotesApertura.reduce((suma, lote) => suma + Math.max(0, lote.cantidad - (consumosAnterioresPorLote.get(lote.id.toString()) ?? 0)) * lote.costo, 0);
+    const fifoApertura = redondearCantidad(saldoFifoApertura);
+    const diferenciaApertura = redondearCantidad(inicial - fifoApertura);
+    // Las líneas se guardan convertidas a unidad base. Un cambio de
+    // presentación (por ejemplo, caja frente a piezas) no es por sí mismo
+    // una diferencia: el factor ya está aplicado en cada snapshot. Sólo una
+    // corrección explícita de conversión debe alimentar este campo; de lo
+    // contrario se convertiría un cambio legítimo de cantidad en una falsa
+    // merma. Las cantidades de captura y factores se exponen para que el
+    // operador pueda auditar el caso sin alterar el saldo.
+    const diferenciaConversion = 0;
+    const existenciaEsperadaMovimientos = redondearCantidad(inicial + comprasRecibidas + ajusteInventario - consumo);
+    const diferenciaSemana = redondearCantidad(fisico - existenciaEsperadaMovimientos);
     const costoPonderado = fifoRestante > 0.0001
       ? Math.round((fifoValorRestante / fifoRestante) * 1_000_000) / 1_000_000
       : lotes.length
         ? Math.round((lotes.reduce((suma, lote) => suma + lote.cantidad * lote.costo, 0) / Math.max(lotes.reduce((suma, lote) => suma + lote.cantidad, 0), 0.0001)) * 1_000_000) / 1_000_000
         : costoCatalogo;
+    const costoApertura = fifoApertura > 0.0001 ? valorFifoApertura / fifoApertura : costoPonderado;
     const incidenciaClasificada = clasificarIncidencia({
-      diferencia,
+      diferencia: diferenciaSemana,
       diferenciaConsumo,
+      diferenciaApertura,
+      diferenciaConversion,
       inicial,
       compras: comprasRecibidas,
       unidadBase: producto?.unidad_base ?? null,
@@ -633,18 +756,29 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
       product_id: Number(key),
       producto: producto?.name ?? `Producto ${key}`,
       unidad_base: producto?.unidad_base ?? null,
+      presentacion_apertura: presentacionesDe(aperturaLineas, key, producto),
+      presentacion_cierre: presentacionesDe(cierreLineas, key, producto),
       inventario_inicial: inicial,
+      fifo_apertura: fifoApertura,
+      diferencia_apertura: diferenciaApertura,
+      diferencia_apertura_valor: costoApertura == null ? null : redondear(diferenciaApertura * costoApertura),
       compras_recibidas: comprasRecibidas,
       ajustes_inventario: ajusteInventario,
       consumo_teorico: consumo,
       consumo_fifo_activo: consumo,
       consumo_fisico_inferido: consumoFisicoInferido,
       diferencia_consumo: diferenciaConsumo,
+      diferencia_conversion: diferenciaConversion,
+      existencia_esperada_movimientos: existenciaEsperadaMovimientos,
+      diferencia_semana: diferenciaSemana,
       existencia_fifo_esperada: esperado,
       inventario_fisico_final: fisico,
-      diferencia_cantidad: diferencia,
+      diferencia_fifo: diferenciaFifo,
+      diferencia_fifo_valor: costoPonderado == null ? null : redondear(diferenciaFifo * costoPonderado),
+      diferencia_cantidad: diferenciaSemana,
       costo_fifo: costoPonderado,
-      diferencia_valor: costoPonderado == null ? null : redondear(diferencia * costoPonderado),
+      costo_fifo_apertura: costoApertura == null ? null : redondear(costoApertura),
+      diferencia_valor: costoPonderado == null ? null : redondear(diferenciaSemana * costoPonderado),
       incidencia_tipo: incidenciaClasificada.tipo,
       incidencia: incidenciaClasificada.texto,
     } satisfies FilaConciliacionInventario;
@@ -652,12 +786,23 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
 
   const conIncidencia = filas.filter((fila) => fila.incidencia_tipo !== 'sin_diferencia');
   const consumoActivoFilas = consumos.filter((row) => esConsumoFifoActivo(row)).length;
-  const reversionesHistorialFilas = consumosLedger.filter((row) => esReversionFifo(row)).length;
+  const reversionesHistorialFilas = reversionesHistorial.length;
   const diferenciasConsumo = filas.filter((fila) => Math.abs(fila.diferencia_consumo) > 0.01);
-  const reporteIndependiente = Boolean(semanal.cierre_snapshot_id && consumoActivoFilas > 0 && diferenciasConsumo.length === 0);
+  const diferenciaAperturaValor = filas.reduce((total, fila) => total + (fila.diferencia_apertura_valor ?? 0), 0);
+  const diferenciaConversionValor = filas.reduce((total, fila) => total + (fila.costo_fifo == null ? 0 : fila.diferencia_conversion * fila.costo_fifo), 0);
+  const diferenciaSemanaValor = filas.reduce((total, fila) => total + (fila.costo_fifo == null ? 0 : fila.diferencia_semana * fila.costo_fifo), 0);
+  const reporteIndependiente = Boolean(
+    semanal.cierre_snapshot_id &&
+    diferenciasConsumo.length === 0 &&
+    filas.every((fila) => Math.abs(fila.diferencia_apertura) <= 0.01
+      && Math.abs(fila.diferencia_conversion) <= 0.01
+      && Math.abs(fila.diferencia_semana) <= 0.01),
+  );
   return {
     ...base,
     filas,
+    // El total principal es el residuo semanal; la divergencia FIFO se
+    // conserva en cada fila para auditoría, pero no se presenta como merma.
     total_diferencia_valor: filas.some((fila) => fila.diferencia_valor != null)
       ? redondear(filas.reduce((suma, fila) => suma + (fila.diferencia_valor ?? 0), 0))
       : null,
@@ -665,10 +810,19 @@ async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint)
     consumo_fifo_activo_filas: consumoActivoFilas,
     reversiones_historial_filas: reversionesHistorialFilas,
     productos_con_diferencia_consumo: diferenciasConsumo.length,
+    diferencia_apertura_valor: redondear(diferenciaAperturaValor),
+    diferencia_conversion_valor: redondear(diferenciaConversionValor),
+    diferencia_semana_valor: redondear(diferenciaSemanaValor),
+    conciliacion_apertura: {
+      inventario_fisico: redondear(filas.reduce((total, fila) => total + fila.inventario_inicial * (fila.costo_fifo_apertura ?? fila.costo_fifo ?? 0), 0)),
+      fifo: redondear(filas.reduce((total, fila) => total + fila.fifo_apertura * (fila.costo_fifo_apertura ?? fila.costo_fifo ?? 0), 0)),
+      diferencia_historica: redondear(diferenciaAperturaValor),
+      diferencia_conversion: redondear(diferenciaConversionValor),
+    },
     reporte_independiente: reporteIndependiente,
     alerta_independencia: reporteIndependiente
       ? null
-      : 'El cierre no es independiente: la existencia física todavía no coincide con el consumo FIFO activo en todos los productos.',
+      : 'El cierre aún no es independiente: separa la diferencia histórica, las conversiones y el residuo semanal antes de llamarlo merma.',
   };
 }
 
@@ -1009,13 +1163,18 @@ function sumarPorTipo(movs: { tipo: TipoMovimiento; monto: unknown }[], tipo: Ti
 export async function resumen(negocioId: bigint, semanaId: bigint) {
   const semana = await getSemanaAbierta(negocioId, semanaId);
   const rangoEpos = rangoEposSemana(semana.fecha_inicio, semana.fecha_fin);
-  const [ubicaciones, movs, inicialMap, socios, eposSemana] = await Promise.all([
+  const [ubicaciones, movs, inicialMap, socios, eposSemana, eposPendientes] = await Promise.all([
     prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true } }),
     movimientosDeSemana(negocioId, semanaId),
     mapaSaldoInicial(negocioId, semana.fecha_inicio),
     prisma.socios.findMany({ where: { negocio_id: negocioId, activo: true } }),
     prisma.epos_ventas.aggregate({
       where: { negocio_id: negocioId, fecha: { gte: rangoEpos.inicio, lt: rangoEpos.fin } },
+      _sum: { venta_neta: true, venta_bruta: true },
+      _count: { _all: true },
+    }),
+    prisma.epos_ventas.aggregate({
+      where: { negocio_id: negocioId, fecha: { gte: rangoEpos.inicio, lt: rangoEpos.fin }, costeo_estado: { in: ['pendiente', 'excepcion'] } },
       _sum: { venta_neta: true, venta_bruta: true },
       _count: { _all: true },
     }),
@@ -1070,6 +1229,16 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
   const resultadoOperativo = utilidadBruta == null
     ? null
     : redondear(utilidadBruta - comisionTerminal(ventaTarjeta, propinaTarjeta) - gastosOperativos);
+  const resultadoIndependiente = Boolean(conciliacion_inventario.reporte_independiente && (inventario.control_fifo?.reporte_independiente ?? false) && eposPendientes._count._all === 0);
+  // El patrimonio representa activos físicos comprobados, no el valor bruto
+  // del ledger FIFO. Si la semana sigue abierta sin conteo, se deja pendiente
+  // para no mostrar una cifra inflada como si fuera patrimonio real.
+  const patrimonioActivos = inventario.valor_patrimonio == null
+    ? null
+    : redondear(saldoRealFinalTotal + inventario.valor_patrimonio);
+  const patrimonioNeto = patrimonioActivos == null
+    ? null
+    : redondear(patrimonioActivos - pasivosActivos);
 
   // Capital por socio.
   const ubicSocio = new Map<number, number>(); // ubicacion_id -> socio_id
@@ -1101,10 +1270,16 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
     utilidad_pct: r.utilidadPct,
     ventas_operativas: ventasOperativas,
     utilidad_bruta: utilidadBruta,
+    utilidad_bruta_estado: utilidadBruta == null ? 'pendiente' : resultadoIndependiente ? 'verificada' : 'provisional_fifo',
     resultado_operativo: resultadoOperativo,
-    patrimonio_activos: redondear(saldoRealFinalTotal + (inventario.valor_fifo_corte ?? 0)),
+    resultado_operativo_estado: resultadoOperativo == null ? 'pendiente' : resultadoIndependiente ? 'verificado' : 'provisional_fifo',
+    costo_ventas_fifo_activo: inventario.costo_ventas,
+    ventas_epos_pendientes: eposPendientes._count._all,
+    importe_ventas_epos_pendientes: redondear(num0(eposPendientes._sum.venta_neta ?? eposPendientes._sum.venta_bruta)),
+    resultado_independiente: resultadoIndependiente,
+    patrimonio_activos: patrimonioActivos,
     pasivos_activos: pasivosActivos,
-    patrimonio_neto: redondear(saldoRealFinalTotal + (inventario.valor_fifo_corte ?? 0) - pasivosActivos),
+    patrimonio_neto: patrimonioNeto,
     diferencia_fisica_valor: conciliacion_inventario.total_diferencia_valor,
     facturado: { tarjeta_facturable: r.tarjetaFacturable, gastos_facturados: r.gastosFacturados, balance: r.balanceFacturado },
     capital_socios: capital,
@@ -1152,23 +1327,23 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
   // excluía conteos capturados el domingo por la noche (que aparecen como
   // lunes en UTC) y hacía que el cierre no encontrara el inventario físico.
   const limiteSnapshot = rangoEposSemana(semana.fecha_inicio, semana.fecha_fin).fin;
-  const [ubicaciones, banco, inventarioSemana, fifoCorte] = await Promise.all([
+  const [ubicaciones, banco, inventarioSemana] = await Promise.all([
     prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true } }),
     prisma.ubicaciones_fondos.findFirst({ where: { negocio_id: negocioId, tipo: 'banco' }, orderBy: { id: 'asc' } }),
     // El cierre debe usar exclusivamente el conteo asociado a esta semana.
     // No hacemos fallback al último snapshot global: eso mezclaría semanas y
     // haría parecer que se cerró una operación que nunca fue contada.
-    inventarioActual(negocioId, { semanaId, hasta: limiteSnapshot }),
-    valorFifoAlCorte(negocioId, semana.fecha_fin),
+    inventarioActual(negocioId, { semanaId, hasta: limiteSnapshot, vista: 'fisica' }),
   ]);
   if (inventarioSemana.snapshot_id == null) {
     throw new HttpError(409, 'Falta el inventario físico de cierre de esta semana; captura y guarda un snapshot antes de cerrar');
   }
   const invActual = inventarioSemana;
-  // El cierre contable usa el valor del ledger FIFO en vivo. Si todavía no
-  // hay lotes (por ejemplo, durante el bootstrap inicial), conserva el valor
-  // del conteo físico para no ocultar inventario sin libro.
-  const valorInventario = fifoCorte.lotes > 0 ? fifoCorte.valor : invActual.valor_total;
+  // El cierre contable usa exclusivamente el valor del conteo físico de esta
+  // semana. El ledger FIFO se conserva como control independiente y nunca
+  // sustituye al inventario contado; hacerlo inflaría patrimonio y cierre
+  // cuando existan lotes abiertos de semanas anteriores.
+  const valorInventario = invActual.valor_total;
 
   await prisma.$transaction(async (tx) => {
     const movs = await tx.movimientos.findMany({ where: { negocio_id: negocioId, semana_id: semanaId } });

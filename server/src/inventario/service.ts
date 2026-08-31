@@ -15,6 +15,7 @@ import {
   normalizarUnidadBase,
   unidadOperativaInventario,
   seleccionarExistenciaOperativa,
+  redondear,
   type ProductoFaltante,
 } from './logic.js';
 
@@ -179,6 +180,7 @@ export async function crearSnapshotConsolidado(
  * zona: no borra lo ya contado en las demás.
  */
 export async function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
+  const vista = options.vista ?? 'operativa';
   const [productos, snaps, lotes] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
@@ -295,11 +297,17 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const valorCatalogo = valorProducto(totalBase, unitCostBase);
     const valorado = valorarFisicoConLotes(totalBase, lotesProducto, unitCostBase);
     const cantidadesLotes = lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante), 0);
-    const existenciaOperativa = seleccionarExistenciaOperativa({
-      fisicoBase: totalBase,
-      fifoBase: cantidadesLotes,
-      tieneLotes: lotesProducto.length > 0,
-    });
+    // La vista física nunca sustituye el conteo por el saldo del libro FIFO.
+    // Esto evita que compras recientes o lotes arrastrados de otra semana
+    // inflen la existencia que se presenta al operador y al cierre. La vista
+    // operativa sí usa el saldo FIFO vivo para la lista de compras.
+    const existenciaOperativa = vista === 'fisica'
+      ? { base: redondear(totalBase), fuente: 'fisico' as const }
+      : seleccionarExistenciaOperativa({
+          fisicoBase: totalBase,
+          fifoBase: cantidadesLotes,
+          tieneLotes: lotesProducto.length > 0,
+        });
     const cantidadFifoOperativa = lotesProducto.length
       ? cantidadOperativaInventario({
           totalBase: cantidadesLotes,

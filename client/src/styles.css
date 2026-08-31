@@ -963,7 +963,7 @@ table th {
   gap: 0.75rem;
   margin-top: 0.9rem;
 }
-.patrimonio-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.patrimonio-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 .patrimonio-grid > div,
 .semana-evolucion__grid > div {
   display: flex;
@@ -982,6 +982,15 @@ table th {
   letter-spacing: 0.04em;
 }
 .patrimonio-grid strong { font-size: 1.15rem; }
+.vision-card__status {
+  display: block;
+  margin-top: 0.55rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  font-weight: 700;
+}
+.vision-card__status--ok { color: var(--success); }
+.vision-card__status--warning { color: var(--data-ochre); }
 .semana-evolucion__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .semana-evolucion__grid strong { font-size: 1.15rem; }
 .semana-evolucion__grid span { font-size: 0.78rem; }

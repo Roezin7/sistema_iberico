@@ -32,7 +32,8 @@ export async function contextoNegocio(negocioId: bigint): Promise<string> {
         const etiqueta = etiquetaCanonica(s.fecha_inicio, s.fecha_fin);
         filas.push(
           `  ${etiqueta} (${s.estado}): ventas ${mxn(r.ventas.total)}, flujo de caja ${mxn(r.flujo_caja_neto)}, ` +
-            `resultado operativo ${mxn(r.resultado_operativo)}, inventario FIFO ${mxn(r.inventario.valor_fifo_corte)}, ` +
+            `resultado operativo ${mxn(r.resultado_operativo)}, inventario físico ${mxn(r.inventario.valor_patrimonio)} ` +
+            `(fuente ${r.inventario.valor_patrimonio_fuente}), FIFO contable restante ${mxn(r.inventario.valor_fifo_corte)}, ` +
             `facturado(+/-) ${mxn(r.facturado.balance)}`,
         );
       } catch {

@@ -592,14 +592,13 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
     : utilidadBruta - r.comision_terminal_estimada - gastos - sueldos - propinasPagadas);
   const margenOperativo = utilidadOperativa == null || ventasOperativas === 0 ? null : utilidadOperativa / ventasOperativas;
   const inventarioCerrado = r.inventario.estado === 'cerrado' && r.inventario.cierre_valor != null;
-  // Patrimonio uses the same authoritative valuation as the API: cash plus
-  // the continuous FIFO ledger. The physical closing snapshot remains a
-  // control value and is shown separately below, never silently substituted.
-  const inventarioAlCorte = Number(r.inventario.valor_fifo_corte);
-  const patrimonioOperativo = Number(r.patrimonio_activos);
-  const diferenciaCierreVsFifo = inventarioCerrado
-    ? Math.round((r.inventario.valor_fifo_corte - Number(r.inventario.cierre_valor)) * 100) / 100
-    : 0;
+  // El patrimonio usa el conteo físico de esta semana. El FIFO restante es
+  // una referencia contable para detectar diferencias, nunca un sustituto del
+  // inventario físico que haría aparecer activos inflados.
+  const inventarioFisico = r.inventario.valor_patrimonio;
+  const inventarioLibroFifo = r.inventario.valor_fifo_corte;
+  const patrimonioOperativo = r.patrimonio_activos;
+  const diferenciaCierreVsFifo = r.inventario.diferencia_fifo_vs_fisico;
   const diasOperativos = dias.filter((dia) => esDiaOperativo(dia.fecha));
   return (
     <>
@@ -636,6 +635,13 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
             {fila('Comisión + gastos + sueldos', `−${mxn(r.comision_terminal_estimada + gastos + sueldos + propinasPagadas)}`)}
           </div>
           <span className="vision-card__note">{margenOperativo == null ? 'Falta costo FIFO o ventas verificadas.' : `Margen operativo: ${(margenOperativo * 100).toFixed(1)}%`}</span>
+          <span className={`vision-card__status ${r.resultado_independiente ? 'vision-card__status--ok' : 'vision-card__status--warning'}`}>
+            {r.resultado_operativo_estado === 'verificado'
+              ? 'Resultado independiente: ventas Epos y consumo FIFO activos conciliados.'
+              : r.resultado_operativo_estado === 'pendiente'
+                ? 'Resultado pendiente: faltan ventas Epos o consumo FIFO activo.'
+                : 'Resultado provisional: revisa las excepciones antes de interpretarlo como utilidad real.'}
+          </span>
         </section>
       </div>
 
@@ -645,18 +651,26 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         <div className="section-heading"><div><strong>Patrimonio operativo al corte</strong><p className="muted">La foto del negocio: dinero disponible más inventario, sin llamarlo utilidad.</p></div><span className="big-number">{mxn(patrimonioOperativo)}</span></div>
         <div className="patrimonio-grid">
           <div><small>Banco y caja</small><strong>{mxn(r.saldo_real_final_total)}</strong></div>
-          <div><small>Inventario FIFO al corte</small><strong>{mxn(inventarioAlCorte)}</strong></div>
+          <div><small>Inventario físico al corte</small><strong>{mxn(inventarioFisico)}</strong></div>
+          <div><small>FIFO contable restante</small><strong>{mxn(inventarioLibroFifo)}</strong></div>
           <div><small>Pasivos activos</small><strong>{mxn(r.pasivos_activos)}</strong></div>
           <div><small>Patrimonio neto</small><strong>{mxn(r.patrimonio_neto)}</strong></div>
         </div>
         <p className="muted" style={{ margin: '0.8rem 0 0', fontSize: '0.82rem' }}>
           {inventarioCerrado
-            ? 'El patrimonio usa dinero disponible más FIFO activo; el conteo físico de cierre se conserva como control independiente.'
-            : 'El patrimonio usa el valor FIFO reconstruido al último día del periodo; todavía no hay un cierre físico registrado para esta semana.'}
+            ? 'El patrimonio usa dinero disponible más el inventario físico cerrado. El FIFO restante sólo sirve para conciliar el libro contra el conteo.'
+            : inventarioFisico != null
+              ? 'El patrimonio es provisional: usa el último conteo físico de esta semana. Se congela al cerrar.'
+              : 'Patrimonio pendiente: captura el inventario físico de esta semana para mostrar una cifra real.'}
         </p>
-        {inventarioCerrado && Math.abs(diferenciaCierreVsFifo) > 0.01 && (
+        {!r.resultado_independiente && r.ventas_epos_pendientes > 0 && (
           <div className="vision-callout__warning" style={{ marginTop: '0.65rem' }}>
-            FIFO vivo al corte: {mxn(r.inventario.valor_fifo_corte)} · diferencia frente al valor registrado: {mxn(diferenciaCierreVsFifo)}. Revisa la conciliación FIFO vs. físico; no es una diferencia de caja.
+            Hay {r.ventas_epos_pendientes} ventas Epos sin costo FIFO activo ({mxn(r.importe_ventas_epos_pendientes)}). La utilidad seguirá marcada como provisional.
+          </div>
+        )}
+        {diferenciaCierreVsFifo != null && Math.abs(diferenciaCierreVsFifo) > 0.01 && (
+          <div className="vision-callout__warning" style={{ marginTop: '0.65rem' }}>
+            FIFO contable restante: {mxn(inventarioLibroFifo)} · diferencia frente al físico: {mxn(diferenciaCierreVsFifo)}. Revisa la conciliación; no es una diferencia de caja.
           </div>
         )}
       </div>
@@ -683,7 +697,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         {fila('Inventario de apertura', mxn(r.inventario.apertura_valor))}
         {fila('Compras de la semana', mxn(r.inventario.compras))}
         {fila(inventarioCerrado ? 'Inventario registrado al cierre' : 'Inventario de cierre (pendiente)', mxn(r.inventario.cierre_valor))}
-        {inventarioCerrado && Math.abs(diferenciaCierreVsFifo) > 0.01 && fila('FIFO vivo al corte (referencia)', mxn(r.inventario.valor_fifo_corte))}
+        {diferenciaCierreVsFifo != null && Math.abs(diferenciaCierreVsFifo) > 0.01 && fila('FIFO contable restante (referencia)', mxn(inventarioLibroFifo))}
         {fila(r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' ? 'Costo de ventas FIFO en vivo' : 'Costo de ventas FIFO pendiente', mxn(r.inventario.costo_ventas))}
         {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <div className="kv"><span className="muted">FIFO normal / excepciones</span><span>{mxn(r.inventario.control_fifo.costo_normal)} / {mxn(r.inventario.control_fifo.costo_excepcion)}</span></div>}
         {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>El valor del corte FIFO se reconstruye con los lotes que siguen abiertos; los lotes pasan a la siguiente semana sin reiniciarse.</p>}
@@ -737,7 +751,7 @@ function ConciliacionInventarioCard({ conciliacion }: { conciliacion: Resumen['c
       <div className="section-heading">
         <div>
           <strong>Conciliación FIFO vs. inventario físico</strong>
-          <p className="muted">Apertura + compras + ajustes − consumo teórico frente al conteo final.</p>
+          <p className="muted">Apertura + compras + ajustes − consumo FIFO activo frente al conteo final.</p>
         </div>
         <span className={`status ${conciliacion.productos_con_incidencia ? 'status--danger' : 'status--ok'}`}>
           {conciliacion.productos_con_incidencia ? `${conciliacion.productos_con_incidencia} incidencia(s)` : 'Sin diferencias'}
@@ -754,22 +768,32 @@ function ConciliacionInventarioCard({ conciliacion }: { conciliacion: Resumen['c
         <span>{conciliacion.alerta_independencia ?? 'El consumo FIFO activo coincide con el consumo inferido del inventario físico.'}</span>
         <small>Consumo FIFO activo: {conciliacion.consumo_fifo_activo_filas} movimientos · Reversiones históricas: {conciliacion.reversiones_historial_filas}. Las reversiones no se suman al consumo.</small>
       </div>
+      {conciliacion.conciliacion_apertura && <div className="summary-grid inventario-conciliacion__summary">
+        <div><small>Apertura física</small><strong>{mxn(conciliacion.conciliacion_apertura.inventario_fisico)}</strong></div>
+        <div><small>FIFO de apertura</small><strong>{mxn(conciliacion.conciliacion_apertura.fifo)}</strong></div>
+        <div><small>Diferencia histórica</small><strong className={Math.abs(conciliacion.conciliacion_apertura.diferencia_historica) > 0.01 ? 'text-danger' : ''}>{mxn(conciliacion.conciliacion_apertura.diferencia_historica)}</strong></div>
+        <div><small>Diferencia de conversión</small><strong>{mxn(conciliacion.conciliacion_apertura.diferencia_conversion)}</strong></div>
+      </div>}
       <details className="inventario-conciliacion__details">
         <summary>Ver detalle por producto</summary>
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Producto</th><th>Inicial</th><th>Compras</th><th>Ajuste</th><th>Consumo FIFO activo</th><th>Consumo inferido físico</th><th>FIFO esperado</th><th>Físico final</th><th>Diferencia</th><th>Valor</th><th>Tipo</th><th>Incidencia</th></tr></thead>
+            <thead><tr><th>Producto</th><th>Presentación</th><th>Inicial</th><th>Compras</th><th>Ajuste</th><th>Consumo FIFO activo</th><th>Consumo inferido físico</th><th>Esperado por movimientos</th><th>FIFO restante</th><th>Físico final</th><th>Residuo semana</th><th>Dif. FIFO</th><th>Valor FIFO</th><th>Valor residuo</th><th>Tipo</th><th>Incidencia</th></tr></thead>
             <tbody>{conciliacion.filas.map((fila) => (
               <tr key={fila.product_id}>
                 <td><strong>{fila.producto}</strong><small className="muted">{fila.unidad_base ?? 'unidad base pendiente'}</small></td>
+                <td><small className="muted">Apertura: {fila.presentacion_apertura.length ? fila.presentacion_apertura.map((p) => `${p.cantidad} ${p.unidad} × ${p.factor}`).join(', ') : '—'}</small><small className="muted">Cierre: {fila.presentacion_cierre.length ? fila.presentacion_cierre.map((p) => `${p.cantidad} ${p.unidad} × ${p.factor}`).join(', ') : '—'}</small></td>
                 <td>{fila.inventario_inicial}</td>
                 <td>{fila.compras_recibidas}</td>
                 <td>{fila.ajustes_inventario}</td>
                 <td>{fila.consumo_fifo_activo}</td>
                 <td className={Math.abs(fila.diferencia_consumo) > 0.01 ? 'text-danger' : ''}>{fila.consumo_fisico_inferido}</td>
+                <td>{fila.existencia_esperada_movimientos}</td>
                 <td>{fila.existencia_fifo_esperada}</td>
                 <td>{fila.inventario_fisico_final}</td>
                 <td className={Math.abs(fila.diferencia_cantidad) > 0.01 ? 'text-danger' : ''}>{fila.diferencia_cantidad}</td>
+                <td className={Math.abs(fila.diferencia_fifo) > 0.01 ? 'text-warning' : ''}>{fila.diferencia_fifo}</td>
+                <td>{fila.diferencia_fifo_valor == null ? '—' : mxn(fila.diferencia_fifo_valor)}</td>
                 <td>{fila.diferencia_valor == null ? '—' : mxn(fila.diferencia_valor)}</td>
                 <td><span className={`incidencia-tipo incidencia-tipo--${fila.incidencia_tipo}`}>{fila.incidencia_tipo.replace('_', ' ')}</span></td>
                 <td>{fila.incidencia}</td>

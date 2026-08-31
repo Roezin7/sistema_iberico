@@ -10,8 +10,21 @@ import {
   estadoResultadosMensual,
   totalizarPnl,
   costoVentasPorInventario,
+  seleccionarValorPatrimonio,
   type MovimientoPnl,
 } from './logic.js';
+
+describe('seleccionarValorPatrimonio', () => {
+  it('prefiere el cierre físico de la semana', () => {
+    expect(seleccionarValorPatrimonio(35237.42, 36100)).toEqual({ valor: 35237.42, fuente: 'inventario_fisico_cierre' });
+  });
+  it('usa el conteo físico actual sólo como provisional', () => {
+    expect(seleccionarValorPatrimonio(null, 36100)).toEqual({ valor: 36100, fuente: 'inventario_fisico_actual' });
+  });
+  it('deja patrimonio pendiente sin conteo físico', () => {
+    expect(seleccionarValorPatrimonio(null, null)).toEqual({ valor: null, fuente: 'pendiente_cierre' });
+  });
+});
 
 describe('costoVentasPorInventario', () => {
   it('usa apertura + compras − cierre', () => {

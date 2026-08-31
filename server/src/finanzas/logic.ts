@@ -96,6 +96,33 @@ export function costoVentasPorInventario(
 }
 
 /**
+ * Selecciona la única valuación que puede entrar al patrimonio del negocio.
+ *
+ * El libro FIFO restante es un control de costo y de conciliación: no es un
+ * conteo físico y puede contener lotes todavía no verificados. Por eso nunca
+ * sustituye al snapshot físico en el patrimonio. En una semana abierta se
+ * permite mostrar el último conteo físico de esa misma semana como valor
+ * provisional; si no existe, el patrimonio queda pendiente en vez de inflarse.
+ */
+export type FuenteInventarioPatrimonio =
+  | 'inventario_fisico_cierre'
+  | 'inventario_fisico_actual'
+  | 'pendiente_cierre';
+
+export function seleccionarValorPatrimonio(
+  cierre: number | null,
+  fisicoActual: number | null,
+): { valor: number | null; fuente: FuenteInventarioPatrimonio } {
+  if (cierre != null && Number.isFinite(cierre)) {
+    return { valor: redondear(cierre), fuente: 'inventario_fisico_cierre' };
+  }
+  if (fisicoActual != null && Number.isFinite(fisicoActual)) {
+    return { valor: redondear(fisicoActual), fuente: 'inventario_fisico_actual' };
+  }
+  return { valor: null, fuente: 'pendiente_cierre' };
+}
+
+/**
  * Capital de un socio = Σ transferencias a SU caja fuerte − Σ sus retiros.
  * (La transferencia a caja fuerte sigue siendo capital de la empresa; el retiro lo reduce.)
  */
