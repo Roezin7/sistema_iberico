@@ -58,8 +58,30 @@ function seleccionarLotesOperativos<T extends { fuente: string }>(lotes: T[], mo
   return vivos.length ? vivos : lotes;
 }
 
+const ZONA_OPERATIVA = 'America/Mexico_City';
+
+/**
+ * Devuelve la fecha civil de operación, no la fecha UTC del instante.
+ * PostgreSQL `date` no tiene zona horaria; guardar directamente un `Date`
+ * cercano a medianoche podía mover ventas al día siguiente en los reportes.
+ */
 function fechaISO(value: Date) {
-  return value.toISOString().slice(0, 10);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ZONA_OPERATIVA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (!year || !month || !day) throw new Error('No se pudo obtener la fecha operativa');
+  return `${year}-${month}-${day}`;
+}
+
+function fechaDb(value: Date) {
+  // El mediodía UTC evita cualquier conversión accidental al serializar DATE.
+  return new Date(`${fechaISO(value)}T12:00:00.000Z`);
 }
 
 function finDelDia(value: Date) {
@@ -260,7 +282,7 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
         product_id: consumo.productId,
         lote_id: consumo.loteId,
         epos_venta_id: venta.id,
-        fecha: venta.fecha,
+        fecha: fechaDb(venta.fecha),
         cantidad: consumo.cantidad,
         costo_unitario: consumo.costoUnitario,
         costo_total: consumo.costoTotal,
