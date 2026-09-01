@@ -1,6 +1,6 @@
 # P0 — Confiabilidad del cierre semanal
 
-**Estado:** implementado en código, pendiente de desplegar y ejecutar sobre la semana 65.
+**Estado:** implementado, publicado y ejecutado en producción sobre la semana 65.
 
 ## Cambios aplicados
 
@@ -46,9 +46,20 @@ de resolver las primeras cuatro categorías puede considerarse posible merma.
 - `npm test`: 112 pruebas aprobadas.
 - `prisma validate`: esquema válido.
 
+## Resultado de la ejecución en producción
+
+- Migración aplicada correctamente en PostgreSQL productivo.
+- Conciliación de la semana 65 guardada de forma idempotente: 95 productos,
+  85 con incidencia, diferencia residual de `-$3,594.74` y reporte todavía no
+  independiente.
+- No se alteraron ventas, consumos ni snapshots: permanecen 104 ventas, un
+  snapshot de cierre y 361 consumos FIFO activos (`$3,046.46`).
+- La cola accionable quedó agrupada en cinco grupos: Ronchata por inventario
+  insuficiente y cuatro recetas pendientes (Agua mineral, Cuba de Ron,
+  Clericot grande y Tabla de Tapas Mixtas).
+
 ## Siguiente acción de operación
 
-Después de desplegar, recalcular la conciliación de la semana 65, comprobar que
-se guarden 152 productos/líneas según el snapshot de cierre y verificar que el
-cierre no cree un snapshot adicional. No cerrar la semana si todavía existen
-las ocho ventas pendientes o con excepción sin una decisión explícita.
+Resolver esos cinco grupos con evidencia (receta validada o lote recibido),
+reprocesar el costeo y volver a recalcular la conciliación. El cierre seguirá
+bloqueado mientras exista una venta pendiente o una excepción real.
