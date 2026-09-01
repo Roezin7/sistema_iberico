@@ -54,12 +54,15 @@ de resolver las primeras cuatro categorías puede considerarse posible merma.
   independiente.
 - No se alteraron ventas, consumos ni snapshots: permanecen 104 ventas, un
   snapshot de cierre y 361 consumos FIFO activos (`$3,046.46`).
-- La cola accionable quedó agrupada en cinco grupos: Ronchata por inventario
-  insuficiente y cuatro recetas pendientes (Agua mineral, Cuba de Ron,
+- Se validó la receta operativa de **Agua mineral**: cada unidad vendida
+  consume 400 ml del producto de inventario. Las tres ventas de la semana se
+  recostearon en FIFO ($5.40 cada una) sin consumir una botella completa.
+- Después de reprocesar, la cola accionable quedó en cuatro grupos: Ronchata
+  por inventario insuficiente y tres recetas pendientes (Cuba de Ron,
   Clericot grande y Tabla de Tapas Mixtas).
 
 ## Siguiente acción de operación
 
-Resolver esos cinco grupos con evidencia (receta validada o lote recibido),
+Resolver esos cuatro grupos con evidencia (receta validada o lote recibido),
 reprocesar el costeo y volver a recalcular la conciliación. El cierre seguirá
 bloqueado mientras exista una venta pendiente o una excepción real.

@@ -57,18 +57,19 @@ consistente. No confirma todavía que todo el inventario físico esté explicado
 
 ## Excepciones Epos que siguen abiertas
 
-Las cinco asociaciones Epos existen en el catálogo. Las ocho líneas pendientes
-corresponden a cinco productos vendidos, no a productos sin mapeo:
+Las cinco asociaciones Epos existen en el catálogo. Después de validar la
+porción de Agua mineral (400 ml por unidad), quedan cinco líneas pendientes o
+excepcionales correspondientes a cuatro productos vendidos, no a productos
+sin mapeo:
 
 | Producto | Líneas | Venta | Motivo |
 |---|---:|---:|---|
-| Agua mineral | 3 | $75.00 | Falta receta operativa aprobada |
 | Tabla de Tapas Mixtas | 1 | $165.00 | Selección variable de tres montados; falta modelo verificable |
 | Cuba de Ron | 1 | $70.00 | Falta receta operativa aprobada |
 | Clericot grande | 1 | $130.00 | Falta receta operativa aprobada |
 | Ronchata | 2 | $170.00 | Faltan 29.57 ml de concentrado de horchata |
 
-No se deben inventar las cuatro recetas faltantes. Ronchata sí tiene receta
+No se deben inventar las tres recetas faltantes. Ronchata sí tiene receta
 validada; su excepción es de inventario y debe resolverse con una compra,
 conversión o conteo respaldado.
 
