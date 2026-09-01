@@ -8,7 +8,7 @@
 
 El consumo FIFO activo sí está calculándose y coincide con el costo de las
 ventas Epos que ya tienen receta. Sin embargo, la semana todavía **no es un
-resultado independiente ni está lista para cerrarse**: existen ocho líneas Epos
+resultado independiente ni está lista para cerrarse**: existen cuatro líneas Epos
 sin costo confirmado y permanece una diferencia histórica en la apertura.
 
 Las diferencias físicas no deben llamarse merma todavía. El residuo semanal
@@ -23,10 +23,10 @@ que sobreviva a esas revisiones podrá clasificarse como posible merma.
 | Efectivo | $5,550.00 |
 | Tarjeta | $2,560.00 |
 | Compras de inventario | **$3,981.00** |
-| Consumo FIFO activo | **$3,046.46** |
-| Ventas con costo FIFO activo | 96 líneas |
-| Líneas Epos pendientes o con excepción | 8 |
-| Importe Epos pendiente o con excepción | **$610.00** |
+| Consumo FIFO activo | **$3,128.06** |
+| Ventas con costo FIFO activo | 100 líneas |
+| Líneas Epos pendientes o con excepción | 4 |
+| Importe Epos pendiente o con excepción | **$465.00** |
 | Utilidad bruta provisional | **$5,063.54** |
 | Resultado operativo provisional | **$1,580.60** |
 | Inventario físico de apertura almacenado | $35,266.06 |
@@ -46,30 +46,29 @@ La fuente única del costo de ventas es el consumo FIFO activo (`venta_receta`).
 Las reversiones se conservan como historial/auditoría y no se suman al costo
 activo. En la revisión se observaron:
 
-- 361 movimientos de consumo FIFO activos;
-- $3,046.46 de costo activo;
+- 366 movimientos de consumo FIFO activos;
+- $3,128.06 de costo activo;
 - $0.00 de costo activo clasificado como excepción;
 - 133 filas de reversión histórica, excluidas del costo;
 - diferencia de costo contra las ventas Epos costeadas: **$0.00**.
 
-Esto confirma que el cálculo de costo para las 96 líneas costeadas es
+Esto confirma que el cálculo de costo para las 100 líneas costeadas es
 consistente. No confirma todavía que todo el inventario físico esté explicado.
 
 ## Excepciones Epos que siguen abiertas
 
-Las cinco asociaciones Epos existen en el catálogo. Después de validar la
-porción de Agua mineral (400 ml por unidad), quedan cinco líneas pendientes o
-excepcionales correspondientes a cuatro productos vendidos, no a productos
-sin mapeo:
+Las cinco asociaciones Epos existen en el catálogo. Después de validar las
+porciones de Agua mineral (400 ml por unidad) y Cuba de Ron (60 ml de Bacardi
++ una Coca de 250 ml), quedan cuatro líneas pendientes o excepcionales
+correspondientes a tres productos vendidos, no a productos sin mapeo:
 
 | Producto | Líneas | Venta | Motivo |
 |---|---:|---:|---|
-| Tabla de Tapas Mixtas | 1 | $165.00 | Selección variable de tres montados; falta modelo verificable |
-| Cuba de Ron | 1 | $70.00 | Falta receta operativa aprobada |
-| Clericot grande | 1 | $130.00 | Falta receta operativa aprobada |
+| Clericot grande | 1 | $130.00 | Faltan Manzanita y Manzana en el catálogo |
 | Ronchata | 2 | $170.00 | Faltan 29.57 ml de concentrado de horchata |
+| Tabla de Tapas Mixtas | 1 | $165.00 | No existe receta vinculada; la receta de Tabla de Quesos y Embutidos es otro producto |
 
-No se deben inventar las tres recetas faltantes. Ronchata sí tiene receta
+No se deben inventar las recetas faltantes. Ronchata sí tiene receta
 validada; su excepción es de inventario y debe resolverse con una compra,
 conversión o conteo respaldado.
 
@@ -159,7 +158,9 @@ costo del menú.
 1. Confirmar las presentaciones físicas de los productos con mayor residuo.
 2. Buscar y registrar tickets omitidos con su fecha real, sin duplicarlos.
 3. Resolver el concentrado de horchata de Ronchata.
-4. Documentar y aprobar Agua mineral, Cuba de Ron, Clericot y Tabla de Tapas.
+4. Registrar los productos faltantes de Clericot (Manzanita y Manzana) y
+   documentar la receta de Tabla de Tapas Mixtas; Agua mineral y Cuba de Ron
+   ya están validadas.
 5. Recalcular FIFO activo y la conciliación después de cada corrección.
 6. Revisar que el residuo restante sea únicamente físico y explicar cada línea.
 7. Sólo entonces calcular utilidad bruta/operativa como resultado verificado y

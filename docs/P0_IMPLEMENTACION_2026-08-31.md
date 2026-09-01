@@ -50,19 +50,23 @@ de resolver las primeras cuatro categorías puede considerarse posible merma.
 
 - Migración aplicada correctamente en PostgreSQL productivo.
 - Conciliación de la semana 65 guardada de forma idempotente: 95 productos,
-  85 con incidencia, diferencia residual de `-$3,594.74` y reporte todavía no
+  86 con incidencia, diferencia residual de `-$3,514.49` y reporte todavía no
   independiente.
-- No se alteraron ventas, consumos ni snapshots: permanecen 104 ventas, un
-  snapshot de cierre y 361 consumos FIFO activos (`$3,046.46`).
-- Se validó la receta operativa de **Agua mineral**: cada unidad vendida
-  consume 400 ml del producto de inventario. Las tres ventas de la semana se
-  recostearon en FIFO ($5.40 cada una) sin consumir una botella completa.
-- Después de reprocesar, la cola accionable quedó en cuatro grupos: Ronchata
-  por inventario insuficiente y tres recetas pendientes (Cuba de Ron,
-  Clericot grande y Tabla de Tapas Mixtas).
+- No se alteraron ventas ni snapshots: permanecen 104 ventas y un snapshot de
+  cierre; tras recostear Agua mineral y Cuba de Ron hay 366 consumos FIFO
+  activos (`$3,128.06`).
+- Se validaron las recetas operativas de **Agua mineral** (400 ml por unidad)
+  y **Cuba de Ron** (60 ml de Bacardi + 1 pieza de Coca de 250 ml). Las ventas
+  se recostearon en FIFO usando sus lotes activos.
+- Las tres ventas de Agua mineral quedaron en $5.40 cada una, sin consumir una
+  botella completa; la venta de Cuba de Ron quedó en $65.40.
+- Después de reprocesar, la cola accionable quedó en tres grupos: Ronchata por
+  inventario insuficiente, Clericot grande por ingredientes sin catálogo y
+  Tabla de Tapas Mixtas sin receta vinculada.
 
 ## Siguiente acción de operación
 
-Resolver esos cuatro grupos con evidencia (receta validada o lote recibido),
+Resolver esos tres grupos con evidencia (receta validada, alta de producto o
+lote recibido),
 reprocesar el costeo y volver a recalcular la conciliación. El cierre seguirá
 bloqueado mientras exista una venta pendiente o una excepción real.
