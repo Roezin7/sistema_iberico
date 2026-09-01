@@ -216,18 +216,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
           try {
             await finanzas.cerrar(semana.id); onCambio(); cargar();
           } catch (e) {
-            const mensaje = e instanceof Error ? e.message : 'No se pudo cerrar la semana';
-            if (!mensaje.toLowerCase().includes('excepciones de costeo')) {
-              error(mensaje);
-              return;
-            }
-            const continuar = await confirmar({
-              message: `${mensaje} Si cierras ahora, quedarán registradas como excepciones y no se descontará inventario para esas ventas. ¿Confirmas el cierre con esta evidencia pendiente?`,
-              tone: 'danger', confirmText: 'Cerrar con excepciones', cancelText: 'Seguir revisando',
-            });
-            if (!continuar) return;
-            try { await finanzas.cerrar(semana.id, { confirmar_excepciones: true }); onCambio(); cargar(); }
-            catch (errorCierre) { error(errorCierre instanceof Error ? errorCierre.message : 'No se pudo cerrar la semana'); }
+            error(e instanceof Error ? e.message : 'No se pudo cerrar la semana');
           }
         }}>Cerrar semana</button>
       )}
@@ -572,6 +561,8 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
   dias: DiaFila[];
   onCambio: () => void;
 }) {
+  const { error } = useToast();
+  const [recalculandoConciliacion, setRecalculandoConciliacion] = useState(false);
   const fila = (l: string, v: string, em?: boolean) => (
     <div className="kv"><span className="muted">{l}</span><span className={em ? 'big-number' : ''}>{v}</span></div>
   );
@@ -647,6 +638,8 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
 
       <div className="vision-callout"><strong>Cómo leer la diferencia</strong><span className="muted">Si el flujo de caja es mayor que la utilidad FIFO, normalmente se compró inventario que todavía está en bodega. Esa diferencia no es pérdida: es inventario convertido en activo.</span>{Math.abs(diferenciaVentas) > 0.01 && <span className="vision-callout__warning">Epos y movimientos registrados difieren por {mxn(diferenciaVentas)}. Revisa el método mixto, propinas u otros antes de cerrar.</span>}<span className="muted">El cierre y las correcciones se realizan únicamente en la pestaña <strong>Cierre</strong>.</span></div>
 
+      <ExcepcionesCosteoCard excepciones={r.excepciones_costeo ?? []} />
+
       <div className="resumen-card patrimonio-card">
         <div className="section-heading"><div><strong>Patrimonio operativo al corte</strong><p className="muted">La foto del negocio: dinero disponible más inventario, sin llamarlo utilidad.</p></div><span className="big-number">{mxn(patrimonioOperativo)}</span></div>
         <div className="patrimonio-grid">
@@ -714,7 +707,21 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
           {r.inventario.control_fifo.filas_reversiones_historial > 0 && <small>Las reversiones ({r.inventario.control_fifo.filas_reversiones_historial}) sólo permanecen como historial/auditoría; no se incluyen en costo de ventas. Excepciones activas: {r.inventario.control_fifo.filas_excepcion} movimientos ({mxn(r.inventario.control_fifo.costo_excepcion)}).</small>}
         </div>
       </div>
-      <ConciliacionInventarioCard conciliacion={r.conciliacion_inventario} />
+      <ConciliacionInventarioCard
+        conciliacion={r.conciliacion_inventario}
+        recalculando={recalculandoConciliacion}
+        onRecalcular={async () => {
+          setRecalculandoConciliacion(true);
+          try {
+            await finanzas.recalcularConciliacionInventario(semana.id);
+            onCambio();
+          } catch (e) {
+            error(e instanceof Error ? e.message : 'No se pudo guardar la conciliación');
+          } finally {
+            setRecalculandoConciliacion(false);
+          }
+        }}
+      />
       <CorreccionInventarioCard semana={semana} cierreId={r.inventario.cierre_snapshot_id} onSaved={onCambio} />
       <div className="resumen-card">
         <strong>Facturado (cuadre fiscal)</strong>
@@ -735,7 +742,42 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
   );
 }
 
-function ConciliacionInventarioCard({ conciliacion }: { conciliacion: Resumen['conciliacion_inventario'] }) {
+function ExcepcionesCosteoCard({ excepciones }: { excepciones: Resumen['excepciones_costeo'] }) {
+  const etiqueta: Record<Resumen['excepciones_costeo'][number]['causa'], string> = {
+    mapeo: 'Mapeo Epos',
+    receta: 'Receta / unidad',
+    inventario: 'Inventario FIFO',
+    captura: 'Captura de venta',
+  };
+  return (
+    <div className="resumen-card costeo-excepciones">
+      <div className="section-heading">
+        <div><strong>Por revisar antes de cerrar</strong><p className="muted">Una fila por producto y causa raíz; las ventas repetidas se acumulan aquí.</p></div>
+        <span className={`status ${excepciones.length ? 'status--warning' : 'status--ok'}`}>{excepciones.length ? `${excepciones.length} grupo(s)` : 'Sin pendientes'}</span>
+      </div>
+      {excepciones.length === 0 ? <p className="muted">Todas las ventas tienen costo FIFO activo o ya fueron resueltas.</p> : (
+        <div className="exception-list">
+          {excepciones.map((item) => (
+            <div className={`exception-row ${item.estado === 'excepcion' ? 'exception-row--bad' : ''}`} key={`${item.producto}-${item.causa}`}>
+              <div><strong>{item.producto}</strong><small className="muted">{etiqueta[item.causa]} · {item.lineas} línea(s) · {item.unidades} unidad(es) · venta {mxn(item.venta)}</small></div>
+              <div><span className={`status ${item.estado === 'excepcion' ? 'status--danger' : 'status--warning'}`}>{item.estado === 'excepcion' ? 'Excepción real' : 'Pendiente'}</span><small className="muted">{item.accion}</small></div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConciliacionInventarioCard({
+  conciliacion,
+  recalculando,
+  onRecalcular,
+}: {
+  conciliacion: Resumen['conciliacion_inventario'];
+  recalculando: boolean;
+  onRecalcular: () => void | Promise<void>;
+}) {
   if (conciliacion.estado === 'pendiente_cierre') {
     return (
       <div className="resumen-card inventario-conciliacion">
@@ -753,9 +795,17 @@ function ConciliacionInventarioCard({ conciliacion }: { conciliacion: Resumen['c
           <strong>Conciliación FIFO vs. inventario físico</strong>
           <p className="muted">Apertura + compras + ajustes − consumo FIFO activo frente al conteo final.</p>
         </div>
-        <span className={`status ${conciliacion.productos_con_incidencia ? 'status--danger' : 'status--ok'}`}>
-          {conciliacion.productos_con_incidencia ? `${conciliacion.productos_con_incidencia} incidencia(s)` : 'Sin diferencias'}
-        </span>
+        <div className="section-heading__actions">
+          <span className={`status ${conciliacion.productos_con_incidencia ? 'status--danger' : 'status--ok'}`}>
+            {conciliacion.productos_con_incidencia ? `${conciliacion.productos_con_incidencia} incidencia(s)` : 'Sin diferencias'}
+          </span>
+          <span className={`status ${conciliacion.persistida ? 'status--info' : 'status--warning'}`}>
+            {conciliacion.persistida ? `Guardada · ${conciliacion.filas_persistidas}` : 'No guardada'}
+          </span>
+          <button className="btn-secondary" disabled={recalculando} onClick={() => void onRecalcular()}>
+            {recalculando ? 'Guardando…' : 'Recalcular y guardar'}
+          </button>
+        </div>
       </div>
       <div className="summary-grid inventario-conciliacion__summary">
         <div><small>Productos revisados</small><strong>{conciliacion.filas.length}</strong></div>

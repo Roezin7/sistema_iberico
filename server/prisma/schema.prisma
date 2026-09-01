@@ -49,6 +49,7 @@ model negocios {
   productos_menu         productos_menu[]
   inventory_lots         inventory_lots[]
   inventory_consumptions inventory_consumptions[]
+  inventory_fifo_reconciliations inventory_fifo_reconciliations[]
   inventory_adjustments  inventory_adjustments[]
 }
 
@@ -213,6 +214,7 @@ model products {
   purchase_capture_lines     purchase_capture_lines[]
   inventory_lots             inventory_lots[]
   inventory_consumptions     inventory_consumptions[]
+  inventory_fifo_reconciliations inventory_fifo_reconciliations[]
   inventory_adjustments      inventory_adjustments[]
   product_zone_units         product_zone_units[]
   producto_costos_historicos producto_costos_historicos[]
@@ -367,6 +369,37 @@ model inventory_consumptions {
   @@index([negocio_id, fecha])
   @@index([lote_id])
   @@index([epos_venta_id])
+}
+
+/// Evidencia congelada de la conciliación entre el libro FIFO y el conteo
+/// físico de una semana. Se reemplaza de forma idempotente al recalcular; no
+/// modifica lotes, ventas ni snapshots.
+model inventory_fifo_reconciliations {
+  id                  BigInt   @id @default(autoincrement())
+  negocio_id          BigInt
+  semana_id           BigInt
+  product_id          BigInt
+  apertura_qty        Decimal  @default(0) @db.Decimal(14, 4)
+  compras_qty         Decimal  @default(0) @db.Decimal(14, 4)
+  consumo_teorico_qty Decimal  @default(0) @db.Decimal(14, 4)
+  fifo_esperado_qty   Decimal  @default(0) @db.Decimal(14, 4)
+  fisico_final_qty    Decimal  @default(0) @db.Decimal(14, 4)
+  diferencia_qty      Decimal  @default(0) @db.Decimal(14, 4)
+  costo_unitario_fifo Decimal  @default(0) @db.Decimal(14, 6)
+  diferencia_valor    Decimal  @default(0) @db.Decimal(14, 4)
+  tipo_incidencia     String
+  estado              String   @default("pendiente")
+  notas               String?
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime @updatedAt @db.Timestamptz(6)
+
+  negocios negocios @relation(fields: [negocio_id], references: [id])
+  semanas  semanas  @relation(fields: [semana_id], references: [id])
+  products products @relation(fields: [product_id], references: [id])
+
+  @@unique([semana_id, product_id])
+  @@index([negocio_id, semana_id])
+  @@index([negocio_id, product_id])
 }
 
 /// Corrección auditable de un cierre físico. Nunca muta un snapshot histórico:
@@ -543,6 +576,7 @@ model semanas {
   cierres                cierres_semana[]
   conciliaciones_diarias conciliaciones_diarias[]
   inventario_semanal     inventario_semanal?
+  inventory_fifo_reconciliations inventory_fifo_reconciliations[]
   inventory_adjustments  inventory_adjustments[]
 
   @@unique([negocio_id, fecha_inicio])

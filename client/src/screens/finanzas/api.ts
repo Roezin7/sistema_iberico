@@ -41,6 +41,7 @@ export interface Resumen {
   costo_ventas_fifo_activo: number | null;
   ventas_epos_pendientes: number;
   importe_ventas_epos_pendientes: number;
+  excepciones_costeo: ExcepcionCosteoSemana[];
   resultado_independiente: boolean;
   diferencia_fisica_valor: number | null;
   facturado: { tarjeta_facturable: number; gastos_facturados: number; balance: number };
@@ -71,6 +72,7 @@ export interface Resumen {
     conciliacion_apertura: { inventario_fisico: number; fifo: number; diferencia_historica: number; diferencia_conversion: number } | null;
     consumo_fifo_activo_filas: number; reversiones_historial_filas: number;
     productos_con_diferencia_consumo: number; reporte_independiente: boolean;
+    persistida: boolean; filas_persistidas: number;
     alerta_independencia: string | null;
     filas: {
       product_id: number; producto: string; unidad_base: string | null;
@@ -88,6 +90,16 @@ export interface Resumen {
       incidencia: string;
     }[];
   };
+}
+export interface ExcepcionCosteoSemana {
+  producto: string;
+  estado: 'pendiente' | 'excepcion';
+  causa: 'mapeo' | 'receta' | 'inventario' | 'captura';
+  accion: string;
+  lineas: number;
+  unidades: number;
+  venta: number;
+  detalles: string[];
 }
 export interface Movimiento {
   id: number; fecha: string; tipo: TipoMov; monto: number;
@@ -160,6 +172,9 @@ export const finanzas = {
   crearSemana: (fecha_inicio?: string) => api<Semana>('/finanzas/semanas', { method: 'POST', body: { fecha_inicio } }),
   cuadre: (id: number) => api<{ ubicaciones: FilaCuadre[] }>(`/finanzas/semanas/${id}/cuadre`),
   resumen: (id: number) => api<Resumen>(`/finanzas/semanas/${id}/resumen`),
+  conciliacionInventario: (id: number) => api<Resumen['conciliacion_inventario']>(`/finanzas/semanas/${id}/conciliacion-inventario`),
+  excepcionesCosteo: (id: number) => api<ExcepcionCosteoSemana[]>(`/finanzas/semanas/${id}/excepciones-costeo`),
+  recalcularConciliacionInventario: (id: number) => api<Resumen['conciliacion_inventario'] & { persistida: boolean; filas_persistidas: number }>(`/finanzas/semanas/${id}/conciliacion-inventario/recalcular`, { method: 'POST', body: {} }),
   correccionesReferencias: (semanaId: number) => api<CorreccionReferencias>(`/finanzas/semanas/${semanaId}/inventario-correcciones/referencias`),
   correcciones: (semanaId: number) => api<CorreccionInventario[]>(`/finanzas/semanas/${semanaId}/inventario-correcciones`),
   crearCorreccion: (semanaId: number, body: Record<string, unknown>) => api(`/finanzas/semanas/${semanaId}/inventario-correcciones`, { method: 'POST', body }),

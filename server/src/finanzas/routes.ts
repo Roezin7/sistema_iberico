@@ -65,6 +65,21 @@ finanzasRouter.get('/semanas/:id/resumen', asyncHandler(async (req, res) => {
   res.json(await svc.resumen(req.auth!.negocioId, BigInt(id.parse(req.params.id))));
 }));
 
+/** Conciliación física/FIFO congelada para auditoría del cierre. */
+finanzasRouter.get('/semanas/:id/conciliacion-inventario', asyncHandler(async (req, res) => {
+  res.json(await svc.conciliacionInventarioSemana(req.auth!.negocioId, BigInt(id.parse(req.params.id))));
+}));
+
+/** Cola de costeo agrupada por causa raíz para operación diaria. */
+finanzasRouter.get('/semanas/:id/excepciones-costeo', asyncHandler(async (req, res) => {
+  res.json(await svc.listarExcepcionesCosteoSemana(req.auth!.negocioId, BigInt(id.parse(req.params.id))));
+}));
+
+/** Recalcula y reemplaza únicamente la conciliación de esa semana. */
+finanzasRouter.post('/semanas/:id/conciliacion-inventario/recalcular', asyncHandler(async (req, res) => {
+  res.json(await svc.persistirConciliacionInventarioSemana(req.auth!.negocioId, BigInt(id.parse(req.params.id))));
+}));
+
 /** Referencias y correcciones físicas auditables ligadas a una semana. */
 finanzasRouter.get('/semanas/:id/inventario-correcciones/referencias', asyncHandler(async (req, res) => {
   res.json(await referenciasCorreccion(req.auth!.negocioId));
