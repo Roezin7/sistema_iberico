@@ -298,7 +298,7 @@ function RecetasCfg() {
   return (
     <>
       <div className="resumen-card" style={{ gap: '0.65rem' }}>
-        <div className="card-head"><div><strong>Editor de recetas</strong><p className="muted">Crea una nueva versión sin borrar el historial. Las cantidades se costean con el catálogo y FIFO vigente.</p></div>{nombre && <span className="chip chip--info">editando {nombre}</span>}</div>
+        <div className="card-head"><div><strong>Editor de recetas</strong><p className="muted">Crea una versión nueva.</p></div>{nombre && <span className="chip chip--info">editando {nombre}</span>}</div>
         <div className="row-actions" style={{ flexWrap: 'wrap' }}>
           <input placeholder="Producto de menú" value={nombre} onChange={(e) => setNombre(e.target.value)} style={{ flex: 2, minWidth: 180 }} />
           <input placeholder="ID Epos (opcional)" inputMode="numeric" value={eposId} onChange={(e) => setEposId(e.target.value.replace(/\D/g, ''))} style={{ flex: 1, minWidth: 130 }} />
@@ -330,7 +330,7 @@ function RecetasCfg() {
       </div>
 
       <div className="resumen-card" style={{ gap: '0.5rem' }}>
-        <div className="card-head"><div><strong>Catálogo de recetas</strong><p className="muted">Selecciona un producto para preparar una nueva versión. La versión anterior permanece intacta.</p></div><span className="badge-neutral">{menu.length} productos</span></div>
+        <div className="card-head"><div><strong>Catálogo de recetas</strong><p className="muted">Selecciona un producto.</p></div><span className="badge-neutral">{menu.length} productos</span></div>
         <div className="config-quality-filters"><input className="buscador" placeholder="Buscar en el menú…" value={filtroMenu} onChange={(e) => setFiltroMenu(e.target.value)} /><select aria-label="Filtrar calidad del menú" value={filtroCalidad} onChange={(e) => setFiltroCalidad(e.target.value as typeof filtroCalidad)}><option value="todos">Todos los productos</option><option value="sin_epos">Sin vínculo Epos</option><option value="sin_receta">Sin receta</option><option value="incompleta">Receta incompleta</option></select></div>
         {menu.length === 0 && <p className="muted">Aún no hay recetas cargadas.</p>}
         {menu.filter((p) => {
@@ -409,7 +409,7 @@ function InventarioCfg() {
       <div className="config-intro resumen-card">
         <div>
           <strong>Productos e inventario</strong>
-          <p className="muted">Un solo lugar para cambiar nombre, tienda, mínimo y presentación. El sistema usa esos datos para convertir compras a la unidad FIFO y para mostrar el inventario en piezas.</p>
+          <p className="muted">Nombre, tienda, mínimo y presentación.</p>
         </div>
         <div className="config-stats">
           <span><b>{productos.filter((p) => p.active).length}</b> activos</span>
@@ -467,7 +467,7 @@ function CategoriasInvCfg({ categorias, onChange }: { categorias: CategoriaInv[]
   return (
     <div className="resumen-card" style={{ gap: '0.5rem' }}>
       <strong>Categorías de inventario</strong>
-      <p className="muted">Sirven para agrupar el conteo y el inventario (alcohol, cocina, congelado…).</p>
+      <p className="muted">Agrupan el conteo.</p>
       <ul className="conteo-list list-flat">
         {categorias.length === 0 && <li className="conteo-row"><span className="muted">Aún no hay categorías.</span></li>}
         {categorias.map((c) => (
@@ -632,7 +632,7 @@ function ProductoEditorPanel({ p, stores, zonas, categorias, onChange }: { p: Pr
             </select>
           </label>
       </div></section>
-      <section className="product-editor__section"><h3>Compra y FIFO</h3><p className="muted">El mínimo se expresa en presentaciones. FIFO convierte cada presentación a la unidad base automáticamente.</p><div className="form-grid form-grid--four">
+      <section className="product-editor__section"><h3>Compra y FIFO</h3><p className="muted">Configura mínimo y presentación.</p><div className="form-grid form-grid--four">
         <label>Mínimo de compra<input type="number" min="0" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} /></label>
         <label>Presentación<select value={unidadCompra} onChange={(e) => setUnidadCompra(e.target.value)}><option value="">Selecciona…</option>{PRESENTACIONES.map((u) => <option key={u} value={u}>{u}</option>)}</select></label>
         <label>Contenido por presentación<input type="number" min="0" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" /></label>
@@ -642,7 +642,7 @@ function ProductoEditorPanel({ p, stores, zonas, categorias, onChange }: { p: Pr
         <label>Rendimiento útil<input type="number" min="0.01" max="1" step="0.01" value={rendimiento} onChange={(e) => setRendimiento(e.target.value)} /><small className="field-help">1 = 100% aprovechable</small></label>
         <div className="conversion-preview"><span>Conversión</span><strong>{contenidoCompra && unidadBase ? `1 ${unidadCompra || 'presentación'} = ${contenidoCompra} ${unidadBase}` : 'Falta configurar'}</strong><small>{costo && contenidoCompra ? `${mxn(Number(costo) / Number(contenidoCompra))} por ${unidadBase || 'unidad base'}` : 'Agrega costo y contenido'}</small></div>
       </div></section>
-      <section className="product-editor__section"><h3>Cómo se cuenta</h3><p className="muted">Selecciona la unidad que verá el equipo en cada zona. El factor indica cuántas unidades base representa una captura.</p><div className="zone-editor">{zonas.map((z) => { const u = p.unidades.find((x) => x.zona_id === z.id); return <UnidadZonaRow key={z.id} productId={p.id} zona={z} unidad={u} onChange={onChange} />; })}</div></section>
+      <section className="product-editor__section"><h3>Cómo se cuenta</h3><p className="muted">Unidad de captura por zona.</p><div className="zone-editor">{zonas.map((z) => { const u = p.unidades.find((x) => x.zona_id === z.id); return <UnidadZonaRow key={z.id} productId={p.id} zona={z} unidad={u} onChange={onChange} />; })}</div></section>
       {error && <p className="error-msg">{error}</p>}
       <div className="product-editor__actions"><button className="btn-primary" onClick={guardar}>{ok ? 'Guardado ✓' : 'Guardar cambios'}</button><button className="btn-secondary" onClick={async () => { await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: { active: !p.active } }); onChange(); }}>{p.active ? 'Desactivar producto' : 'Reactivar producto'}</button></div>
     </div>

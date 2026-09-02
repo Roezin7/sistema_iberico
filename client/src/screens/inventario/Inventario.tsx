@@ -286,7 +286,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   return (
     <>
       <section className="inventory-capture-context">
-        <div className="section-heading"><div><strong>¿Qué estás contando?</strong><p className="muted">Cada captura queda identificada y no reemplaza el historial.</p></div></div>
+        <div className="section-heading"><div><strong>¿Qué estás contando?</strong><p className="muted">Elige el tipo de conteo.</p></div></div>
         {cierreGuiado ? <div className="info-box info-box--compact"><strong>Cierre físico de {semanaId ? `la semana ${semanaId}` : 'la semana actual'}</strong><span>Captura Local y Bodega. Al guardar volverás automáticamente al cierre de la semana.</span></div> : <div className="pill-row">
           {([
             ['conteo_operativo', 'Conteo operativo'],
@@ -301,7 +301,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           {(tipo === 'apertura' || tipo === 'cierre') && <label>Semana<select aria-label="Semana del conteo" value={semanaId ?? ''} onChange={(e) => setSemanaId(e.target.value ? Number(e.target.value) : null)}><option value="">Selecciona…</option>{semanas.map((s) => <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>)}</select></label>}
           {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}
         </div>}
-        <p className="muted inventory-unit-help">Captura botellas, cajas, paquetes o piezas. El sistema convierte automáticamente para FIFO y costeo.</p>
+        <p className="muted inventory-unit-help">Captura botellas, cajas, paquetes o piezas.</p>
       </section>
       <div className="zona-tabs">
         {zonas.map((z) => (
@@ -583,7 +583,7 @@ function InventarioActual() {
       ))}
       <details className="resumen-card inventory-history">
         <summary><span><strong>Historial de conteos</strong><small>Cierres, aperturas, ajustes y conteos operativos</small></span><span className="muted">Auditoría</span></summary>
-        <div className="inventory-history__body"><p className="muted">Cada conteo indica si fue apertura, cierre o ajuste. El operativo no cambia por sí solo el cierre semanal.</p>
+        <div className="inventory-history__body"><p className="muted">Aperturas, cierres, ajustes y conteos.</p>
         {historial.length === 0 ? <p className="muted">Sin conteos registrados.</p> : (
           <ul className="conteo-list">
             {historial.slice(0, 12).map((s) => {

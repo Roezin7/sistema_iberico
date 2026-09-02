@@ -614,7 +614,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         <div>
           <span className="eyebrow">Lectura financiera de la semana</span>
           <h2>Dos números, dos preguntas distintas</h2>
-          <p className="muted">El flujo de caja explica cuánto dinero cambió de lugar. El resultado FIFO explica cuánto ganó realmente la operación después de reconocer lo consumido.</p>
+          <p className="muted">Caja y resultado FIFO.</p>
         </div>
         <span className={semana.estado === 'abierta' ? 'chip chip--info' : 'chip chip--ok'}>{semana.estado === 'abierta' ? 'Semana en curso' : 'Semana cerrada'}</span>
       </div>
@@ -658,7 +658,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
       <ExcepcionesCosteoCard excepciones={r.excepciones_costeo ?? []} />
 
       <div className="resumen-card patrimonio-card">
-        <div className="section-heading"><div><strong>Patrimonio operativo al corte</strong><p className="muted">La foto del negocio: dinero disponible más inventario, sin llamarlo utilidad.</p></div><span className="big-number">{mxn(patrimonioOperativo)}</span></div>
+        <div className="section-heading"><div><strong>Patrimonio operativo al corte</strong><p className="muted">Caja más inventario.</p></div><span className="big-number">{mxn(patrimonioOperativo)}</span></div>
         <div className="patrimonio-grid">
           <div><small>Banco y caja</small><strong>{mxn(r.saldo_real_final_total)}</strong></div>
           <div><small>Inventario físico al corte</small><strong>{mxn(inventarioFisico)}</strong></div>
@@ -686,7 +686,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
       </div>
 
       <div className="resumen-card semana-evolucion">
-        <div className="section-heading"><div><strong>Evolución de la semana</strong><p className="muted">El selector superior cambia esta misma lectura para cada semana sin mezclar periodos.</p></div><span className="muted">{diasOperativos.length} días operativos</span></div>
+        <div className="section-heading"><div><strong>Evolución de la semana</strong><p className="muted">Ventas y egresos.</p></div><span className="muted">{diasOperativos.length} días operativos</span></div>
         {diasOperativos.length > 0 ? <div className="semana-evolucion__grid">{diasOperativos.map((dia) => <div key={dia.fecha}><small>{dia.dia} · {dia.fecha.slice(5)}</small><strong>{mxn(dia.total_ventas)}</strong><span className="muted">Egresos {mxn(dia.total_egresos)}</span></div>)}</div> : <p className="muted">No hay ventas registradas en los días operativos de esta semana.</p>}
       </div>
 
@@ -769,7 +769,7 @@ function ExcepcionesCosteoCard({ excepciones }: { excepciones: Resumen['excepcio
   return (
     <div className="resumen-card costeo-excepciones">
       <div className="section-heading">
-        <div><strong>Por revisar antes de cerrar</strong><p className="muted">Una fila por producto y causa raíz; las ventas repetidas se acumulan aquí.</p></div>
+        <div><strong>Por revisar antes de cerrar</strong><p className="muted">Excepciones agrupadas.</p></div>
         <span className={`status ${excepciones.length ? 'status--warning' : 'status--ok'}`}>{excepciones.length ? `${excepciones.length} grupo(s)` : 'Sin pendientes'}</span>
       </div>
       {excepciones.length === 0 ? <p className="muted">Todas las ventas tienen costo FIFO activo o ya fueron resueltas.</p> : (
@@ -799,7 +799,7 @@ function ConciliacionInventarioCard({
     return (
       <div className="resumen-card inventario-conciliacion">
         <strong>Conciliación FIFO vs. inventario físico</strong>
-        <p className="muted">Se mostrará al cerrar la semana, después de capturar el inventario físico final.</p>
+        <p className="muted">Disponible al cerrar.</p>
       </div>
     );
   }
@@ -810,7 +810,7 @@ function ConciliacionInventarioCard({
       <div className="section-heading">
         <div>
           <strong>Conciliación FIFO vs. inventario físico</strong>
-          <p className="muted">Apertura + compras + ajustes − consumo FIFO activo frente al conteo final.</p>
+          <p className="muted">Físico contra FIFO.</p>
         </div>
         <div className="section-heading__actions">
           <span className={`status ${conciliacion.productos_con_incidencia ? 'status--danger' : 'status--ok'}`}>
@@ -868,7 +868,7 @@ function ConciliacionInventarioCard({
             ))}</tbody>
           </table>
         </div>
-        <p className="muted inventario-conciliacion__note">La incidencia es una hipótesis de revisión. Confirma si se trata de merma, error de captura, receta incorrecta o compra faltante antes de ajustar el inventario.</p>
+        <p className="muted inventario-conciliacion__note">Confirma la causa antes de ajustar.</p>
       </details>
     </div>
   );
@@ -911,7 +911,7 @@ function CorreccionInventarioCard({ semana, cierreId, onSaved }: { semana: Seman
   }
 
   return <div className="resumen-card inventario-correccion">
-    <div className="section-heading"><div><strong>Corrección de inventario</strong><p className="muted">Ajusta una semana cerrada sin editar su snapshot histórico. El cambio queda auditado y se encadena a la siguiente apertura.</p></div><span className="chip chip--info">FIFO + físico</span></div>
+    <div className="section-heading"><div><strong>Corrección de inventario</strong><p className="muted">Ajuste auditado sobre una semana cerrada.</p></div><span className="chip chip--info">FIFO + físico</span></div>
     {!cierreId ? <p className="muted">Captura y cierra el inventario físico antes de corregir esta semana.</p> : <>
       <div className="form-grid form-grid--four">
         <label>Producto<select value={productoId} onChange={(e) => { setProductoId(e.target.value); setZonaId(''); }}><option value="">Selecciona…</option>{refs?.productos.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></label>
@@ -986,7 +986,7 @@ function CuadreView({ ref_, semana, filas, resumen, onChange }: { ref_: Referenc
   return (
     <>
       <section className="closure-flow" aria-labelledby="cierre-guiado-titulo">
-        <div className="section-heading"><div><span className="eyebrow">Cierre guiado</span><h2 id="cierre-guiado-titulo">Deja la semana lista</h2><p className="muted">Completa cada paso. Los detalles FIFO y los snapshots se guardan automáticamente.</p></div></div>
+        <div className="section-heading"><div><span className="eyebrow">Cierre guiado</span><h2 id="cierre-guiado-titulo">Deja la semana lista</h2><p className="muted">Completa los cuatro pasos.</p></div></div>
         <div className="closure-flow__steps">
           <Link to={`/finanzas?semana=${semana.id}&tab=dia`} className={`closure-flow__step ${ventasListas ? 'is-done' : ''}`}><strong>1</strong><span><b>Ventas y pagos</b><small>{ventasListas ? 'Revisados' : 'Revisar Epos y corte diario'}</small></span></Link>
           <Link to={`/compras?semana=${semana.id}&fecha=${semana.fecha_inicio}&return=finanzas`} className="closure-flow__step"><strong>2</strong><span><b>Entradas y egresos</b><small>Tickets, gastos y sueldos</small></span></Link>
@@ -1067,7 +1067,7 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
       <section className="info-box unified-operations-intro">
         <div>
           <strong>Una sola entrada para compras y tickets</strong>
-          <p className="muted">Registra la entrada desde Entradas. Al confirmarla se crean juntos el lote FIFO y el movimiento financiero.</p>
+          <p className="muted">Registra la entrada desde Entradas.</p>
         </div>
         <Link className="btn-primary" to={`/compras?semana=${semana.id}&fecha=${semana.fecha_inicio}&return=finanzas`}>Abrir Entradas</Link>
       </section>

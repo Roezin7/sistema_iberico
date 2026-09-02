@@ -121,7 +121,7 @@ export default function CostosMenu() {
             <Icono name="trending" size={24} className="ttl-icon" />
             <h1>Costos del menú</h1>
           </div>
-          <p className="muted">Costo operativo FIFO por receta vigente, ordenado como la carta.</p>
+          <p className="muted">Costo FIFO por receta.</p>
         </div>
         <div className="menu-costos-actions">
           <button className="btn-secondary" onClick={() => window.print()}><Icono name="file" size={17} /> Imprimir / PDF</button>
@@ -180,7 +180,7 @@ export default function CostosMenu() {
 function ResultadoMensual({ data }: { data: RespuestaResultado }) {
   const total = data.total;
   return <section className="resultados-mensuales" aria-labelledby="resultados-mensuales-titulo">
-    <div className="section-heading"><div><span className="eyebrow">P&amp;L mensual</span><h2 id="resultados-mensuales-titulo">Rentabilidad histórica</h2><p className="muted">Comparación de los últimos seis meses. El mes actual aparece como parcial.</p></div><span className="chip chip--info">Costo: FIFO cuando existe</span></div>
+    <div className="section-heading"><div><span className="eyebrow">P&amp;L mensual</span><h2 id="resultados-mensuales-titulo">Rentabilidad histórica</h2><p className="muted">Últimos seis meses.</p></div><span className="chip chip--info">Costo: FIFO</span></div>
     <div className="resultados-mensuales__total"><div><small>Ventas acumuladas</small><strong>{money(total.ventas.total)}</strong></div><div><small>Utilidad operativa</small><strong>{money(total.utilidad_operativa)}</strong></div><div><small>Margen operativo</small><strong>{percent(total.margen_operativo * 100)}</strong></div></div>
     <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ventas</th><th>Costo ventas</th><th>Sueldos + gastos</th><th>Utilidad operativa</th><th>Margen</th></tr></thead><tbody>{data.meses.map((fila) => <tr key={fila.mes}><td><strong>{fila.mes}</strong>{fila.parcial && <small className="muted"> · parcial</small>}</td><td>{fila.sin_movimientos ? '—' : money(fila.ventas.total)}</td><td>{fila.sin_movimientos ? '—' : <>{money(fila.costo_ventas)} <small className="muted">· {fila.costo_ventas_metodo.toUpperCase()}</small></>}</td><td>{fila.sin_movimientos ? '—' : money(fila.sueldos + fila.gastos_totales)}</td><td className={fila.utilidad_operativa < 0 ? 'text-danger' : ''}>{fila.sin_movimientos ? '—' : money(fila.utilidad_operativa)}</td><td>{fila.sin_movimientos ? '—' : percent(fila.margen_operativo * 100)}</td></tr>)}</tbody></table></div>
   </section>;

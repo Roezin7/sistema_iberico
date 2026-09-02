@@ -106,7 +106,7 @@ export default function Compras() {
   }
 
   return <div className="page compras-page">
-    <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Entradas</h1></div><p className="muted">Compras, tickets y gastos se registran aquí. Una entrada confirmada actualiza FIFO y caja.</p>{volverAFinanzas && <Link className="inline-link" to={`/finanzas?semana=${semanaId ?? ''}&tab=cuadre`}>← Volver a Semana</Link>}</header>
+    <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Entradas</h1></div><p className="muted">Registra compras y gastos.</p>{volverAFinanzas && <Link className="inline-link" to={`/finanzas?semana=${semanaId ?? ''}&tab=cuadre`}>← Volver a Semana</Link>}</header>
     {!esAdmin && <div className="info-box purchase-operator-note"><strong>Para registrar una compra</strong><span>Sube la foto, confirma fecha y forma de pago y envíala a revisión. No necesitas calcular FIFO.</span></div>}
     {esAdmin && <div className="compras-weekbar"><label>Semana de consulta<select aria-label="Semana de consulta" value={semanaId ?? ''} onChange={(e) => setSemanaId(Number(e.target.value))} disabled={cargandoSemanas || !semanas.length}><option value="">{cargandoSemanas ? 'Cargando semanas…' : 'Seleccionar semana'}</option>{semanas.map((s) => <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>)}</select></label>{semana && <span className={`status status--${semana.estado === 'abierta' ? 'ok' : 'cargando'}`}>{weekStateLabel(semana)}</span>}</div>}
     <CapturaRapida key={semana?.id ?? fechaInicial} fechaInicial={semana?.fecha_inicio ?? fechaInicial} onSaved={() => { if (esAdmin) void cargar(); }} />
@@ -248,7 +248,7 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
     finally { setGuardando(false); }
   }
 
-  return <section className="card quick-purchase" aria-labelledby="captura-compra-titulo"><div className="quick-purchase__intro"><span className="quick-purchase__step">1</span><div><h2 id="captura-compra-titulo">Registrar entrada</h2><p className="muted">Sube la foto, revisa los datos y envíala a revisión.</p></div></div>
+  return <section className="card quick-purchase" aria-labelledby="captura-compra-titulo"><div className="quick-purchase__intro"><span className="quick-purchase__step">1</span><div><h2 id="captura-compra-titulo">Registrar entrada</h2><p className="muted">Sube el ticket y revisa los datos.</p></div></div>
     <div className="quick-purchase__mode"><strong>Tipo de comprobante</strong><button className={modo === 'ticket' ? 'tab tab--on' : 'tab'} onClick={() => setModo('ticket')}>Ticket</button><button className={modo === 'orden_manuscrita' ? 'tab tab--on' : 'tab'} onClick={() => setModo('orden_manuscrita')}>Orden manual</button><span className="muted">{modo === 'orden_manuscrita' ? 'El supervisor completará lo que falte.' : 'La foto sólo propone datos; siempre se revisa antes de confirmar.'}</span></div>
     <div className="quick-purchase__actions"><label className="btn-primary file-button">📷 Foto de {modo === 'orden_manuscrita' ? 'la orden' : 'ticket'}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic" capture="environment" onChange={(e) => fotoSeleccionada(e.target.files?.[0])} /></label><button className="btn-secondary" onClick={() => void leerTicket()} disabled={!foto || leyendo}>{leyendo ? 'Leyendo…' : 'Leer fuente'}</button></div>
     {cargandoRefs && <div className="quick-purchase__loading"><Cargando etiqueta="Preparando captura de compras…" /></div>}
@@ -320,7 +320,7 @@ export function RegistroComprasPanel({ semana, onChange }: { semana: Semana; onC
 
   return <section className="unified-purchases" aria-labelledby="compras-titulo">
     <div className="section-heading unified-purchases__heading">
-      <div><h2 id="compras-titulo">Compras de la semana</h2><p className="muted">Cada ticket se captura una vez. Al confirmarlo, inventario y finanzas se actualizan juntos.</p></div>
+      <div><h2 id="compras-titulo">Compras de la semana</h2><p className="muted">Un ticket actualiza inventario y caja.</p></div>
       <span className={`status status--${semana.estado === 'abierta' ? 'ok' : 'cargando'}`}>{semana.estado === 'abierta' ? 'Captura abierta' : 'Consulta histórica'}</span>
     </div>
     <div className="purchase-flow-guide" aria-label="Flujo de compras"><span><strong>1</strong> Registrar</span><span><strong>2</strong> Revisar</span><span><strong>3</strong> Confirmar</span></div>
@@ -537,7 +537,7 @@ function ResumenSemana({ semana, compras, lotes }: { semana: Semana; compras: Co
   const totalCompras = compras.reduce((s, c) => s + c.total, 0);
   const totalFifo = lotes.reduce((s, l) => s + l.cantidad_inicial * l.costo_unitario, 0);
   const confirmadas = compras.filter((c) => c.estado === 'confirmada').length;
-  return <section className="card compras-week-summary"><div className="section-heading"><div><h2>{weekLabel(semana)}</h2><p className="muted">{weekStateLabel(semana)} · entradas recibidas en este periodo</p></div><span className="muted">Vista semanal</span></div><div className="summary-grid"><div><small>Tickets</small><strong>{compras.length}</strong><span>{confirmadas} confirmadas</span></div><div><small>Compras registradas</small><strong>{mxn(totalCompras)}</strong><span>Según tickets de la semana</span></div><div><small>Lotes FIFO recibidos</small><strong>{lotes.length}</strong><span>Ordenados por recepción</span></div><div><small>Valor recibido FIFO</small><strong>{mxn(totalFifo)}</strong><span>Valor inicial de los lotes</span></div></div></section>;
+  return <section className="card compras-week-summary"><div className="section-heading"><div><h2>{weekLabel(semana)}</h2><p className="muted">{weekStateLabel(semana)} · entradas</p></div><span className="muted">Semana</span></div><div className="summary-grid"><div><small>Tickets</small><strong>{compras.length}</strong><span>{confirmadas} confirmadas</span></div><div><small>Compras registradas</small><strong>{mxn(totalCompras)}</strong><span>Esta semana</span></div><div><small>Lotes FIFO recibidos</small><strong>{lotes.length}</strong><span>Recepciones</span></div><div><small>Valor recibido FIFO</small><strong>{mxn(totalFifo)}</strong><span>Valor inicial</span></div></div></section>;
 }
 
 function Tickets({ compras, cargando }: { compras: CompraDia[]; cargando: boolean }) {
@@ -550,7 +550,7 @@ function Tickets({ compras, cargando }: { compras: CompraDia[]; cargando: boolea
   if (cargando) return <section className="card"><Cargando etiqueta="Cargando tickets…" /></section>;
   if (!compras.length) return <div className="empty-state"><strong>No hay tickets capturados</strong><p>Las compras ingresadas aparecerán aquí, agrupadas por fecha y proveedor.</p></div>;
   return <section className="card tickets-panel">
-    <div className="section-heading"><div><h2>Compras por ticket</h2><p className="muted">Registro de compras capturadas, ordenado del más reciente al más antiguo. Abre un ticket para ver sus líneas.</p></div></div>
+    <div className="section-heading"><div><h2>Compras por ticket</h2><p className="muted">Tickets capturados.</p></div></div>
     <div className="tickets-summary"><strong>{compras.length} tickets registrados</strong><span>{mxn(totalVisible)} en la vista</span></div>
     <div className="ticket-list">{Array.from(porDia.entries()).map(([fecha, filas]) => <section className="ticket-day" key={fecha}>
       <div className="ticket-day__head"><strong>{fechaCompra(fecha)}</strong><span>{filas.length} {filas.length === 1 ? 'ticket' : 'tickets'}</span></div>

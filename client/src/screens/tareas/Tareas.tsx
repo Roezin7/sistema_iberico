@@ -101,7 +101,7 @@ function Hoy() {
       <input className="buscador" type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
       {error && <div className="empty-state empty-state--error" style={{ marginTop: '0.75rem' }}><strong>No se pudo guardar el último cambio</strong><p>{error}</p><button className="pill" onClick={() => void cargar(fecha)}>Reintentar</button></div>}
       {!esOperativo && <div className="aviso aviso--info">No hay operación del bar este día. Las tareas de apertura y cierre se muestran de viernes a domingo.</div>}
-      {dia.checklists.length === 0 && <p className="muted">{esOperativo ? 'No hay checklists activos. Pídele a un admin que los configure.' : 'No hay tareas operativas para este día.'}</p>}
+      {dia.checklists.length === 0 && <p className="muted">{esOperativo ? 'Sin checklists activos.' : 'Sin tareas operativas.'}</p>}
       {dia.checklists.map((c) => {
         const completo = c.progreso.hechos === c.progreso.total && c.progreso.total > 0;
         return (
