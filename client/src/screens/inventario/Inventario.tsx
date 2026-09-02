@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { Cargando } from '../../ui/Cargando';
@@ -183,6 +184,11 @@ export default function Inventario() {
 //  CONTEO
 // ===========================================================================
 function Conteo({ onGuardado }: { onGuardado: () => void }) {
+  const navigate = useNavigate();
+  const parametros = new URLSearchParams(window.location.search);
+  const cierreGuiado = parametros.get('tipo') === 'cierre';
+  const regresarFinanzas = parametros.get('return') === 'finanzas';
+  const semanaSolicitada = Number(parametros.get('semana'));
   const [zonas, setZonas] = useState<Zona[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -191,7 +197,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [filtro, setFiltro] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState('');
-  const [tipo, setTipo] = useState<'conteo_operativo' | 'apertura' | 'cierre' | 'ajuste'>('conteo_operativo');
+  const [tipo, setTipo] = useState<'conteo_operativo' | 'apertura' | 'cierre' | 'ajuste'>(cierreGuiado ? 'cierre' : 'conteo_operativo');
   const [semanas, setSemanas] = useState<SemanaRef[]>([]);
   const [semanaId, setSemanaId] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
@@ -209,7 +215,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       setCategorias(c);
       setSemanas(ss);
       const abierta = ss.find((s) => s.estado === 'abierta');
-      if (abierta) setSemanaId(abierta.id);
+      if (!Number.isFinite(semanaSolicitada) && abierta) setSemanaId(abierta.id);
+      else if (Number.isFinite(semanaSolicitada) && semanaSolicitada > 0) setSemanaId(semanaSolicitada);
       if (z[0]) setZonaActiva(z[0].id);
       // Pre-carga el último conteo de cada zona: así, para corregir una cantidad
       // basta editar ese campo y guardar, sin recapturar todo de nuevo.
@@ -265,7 +272,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         body: { lineas, tipo, semana_id: semanaId, motivo: motivo.trim() || null, unidad_conteo: 'operativa' },
       });
       setValores({});
-      onGuardado();
+      if (cierreGuiado && regresarFinanzas && semanaId != null) navigate(`/finanzas?semana=${semanaId}&tab=cuadre`);
+      else onGuardado();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Error al guardar');
     } finally {
@@ -279,7 +287,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
     <>
       <section className="inventory-capture-context">
         <div className="section-heading"><div><strong>¿Qué estás contando?</strong><p className="muted">Cada captura queda identificada y no reemplaza el historial.</p></div></div>
-        <div className="pill-row">
+        {cierreGuiado ? <div className="info-box info-box--compact"><strong>Cierre físico de {semanaId ? `la semana ${semanaId}` : 'la semana actual'}</strong><span>Captura Local y Bodega. Al guardar volverás automáticamente al cierre de la semana.</span></div> : <div className="pill-row">
           {([
             ['conteo_operativo', 'Conteo operativo'],
             ['apertura', 'Apertura de semana'],
@@ -288,7 +296,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           ] as const).map(([value, label]) => (
             <button key={value} type="button" className={tipo === value ? 'pill pill--on' : 'pill'} onClick={() => setTipo(value)}>{label}</button>
           ))}
-        </div>
+        </div>}
         {tipo !== 'conteo_operativo' && <div className="form-grid form-grid--two">
           {(tipo === 'apertura' || tipo === 'cierre') && <label>Semana<select aria-label="Semana del conteo" value={semanaId ?? ''} onChange={(e) => setSemanaId(e.target.value ? Number(e.target.value) : null)}><option value="">Selecciona…</option>{semanas.map((s) => <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>)}</select></label>}
           {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}

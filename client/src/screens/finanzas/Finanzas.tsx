@@ -62,6 +62,7 @@ export default function Finanzas() {
   const [semanaId, setSemanaId] = useState<number | null>(null);
   const [fechaNueva, setFechaNueva] = useState('');
   const { error } = useToast();
+  const semanaSolicitada = Number(new URLSearchParams(window.location.search).get('semana'));
 
   async function recargar() {
     const [r, si, sems] = await Promise.all([
@@ -70,7 +71,7 @@ export default function Finanzas() {
     setRef(r);
     setSaldosFijados(si.length > 0);
     setSemanas(sems);
-    setSemanaId((prev) => prev ?? sems.find((s) => s.estado === 'abierta')?.id ?? sems[0]?.id ?? null);
+    setSemanaId((prev) => prev ?? (Number.isFinite(semanaSolicitada) && semanaSolicitada > 0 ? semanaSolicitada : null) ?? sems.find((s) => s.estado === 'abierta')?.id ?? sems[0]?.id ?? null);
   }
   useEffect(() => { void recargar(); }, []);
 
@@ -115,7 +116,7 @@ function Marco({ children }: { children: React.ReactNode }) {
       <header className="page-head">
         <div className="page-title">
           <Icono name="wallet" size={24} className="ttl-icon" />
-          <h1>Cierre</h1>
+          <h1>Semana</h1>
         </div>
       </header>
       <div className="tab-body">{children}</div>
@@ -150,7 +151,9 @@ function SetupSaldos({ ref_, onListo }: { ref_: Referencias; onListo: () => void
 
 // ---------------------------------------------------------------------------
 function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Semana; onCambio: () => void }) {
-  const [tab, setTab] = useState<'dia' | 'resumen' | 'movs' | 'cuadre'>('dia');
+  const tabSolicitada = new URLSearchParams(window.location.search).get('tab');
+  const tabInicial: 'dia' | 'resumen' | 'movs' | 'cuadre' = tabSolicitada === 'cuadre' || tabSolicitada === 'resumen' || tabSolicitada === 'movs' ? tabSolicitada : 'dia';
+  const [tab, setTab] = useState<'dia' | 'resumen' | 'movs' | 'cuadre'>(tabInicial);
   const [resumen, setResumen] = useState<Resumen | null>(null);
   const [movs, setMovs] = useState<Movimiento[]>([]);
   const [cuadre, setCuadre] = useState<FilaCuadre[]>([]);
@@ -189,11 +192,11 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
           )}
         </span>
       </div>
-      <p className="muted weekly-flow-note">Flujo de la semana: viernes–domingo para ventas y caja; compras y ajustes se registran una sola vez en Entradas.</p>
+      <p className="muted weekly-flow-note">Flujo de la semana: lunes–jueves para preparar y comprar; viernes–domingo para operar, cobrar y cerrar.</p>
       <nav className="tabs" aria-label="Flujo semanal">
         <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Operación diaria</button>
         <button className={tab === 'resumen' ? 'tab tab--on' : 'tab'} onClick={() => setTab('resumen')}>Resultado y patrimonio</button>
-        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Entradas y gastos</button>
+        <button className={tab === 'movs' ? 'tab tab--on' : 'tab'} onClick={() => setTab('movs')}>Auditoría</button>
         <button className={tab === 'cuadre' ? 'tab tab--on' : 'tab'} onClick={() => setTab('cuadre')}>Cierre</button>
       </nav>
 
@@ -203,7 +206,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
         <MovimientosView ref_={ref_} semana={semana} movs={movs} onChange={cargar} />
       )}
       {tab === 'cuadre' && (
-        <CuadreView ref_={ref_} semana={semana} filas={cuadre} onChange={cargar} />
+        <CuadreView ref_={ref_} semana={semana} filas={cuadre} resumen={resumen} onChange={cargar} />
       )}
 
       {abierta && tab === 'cuadre' && (
@@ -959,12 +962,24 @@ function CuadreBanner({ filas }: { filas: FilaCuadre[] }) {
   );
 }
 
-function CuadreView({ ref_, semana, filas, onChange }: { ref_: Referencias; semana: Semana; filas: FilaCuadre[]; onChange: () => void }) {
+function CuadreView({ ref_, semana, filas, resumen, onChange }: { ref_: Referencias; semana: Semana; filas: FilaCuadre[]; resumen: Resumen | null; onChange: () => void }) {
   const [ubic, setUbic] = useState<number>(ref_.ubicaciones[0]?.id ?? 0);
   const [monto, setMonto] = useState('');
   const desc = (n: number | null) => (n == null ? 0 : Math.round(n * 100) / 100);
+  const inventarioListo = resumen?.inventario.estado === 'cerrado' && resumen.inventario.cierre_snapshot_id != null;
+  const ventasListas = resumen?.ventas_operativas != null;
+  const cajaLista = filas.length > 0 && filas.every((f) => f.saldo_real != null);
   return (
     <>
+      <section className="closure-flow" aria-labelledby="cierre-guiado-titulo">
+        <div className="section-heading"><div><span className="eyebrow">Cierre guiado</span><h2 id="cierre-guiado-titulo">Deja la semana lista</h2><p className="muted">Completa cada paso. Los detalles FIFO y los snapshots se guardan automáticamente.</p></div></div>
+        <div className="closure-flow__steps">
+          <Link to={`/finanzas?semana=${semana.id}&tab=dia`} className={`closure-flow__step ${ventasListas ? 'is-done' : ''}`}><strong>1</strong><span><b>Ventas y pagos</b><small>{ventasListas ? 'Revisados' : 'Revisar Epos y corte diario'}</small></span></Link>
+          <Link to={`/compras?semana=${semana.id}&fecha=${semana.fecha_inicio}&return=finanzas`} className="closure-flow__step"><strong>2</strong><span><b>Entradas y egresos</b><small>Tickets, gastos y sueldos</small></span></Link>
+          <Link to={`/inventario?tipo=cierre&semana=${semana.id}&return=finanzas`} className={`closure-flow__step ${inventarioListo ? 'is-done' : ''}`}><strong>3</strong><span><b>Conteo físico</b><small>{inventarioListo ? 'Cierre capturado' : 'Capturar inventario de cierre'}</small></span></Link>
+          <div className={`closure-flow__step ${cajaLista ? 'is-done' : ''}`}><strong>4</strong><span><b>Arqueo y confirmar</b><small>{cajaLista ? 'Caja contada' : 'Registrar caja real abajo'}</small></span></div>
+        </div>
+      </section>
       <CuadreBanner filas={filas} />
       {filas.map((f) => {
         const d = desc(f.descuadre);

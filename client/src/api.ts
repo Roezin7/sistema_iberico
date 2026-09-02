@@ -24,6 +24,18 @@ export interface Encolado { queued: true }
 export const fueEncolado = (r: unknown): r is Encolado =>
   typeof r === 'object' && r !== null && (r as Encolado).queued === true;
 
+// Sólo se pueden capturar offline acciones que no cierran ni afectan saldos
+// irreversibles. Cierres, pagos, confirmaciones y movimientos financieros
+// requieren conexión para evitar que una decisión operativa quede pendiente
+// o se aplique con una semana distinta al sincronizar.
+function puedeGuardarOffline(path: string, body: unknown) {
+  if (path === '/tareas/resultados' || path === '/inventario/compras/rapidas') return true;
+  if (path === '/inventario/snapshots' && typeof body === 'object' && body !== null) {
+    return (body as { tipo?: string }).tipo === 'conteo_operativo';
+  }
+  return false;
+}
+
 export async function api<T = unknown>(
   path: string,
   opts: { method?: string; body?: unknown; auth?: boolean } = {},
@@ -46,12 +58,12 @@ export async function api<T = unknown>(
     });
   } catch (e) {
     // Fallo de red. Si es una mutación, la encolamos para sincronizar luego.
-    if (esMutacion) {
+    if (esMutacion && puedeGuardarOffline(path, body)) {
       const { encolar } = await import('./offline');
       await encolar({ method, path, body, token: auth ? getToken() : null });
       return { queued: true } as T;
     }
-    throw new ApiError(0, 'Sin conexión');
+    throw new ApiError(0, esMutacion ? 'Esta acción requiere conexión para proteger la trazabilidad.' : 'Sin conexión');
   }
 
   if (res.status === 204) return undefined as T;

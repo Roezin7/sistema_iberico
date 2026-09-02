@@ -44,6 +44,7 @@ export default function Compras() {
   const semanaInicial = Number(parametros.get('semana'));
   const volverAFinanzas = parametros.get('return') === 'finanzas';
   const [tab, setTab] = useState<'tickets' | 'lotes' | 'epos' | 'pendientes'>('tickets');
+  const [mostrarAuditoria, setMostrarAuditoria] = useState(false);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [lotes, setLotes] = useState<Lote[]>([]);
   const [mensaje, setMensaje] = useState('');
@@ -105,15 +106,16 @@ export default function Compras() {
   }
 
   return <div className="page compras-page">
-    <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Entradas</h1></div><p className="muted">Tickets y gastos se registran una sola vez; al confirmar crean el lote FIFO y su movimiento.</p>{volverAFinanzas && <Link className="inline-link" to="/finanzas">← Volver a Cierre</Link>}</header>
+    <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Entradas</h1></div><p className="muted">Compras, tickets y gastos se registran aquí. Una entrada confirmada actualiza FIFO y caja.</p>{volverAFinanzas && <Link className="inline-link" to={`/finanzas?semana=${semanaId ?? ''}&tab=cuadre`}>← Volver a Semana</Link>}</header>
     {!esAdmin && <div className="info-box purchase-operator-note"><strong>Para registrar una compra</strong><span>Sube la foto, confirma fecha y forma de pago y envíala a revisión. No necesitas calcular FIFO.</span></div>}
     {esAdmin && <div className="compras-weekbar"><label>Semana de consulta<select aria-label="Semana de consulta" value={semanaId ?? ''} onChange={(e) => setSemanaId(Number(e.target.value))} disabled={cargandoSemanas || !semanas.length}><option value="">{cargandoSemanas ? 'Cargando semanas…' : 'Seleccionar semana'}</option>{semanas.map((s) => <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>)}</select></label>{semana && <span className={`status status--${semana.estado === 'abierta' ? 'ok' : 'cargando'}`}>{weekStateLabel(semana)}</span>}</div>}
     <CapturaRapida key={semana?.id ?? fechaInicial} fechaInicial={semana?.fecha_inicio ?? fechaInicial} onSaved={() => { if (esAdmin) void cargar(); }} />
+    {esAdmin && semana && <GastoRapido semana={semana} onSaved={() => void cargarTickets()} />}
     {esAdmin && <nav className="tabs">
-      <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('tickets'); void cargarTickets(); }}>Tickets</button>
+      <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('tickets'); void cargarTickets(); }}>Historial de entradas</button>
       <button className={tab === 'pendientes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('pendientes'); void cargar(); }}>Por revisar {pendientesSemana.length ? `(${pendientesSemana.length})` : ''}</button>
-      <button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('lotes'); void cargar(); }}>Lotes FIFO</button>
-      <button className={tab === 'epos' ? 'tab tab--on' : 'tab'} onClick={() => setTab('epos')}>FIFO activo</button>
+      <button className="tab tab--audit" onClick={() => { setMostrarAuditoria((v) => !v); if (mostrarAuditoria && (tab === 'lotes' || tab === 'epos')) setTab('tickets'); }}>{mostrarAuditoria ? 'Ocultar auditoría técnica' : 'Auditoría técnica'}</button>
+      {mostrarAuditoria && <><button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('lotes'); void cargar(); }}>Lotes FIFO</button><button className={tab === 'epos' ? 'tab tab--on' : 'tab'} onClick={() => setTab('epos')}>FIFO activo</button></>}
     </nav>}
     {mensaje && <div className="info-box" role="status">{mensaje}</div>}
     {esAdmin && semana && <ResumenSemana semana={semana} compras={comprasSemana} lotes={lotesSemana} />}
@@ -122,6 +124,48 @@ export default function Compras() {
     {esAdmin && tab === 'epos' && <EposPanel from={from} setFrom={setFrom} to={to} setTo={setTo} preview={preview} consultando={consultando} consultar={consultarEpos} />}
     {esAdmin && tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={productosOrdenados} onChange={() => void cargar()} />}
   </div>;
+}
+
+interface RefGasto { ubicaciones: { id: number; nombre: string; tipo: string }[]; categorias: { id: number; nombre: string }[] }
+
+/** Gasto operativo sin ticket: mantiene Entradas como la única puerta de captura. */
+function GastoRapido({ semana, onSaved }: { semana: Semana; onSaved: () => void }) {
+  const [refs, setRefs] = useState<RefGasto | null>(null);
+  const [fecha, setFecha] = useState(semana.fecha_inicio);
+  const [monto, setMonto] = useState('');
+  const [origen, setOrigen] = useState('');
+  const [categoria, setCategoria] = useState('');
+  const [descripcion, setDescripcion] = useState('');
+  const [mensaje, setMensaje] = useState('');
+  const [guardando, setGuardando] = useState(false);
+
+  useEffect(() => {
+    api<RefGasto>('/finanzas/referencias').then((r) => {
+      setRefs(r);
+      const caja = r.ubicaciones.find((u) => u.tipo === 'efectivo');
+      if (caja) setOrigen(String(caja.id));
+    }).catch(() => setMensaje('No se pudieron cargar las categorías de gasto.'));
+  }, []);
+  useEffect(() => { setFecha(semana.fecha_inicio); }, [semana.id, semana.fecha_inicio]);
+
+  async function guardar() {
+    const valor = Number(monto);
+    if (semana.estado !== 'abierta') { setMensaje('La semana está cerrada; registra este gasto en una semana abierta.'); return; }
+    if (!fecha || fecha < semana.fecha_inicio || fecha > semana.fecha_fin || !Number.isFinite(valor) || valor <= 0 || !origen || !descripcion.trim()) {
+      setMensaje('Completa fecha dentro de la semana, monto, origen y descripción.'); return;
+    }
+    setGuardando(true); setMensaje('');
+    try {
+      await api('/finanzas/movimientos', { method: 'POST', body: { semana_id: semana.id, tipo: 'gasto', monto: valor, fecha, ubicacion_origen_id: Number(origen), categoria_id: categoria ? Number(categoria) : null, descripcion: descripcion.trim() } });
+      setMonto(''); setDescripcion(''); setCategoria(''); setMensaje('Gasto registrado en la semana.'); onSaved();
+    } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo registrar el gasto.'); }
+    finally { setGuardando(false); }
+  }
+
+  return <details className="card entry-secondary"><summary><span><strong>Registrar gasto sin ticket</strong><small>Farmacia, frutería u otro gasto extraordinario</small></span><span className="muted">Sólo afecta caja; no crea lote FIFO</span></summary>
+    <div className="form-grid form-grid--three entry-secondary__form"><label>Fecha<input type="date" min={semana.fecha_inicio} max={semana.fecha_fin} value={fecha} onChange={(e) => setFecha(e.target.value)} /></label><label>Monto<input type="number" min="0.01" step="0.01" inputMode="decimal" placeholder="Ej. 250" value={monto} onChange={(e) => setMonto(e.target.value)} /></label><label>Origen<select value={origen} onChange={(e) => setOrigen(e.target.value)}><option value="">Seleccionar…</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}</select></label><label>Categoría (opcional)<select value={categoria} onChange={(e) => setCategoria(e.target.value)}><option value="">Sin categoría</option>{refs?.categorias.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></label><label className="span-all">Descripción<input placeholder="Ej. Manzana para servicio" value={descripcion} onChange={(e) => setDescripcion(e.target.value)} /></label><div className="form-actions"><button className="btn-primary" disabled={guardando || semana.estado !== 'abierta'} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Registrar gasto'}</button></div></div>
+    {mensaje && <div className="info-box" role="status">{mensaje}</div>}
+  </details>;
 }
 
 export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string; onSaved: () => void }) {

@@ -15,11 +15,11 @@ interface Modulo {
 }
 
 const MODULOS: Modulo[] = [
-  { clave: 'compras', titulo: 'Entradas', icono: 'package', desc: 'Tickets, gastos y lotes FIFO', ruta: '/compras' },
-  { clave: 'inventario', titulo: 'Inventario', icono: 'package', desc: 'Conteos y lista de compras', ruta: '/inventario' },
-  { clave: 'finanzas', titulo: 'Cierre', icono: 'wallet', desc: 'Ventas, egresos, patrimonio y cierre', ruta: '/finanzas', soloAdmin: true },
-  { clave: 'patrimonio', titulo: 'Patrimonio', icono: 'trending', desc: 'Tendencia y snapshots', ruta: '/patrimonio', soloAdmin: true },
-  { clave: 'ajustes', titulo: 'Catálogo y ajustes', icono: 'settings', desc: 'Productos, mínimos, saldos', ruta: '/configuracion', soloAdmin: true },
+  { clave: 'compras', titulo: 'Entradas', icono: 'package', desc: 'Compras, tickets y gastos', ruta: '/compras' },
+  { clave: 'operacion', titulo: 'Operación', icono: 'wallet', desc: 'Ventas, pagos y cortes diarios', ruta: '/finanzas', soloAdmin: true },
+  { clave: 'inventario', titulo: 'Inventario físico', icono: 'package', desc: 'Conteo, faltantes y compras', ruta: '/inventario' },
+  { clave: 'checklist', titulo: 'Checklist', icono: 'checks', desc: 'Apertura y cierre del local', ruta: '/tareas' },
+  { clave: 'rentabilidad', titulo: 'Menú y rentabilidad', icono: 'trending', desc: 'Costo, margen y recetas', ruta: '/costos-menu', soloAdmin: true },
 ];
 
 function saludo() {
@@ -76,26 +76,38 @@ export default function Home() {
 
   const visibles = MODULOS.filter((m) => !m.soloAdmin || usuario.rol === 'admin');
   const { semana, dia, conciliacion, resumen } = estado;
-  const estadoHoy = operativo ? (conciliacion ? 'Corte confirmado' : 'Corte pendiente') : 'Sin operación del bar';
-  const siguienteAccion = !operativo
-    ? 'Revisar inventario y preparar la operación del fin de semana.'
-    : conciliacion
-      ? resumen?.inventario.estado === 'pendiente_cierre' ? 'Revisar compras y preparar el inventario de cierre.' : 'Revisar el detalle de ventas y excepciones.'
-      : 'Importar las ventas de Epos, revisar métodos de pago y confirmar el corte.';
-  const accionRuta = operativo ? '/finanzas' : '/inventario';
+  const semanaCerrada = semana?.estado === 'cerrada';
+  const estadoHoy = !semana
+    ? 'Semana sin preparar'
+    : semanaCerrada
+      ? 'Semana cerrada'
+      : operativo
+        ? (conciliacion ? 'Corte diario confirmado' : 'Corte diario pendiente')
+        : 'Preparación semanal';
+  const siguienteAccion = !semana
+    ? 'Crea la semana operativa para comenzar.'
+    : semanaCerrada
+      ? 'Consulta el resultado y las decisiones de la semana.'
+      : !operativo
+        ? 'Termina el cierre anterior y registra las compras generales de la semana.'
+        : conciliacion
+          ? resumen?.inventario.estado === 'pendiente_cierre' ? 'Revisa las compras y prepara el conteo físico de cierre.' : 'Revisa el detalle de ventas y excepciones.'
+          : 'Sincroniza las ventas de Epos, revisa pagos y confirma el corte del día.';
+  const accionRuta = !semana || semanaCerrada ? '/finanzas' : !operativo ? '/compras' : conciliacion && resumen?.inventario.estado === 'pendiente_cierre' ? `/inventario?tipo=cierre&semana=${semana.id}&return=finanzas` : `/finanzas?semana=${semana.id}&tab=dia`;
+  const fase = !semana ? 'Sin semana' : semanaCerrada ? 'Cerrada' : operativo ? 'Operación' : 'Preparación';
 
   return (
     <div className="page">
       <header className="page-head">
         <div>
           <h1>{saludo()}, {usuario.nombre}</h1>
-          <p className="page-sub">Centro de operación de Ibérico</p>
+          <p className="page-sub">Semana actual · centro de operación de Ibérico</p>
         </div>
       </header>
 
-      <section className={`operating-brief ${operativo ? 'operating-brief--on' : ''}`}>
+      <section className={`operating-brief ${fase === 'Operación' ? 'operating-brief--on' : ''}`}>
         <div>
-          <span className="eyebrow">Hoy</span>
+          <span className="eyebrow">{semana ? weekLabel(semana) : 'Semana actual'}</span>
           <h2>{estadoHoy}</h2>
           <p className="muted">
             {estado.error || siguienteAccion}
@@ -107,7 +119,7 @@ export default function Home() {
               {estado.cargando ? 'Cargando estado…' : semana ? `${weekLabel(semana)} · ${weekStateLabel(semana)}` : 'Semana actual'}
             </span>
             <Link className="btn-primary" to={accionRuta}>
-              {operativo ? (conciliacion ? 'Abrir operación de hoy' : 'Abrir cierre de hoy') : 'Revisar inventario'}
+              {!semana ? 'Preparar semana' : semanaCerrada ? 'Ver resultado' : !operativo ? 'Registrar compras' : (conciliacion ? 'Abrir operación' : 'Abrir corte de hoy')}
             </Link>
           </div>
         )}
@@ -119,6 +131,21 @@ export default function Home() {
           <div><small>Ventas registradas</small><strong>{dia ? mxn(dia.total_ventas) : '—'}</strong><span>{conciliacion ? 'Corte confirmado' : 'Según captura diaria'}</span></div>
           <div><small>Compras de la semana</small><strong>{resumen ? mxn(resumen.compras_inventario) : '—'}</strong><span>Tickets y lotes FIFO</span></div>
           <div><small>Inventario</small><strong>{resumen?.inventario.estado === 'cerrado' ? 'Cerrado' : 'Pendiente'}</strong><span>{resumen?.inventario.estado === 'cerrado' ? 'Disponible para consulta' : 'Requiere cierre físico'}</span></div>
+        </section>
+      )}
+
+      {usuario.rol === 'admin' && semana && (
+        <section className="operating-progress" aria-label="Progreso de la semana">
+          {[
+            ['1', 'Preparar', fase === 'Preparación', '/compras'],
+            ['2', 'Comprar', fase === 'Preparación', '/compras'],
+            ['3', 'Operar', fase === 'Operación', `/finanzas?semana=${semana.id}&tab=dia`],
+            ['4', 'Cerrar', fase === 'Cerrada', `/finanzas?semana=${semana.id}&tab=cuadre`],
+          ].map(([n, label, actual, ruta]) => (
+            <Link key={String(n)} className={`operating-progress__item ${actual ? 'is-current' : ''}`} to={String(ruta)}>
+              <strong>{n}</strong><span>{label}</span>
+            </Link>
+          ))}
         </section>
       )}
 
@@ -138,7 +165,7 @@ export default function Home() {
       <div className="section-heading">
         <div>
           <span className="eyebrow">Flujo principal</span>
-          <h2>Qué puedes hacer ahora</h2>
+          <h2>Acciones de esta semana</h2>
         </div>
       </div>
 
