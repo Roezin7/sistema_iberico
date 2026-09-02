@@ -37,7 +37,7 @@ export interface ProductoActual {
   contenido_compra: number | null;
   unidad_compra: string | null;
   rendimiento_util: number;
-  /** Valor calculado con los lotes FIFO abiertos, cuando existen. */
+  /** Valor del conteo físico usando lotes FIFO, sólo como referencia de costo. */
   valor_fifo: number;
   /** Valor calculado con el costo vigente del catálogo. */
   valor_catalogo: number;
@@ -64,6 +64,7 @@ export interface ProductoActual {
   existencia_actual_base: number;
   existencia_actual_operativa: number;
   fuente_existencia_actual: 'fisico';
+  /** Fuente de valuación del conteo físico (no de la expectativa FIFO). */
   fuente_valoracion: 'fifo' | 'catalogo' | 'mixta' | 'sin_costo';
   valor: number;
   categoria_id: number | null;
@@ -78,6 +79,7 @@ export interface InventarioActual {
   semana_id: number | null;
   productos: ProductoActual[];
   valor_total: number;
+  /** Valuación FIFO del mismo conteo físico, sólo para comparar costos. */
   valor_fifo_total: number;
   valor_catalogo_total: number;
   /** Valuación del saldo FIFO operativo actual (no del último conteo). */
@@ -370,8 +372,12 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
         contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
       }),
       fuente_existencia_actual: 'fisico',
-      fuente_valoracion: valorado.fuente,
-      valor: Math.round(valorado.valor * 100) / 100,
+      fuente_valoracion: unitCostBase == null ? 'sin_costo' : 'catalogo',
+      // La existencia física se valora con el costo vigente del catálogo para
+      // mantenerla consistente con valorSnapshot y con el cierre oficial. La
+      // valuación FIFO del mismo conteo se conserva en valor_fifo como dato de
+      // auditoría; nunca cambia la cantidad ni el valor físico principal.
+      valor: valorCatalogo,
       categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
       categoria: p.categorias_inventario?.nombre ?? null,
       por_zona: ls.map((l) => ({
