@@ -71,7 +71,15 @@ export default function Finanzas() {
     setRef(r);
     setSaldosFijados(si.length > 0);
     setSemanas(sems);
-    setSemanaId((prev) => prev ?? (Number.isFinite(semanaSolicitada) && semanaSolicitada > 0 ? semanaSolicitada : null) ?? sems.find((s) => s.estado === 'abierta')?.id ?? sems[0]?.id ?? null);
+    setSemanaId((prev) => {
+      const solicitada = Number.isFinite(semanaSolicitada) && semanaSolicitada > 0 ? semanaSolicitada : null;
+      const seleccionada = prev == null ? null : sems.find((s) => s.id === prev);
+      // Después de cerrar, el ciclo queda posicionado en la semana nueva que
+      // el servidor acaba de preparar. Un historial cerrado sigue disponible
+      // en el selector y mediante la URL explícita ?semana=.
+      if (seleccionada?.estado === 'cerrada') return sems.find((s) => s.estado === 'abierta')?.id ?? prev;
+      return prev ?? solicitada ?? sems.find((s) => s.estado === 'abierta')?.id ?? sems[0]?.id ?? null;
+    });
   }
   useEffect(() => { void recargar(); }, []);
 

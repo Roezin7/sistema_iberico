@@ -2339,6 +2339,13 @@ select:disabled {
 .decision-card span { color: var(--ink-2); font-size: .76rem; }
 .decision-card--ok { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
 .decision-card--warn { border-color: color-mix(in srgb, var(--warning) 60%, var(--border)); background: var(--warning-bg); }
+.resultados-mensuales { margin: 1rem 0 1.25rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface); }
+.resultados-mensuales .section-heading { margin-top: 0; }
+.resultados-mensuales__total { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; margin-bottom: .8rem; }
+.resultados-mensuales__total > div { display: grid; gap: .15rem; padding: .65rem .75rem; border-radius: var(--r-input); background: var(--surface-2); }
+.resultados-mensuales__total small { color: var(--ink-3); font-size: .72rem; }
+.resultados-mensuales__total strong { font-family: var(--font-ui); font-size: 1.05rem; }
+.resultados-mensuales table { min-width: 720px; }
 .operating-cycle .section-heading { margin: 0 0 .75rem; }
 .operating-cycle__steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; }
 .operating-cycle__steps a { display: flex; align-items: center; gap: .55rem; min-width: 0; padding: .65rem .7rem; border: 1px solid var(--border); border-radius: var(--r-input); color: var(--ink); text-decoration: none; background: var(--surface-2); }
@@ -2353,6 +2360,7 @@ select:disabled {
   .operating-progress { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .closure-flow__steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .decision-grid { grid-template-columns: 1fr; }
+  .resultados-mensuales__total { grid-template-columns: 1fr; }
   .page-head { align-items: flex-start; flex-direction: column; gap: .35rem; }
   .page-head .muted { margin: 0; }
   .compras-weekbar { align-items: stretch; flex-direction: column; }

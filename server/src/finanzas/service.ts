@@ -1557,6 +1557,38 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
 
     await tx.semanas.updateMany({ where: { id: semanaId, negocio_id: negocioId }, data: { estado: 'cerrada', cerrada_at: new Date() } });
 
+    // Deja preparada la siguiente semana en la misma transacción del cierre.
+    // Si ya existe (por ejemplo, cuando el lunes se abrió manualmente), no se
+    // modifica ni se reemplaza su apertura; sólo se completa el ciclo si aún
+    // no tiene registro de inventario.
+    const siguienteInicio = masDias(semana.fecha_fin, 1);
+    const siguienteFin = masDias(siguienteInicio, 6);
+    const siguiente = await tx.semanas.findFirst({
+      where: { negocio_id: negocioId, fecha_inicio: siguienteInicio },
+      select: { id: true },
+    });
+    const siguienteId = siguiente?.id ?? (await tx.semanas.create({
+      data: {
+        negocio_id: negocioId,
+        etiqueta: etiquetaCanonica(siguienteInicio, siguienteFin),
+        fecha_inicio: siguienteInicio,
+        fecha_fin: siguienteFin,
+      },
+      select: { id: true },
+    })).id;
+    const cicloSiguiente = await tx.inventario_semanal.findUnique({ where: { semana_id: siguienteId } });
+    if (!cicloSiguiente) {
+      await tx.inventario_semanal.create({
+        data: {
+          negocio_id: negocioId,
+          semana_id: siguienteId,
+          apertura_snapshot_id: cierreSnapshotId!,
+          apertura_valor: valorInventario,
+          apertura_origen: 'cierre_semana_anterior',
+        },
+      });
+    }
+
     // Fase 4: snapshot de patrimonio (banco + efectivo + inventario − pasivos).
     await generarSnapshotEnCierre(tx, negocioId, semana.fecha_fin, redondear(totalBanco), redondear(totalEfectivo), valorInventario);
   }, {

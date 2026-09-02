@@ -63,6 +63,14 @@ type RespuestaCostos = {
   productos: ProductoCosto[];
 };
 
+type FilaResultado = {
+  mes: string; parcial: boolean; ventas: { total: number }; ventas_netas: number;
+  compras_inventario: number; costo_ventas: number; costo_ventas_metodo: 'fifo' | 'inventario' | 'compras';
+  utilidad_operativa: number; margen_operativo: number; sueldos: number; gastos_totales: number;
+  variacion_inventario: number | null; sin_movimientos: boolean;
+};
+type RespuestaResultado = { meses: FilaResultado[]; total: Omit<FilaResultado, 'mes' | 'parcial' | 'sin_movimientos'> & { meses: number } };
+
 const money = (value: number | null) =>
   value == null ? '—' : value.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
@@ -70,6 +78,7 @@ const percent = (value: number | null) => value == null ? '—' : `${value.toFix
 
 export default function CostosMenu() {
   const [data, setData] = useState<RespuestaCostos | null>(null);
+  const [resultado, setResultado] = useState<RespuestaResultado | null>(null);
   const [section, setSection] = useState('Todos');
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
@@ -78,7 +87,11 @@ export default function CostosMenu() {
     setCargando(true);
     setError('');
     try {
-      setData(await api<RespuestaCostos>('/recetas/resumen'));
+      const [costos, pnl] = await Promise.all([
+        api<RespuestaCostos>('/recetas/resumen'),
+        api<RespuestaResultado>('/finanzas/estado-resultados?meses=6').catch(() => null),
+      ]);
+      setData(costos); setResultado(pnl);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cargar el costeo del menú');
     } finally {
@@ -135,6 +148,8 @@ export default function CostosMenu() {
             <div className="menu-costos-kpi"><span>Margen promedio</span><strong>{money(data.resumen.margen_promedio)}</strong><small>por unidad vendida</small></div>
           </section>
 
+          {resultado && <ResultadoMensual data={resultado} />}
+
           <div className="menu-costos-note"><Icono name="alertCircle" size={16} /> Una cifra pendiente no es cero: significa que falta configurar precio, presentación o rendimiento del insumo.</div>
 
           <nav className="menu-costos-filters" aria-label="Sección del menú">
@@ -160,6 +175,15 @@ export default function CostosMenu() {
       )}
     </div>
   );
+}
+
+function ResultadoMensual({ data }: { data: RespuestaResultado }) {
+  const total = data.total;
+  return <section className="resultados-mensuales" aria-labelledby="resultados-mensuales-titulo">
+    <div className="section-heading"><div><span className="eyebrow">P&amp;L mensual</span><h2 id="resultados-mensuales-titulo">Rentabilidad histórica</h2><p className="muted">Comparación de los últimos seis meses. El mes actual aparece como parcial.</p></div><span className="chip chip--info">Costo: FIFO cuando existe</span></div>
+    <div className="resultados-mensuales__total"><div><small>Ventas acumuladas</small><strong>{money(total.ventas.total)}</strong></div><div><small>Utilidad operativa</small><strong>{money(total.utilidad_operativa)}</strong></div><div><small>Margen operativo</small><strong>{percent(total.margen_operativo * 100)}</strong></div></div>
+    <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ventas</th><th>Costo ventas</th><th>Sueldos + gastos</th><th>Utilidad operativa</th><th>Margen</th></tr></thead><tbody>{data.meses.map((fila) => <tr key={fila.mes}><td><strong>{fila.mes}</strong>{fila.parcial && <small className="muted"> · parcial</small>}</td><td>{fila.sin_movimientos ? '—' : money(fila.ventas.total)}</td><td>{fila.sin_movimientos ? '—' : <>{money(fila.costo_ventas)} <small className="muted">· {fila.costo_ventas_metodo.toUpperCase()}</small></>}</td><td>{fila.sin_movimientos ? '—' : money(fila.sueldos + fila.gastos_totales)}</td><td className={fila.utilidad_operativa < 0 ? 'text-danger' : ''}>{fila.sin_movimientos ? '—' : money(fila.utilidad_operativa)}</td><td>{fila.sin_movimientos ? '—' : percent(fila.margen_operativo * 100)}</td></tr>)}</tbody></table></div>
+  </section>;
 }
 
 function ProductCard({ product }: { product: ProductoCosto }) {

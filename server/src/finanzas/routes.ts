@@ -26,6 +26,13 @@ finanzasRouter.get('/saldos-iniciales', asyncHandler(async (req, res) => {
   res.json(await svc.getSaldosIniciales(req.auth!.negocioId));
 }));
 
+// Vista histórica para dirección: agrupa por mes calendario y declara la
+// fuente usada para costo de ventas (FIFO, inventario o compras).
+finanzasRouter.get('/estado-resultados', asyncHandler(async (req, res) => {
+  const meses = req.query.meses == null ? undefined : z.coerce.number().int().positive().optional().parse(req.query.meses);
+  res.json(await svc.estadoResultados(req.auth!.negocioId, meses));
+}));
+
 finanzasRouter.post('/saldos-iniciales', asyncHandler(async (req, res) => {
   const body = z.object({
     saldos: z.array(z.object({ ubicacion_id: id, monto: z.coerce.number() })).min(1),
