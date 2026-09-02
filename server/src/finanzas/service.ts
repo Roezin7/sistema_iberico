@@ -1530,7 +1530,10 @@ export async function saludOperativa(negocioId: bigint) {
     prisma.purchases.count({ where: { negocio_id: negocioId, estado: 'pendiente' } }),
     prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: { in: ['pendiente', 'excepcion'] } } }),
     prisma.semanas.count({ where: { negocio_id: negocioId, estado: 'abierta' } }),
-    prisma.inventory_snapshot.count({ where: { negocio_id: negocioId, semana_id: null } }),
+    // Los conteos operativos históricos pueden existir fuera de una semana y
+    // siguen siendo evidencia válida. Sólo un snapshot de ciclo sin semana
+    // rompe la trazabilidad de apertura/cierre/ajuste.
+    prisma.inventory_snapshot.count({ where: { negocio_id: negocioId, semana_id: null, tipo: { in: ['apertura', 'cierre', 'cierre_apertura', 'ajuste'] } } }),
   ]);
   const bloqueadores = [
     ...(sinZona ? [`${sinZona} producto(s) activo(s) sin zona de conteo`] : []),
