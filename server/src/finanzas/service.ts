@@ -1509,7 +1509,9 @@ export async function saludOperativa(negocioId: bigint) {
     prisma.products.count({ where: { negocio_id: negocioId, active: true, categoria_id: null } }),
     prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true } }),
     prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, epos_product_id: null } }),
-    prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, recetas: { none: { estado: 'completada' } } } }),
+    // `validada` is the current terminal state for a recipe. Keep the legacy
+    // `completada` value accepted so historical records remain operable.
+    prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, recetas: { none: { estado: { in: ['validada', 'completada'] } } } } }),
     prisma.purchases.count({ where: { negocio_id: negocioId, estado: 'pendiente' } }),
     prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: { in: ['pendiente', 'excepcion'] } } }),
     prisma.semanas.count({ where: { negocio_id: negocioId, estado: 'abierta' } }),
