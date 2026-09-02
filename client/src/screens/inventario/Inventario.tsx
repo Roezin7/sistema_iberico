@@ -198,7 +198,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       api<Zona[]>('/catalogo/zonas'),
       api<Producto[]>('/catalogo/products'),
       api<Categoria[]>('/catalogo/categorias-inventario'),
-      api<Actual>('/inventario/current'),
+      api<Actual>('/inventario/current?vista=fisica'),
       api<SemanaRef[]>('/finanzas/semanas'),
     ]).then(([z, p, c, actual, ss]) => {
       setZonas(z);
@@ -506,7 +506,7 @@ function InventarioActual() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [historial, setHistorial] = useState<SnapshotHistorial[]>([]);
   useEffect(() => {
-    api<Actual>('/inventario/current').then(setData);
+    api<Actual>('/inventario/current?vista=fisica').then(setData);
     api<Categoria[]>('/catalogo/categorias-inventario').then(setCategorias).catch(() => {});
     api<SnapshotHistorial[]>('/inventario/snapshots').then(setHistorial).catch(() => {});
   }, []);
@@ -520,7 +520,7 @@ function InventarioActual() {
   return (
     <>
       <div className="resumen-card" style={{ gap: '0.8rem' }}>
-        <span className="muted">Valuación actual del inventario</span>
+        <span className="muted">Valuación del inventario físico</span>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.7rem' }}>
           <div><small className="muted">FIFO disponible ahora</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_fifo_actual_total)}</strong><small className="muted">Incluye lotes recibidos y consumos aplicados</small></div>
           <div><small className="muted">FIFO del último conteo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_fifo_total)}</strong><small className="muted">Valuación del conteo físico</small></div>
@@ -530,7 +530,7 @@ function InventarioActual() {
         <small className="muted">
           {data.fecha ? `Último conteo: ${new Date(data.fecha).toLocaleString('es-MX')} · ${data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'operativo'}${data.semana_id ? ` · semana ${data.semana_id}` : ''}` : 'Sin conteos aún'}
         </small>
-        <small className="muted">La existencia operativa usa el saldo de lotes FIFO abiertos; el conteo físico permanece separado para detectar mermas y diferencias. No se suman ambos.</small>
+        <small className="muted">Esta pantalla toma como existencia principal el último conteo físico. El saldo FIFO abierto se conserva aparte para costeo, rotación y lista de compras; no se suman ambos.</small>
       </div>
       {data.sin_costo.length > 0 && (
         <p className="aviso">

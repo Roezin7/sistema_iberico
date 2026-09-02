@@ -14,11 +14,16 @@ export const inventarioRouter = Router();
 // Inventario y tareas son accesibles para admin y empleado.
 inventarioRouter.use(requireAuth);
 
-/** GET /inventario/current — conteo físico y existencia operativa FIFO actual. */
+/** GET /inventario/current — conteo físico y existencia FIFO actual.
+ * La pantalla de existencia solicita `vista=fisica` para que el valor
+ * principal corresponda al último conteo; las compras y Silvia siguen usando
+ * `vista=operativa` directamente en el servicio.
+ */
 inventarioRouter.get(
   '/current',
   asyncHandler(async (req, res) => {
-    res.json(await inventarioActual(req.auth!.negocioId, { vista: 'operativa' }));
+    const vista = req.query.vista === 'fisica' ? 'fisica' : 'operativa';
+    res.json(await inventarioActual(req.auth!.negocioId, { vista }));
   }),
 );
 

@@ -1,6 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import 'dotenv/config';
-import { costoUnitarioBaseDesdeCatalogo, conversionAperturaDesdeCatalogo } from '../src/inventario/apertura-fifo.js';
+import { costoUnitarioBaseDesdeCatalogo } from '../src/inventario/apertura-fifo.js';
 
 /**
  * Repara el único error conocido de la primera migración FIFO: las aperturas
@@ -31,16 +31,15 @@ async function main() {
       contenidoCompra: contenido,
       rendimientoUtil: lote.products.rendimiento_util == null ? 1 : Number(lote.products.rendimiento_util),
     });
-    const cantidadNueva = contenido == null ? null : conversionAperturaDesdeCatalogo({
-      cantidadPresentaciones: Number(lote.cantidad_inicial),
-      contenidoCompra: contenido,
-      rendimientoUtil: lote.products.rendimiento_util == null ? 1 : Number(lote.products.rendimiento_util),
-      modo: 'normal',
-    });
+    // La cantidad de un lote FIFO ya está en unidad base. Las aperturas
+    // provienen de qty_captura × factor; volver a aplicar contenido_compra
+    // aquí duplicaría (o cuadruplicaría) el inventario. Este script sólo
+    // corrige costos de apertura con la firma antigua.
+    const cantidadNueva = Number(lote.cantidad_inicial);
     // Sólo corregimos lotes que aún tienen exactamente el precio de catálogo,
     // firma de la apertura antigua. Un lote ya corregido manualmente queda
     // intacto para no pisar una decisión histórica.
-    if (esperado == null || cantidadNueva == null || precioCatalogo == null || contenido == null || contenido <= 1) return [];
+    if (esperado == null || !Number.isFinite(cantidadNueva) || precioCatalogo == null || contenido == null || contenido <= 1) return [];
     if (Math.abs(costoActual - precioCatalogo) > 0.000001) return [];
     return [{ lote, producto: lote.products.name, costoActual, esperado, cantidadAnterior: Number(lote.cantidad_inicial), cantidadNueva }];
   });

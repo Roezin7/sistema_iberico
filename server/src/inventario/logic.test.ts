@@ -14,7 +14,7 @@ import {
   seleccionarExistenciaOperativa,
   type ProductoFaltante,
 } from './logic.js';
-import { costoUnitarioBaseDesdeCatalogo, conversionAperturaDesdeCatalogo } from './apertura-fifo.js';
+import { costoUnitarioBaseDesdeCatalogo, conversionAperturaDesdeCatalogo, cantidadBaseDesdeLineaSnapshot } from './apertura-fifo.js';
 
 describe('costo de apertura FIFO', () => {
   it('normaliza el precio de presentación a la unidad base', () => {
@@ -30,6 +30,12 @@ describe('costo de apertura FIFO', () => {
     expect(conversionAperturaDesdeCatalogo({ cantidadPresentaciones: 4, contenidoCompra: 1000 })).toBe(4000);
     expect(conversionAperturaDesdeCatalogo({ cantidadPresentaciones: 5, contenidoCompra: 14, modo: 'normal' })).toBe(70);
     expect(conversionAperturaDesdeCatalogo({ cantidadPresentaciones: 2, contenidoCompra: 1000, rendimientoUtil: 0.8, modo: 'normal' })).toBe(1600);
+  });
+
+  it('no vuelve a multiplicar el contenido de una línea de snapshot', () => {
+    // El factor ya representa el empaque congelado en inventory_lines:
+    // 1 paquete × 400 g = 400 g, no 160,000 g.
+    expect(cantidadBaseDesdeLineaSnapshot({ qtyCaptura: 1, factor: 400 })).toBe(400);
   });
 });
 

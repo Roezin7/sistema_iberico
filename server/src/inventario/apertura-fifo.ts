@@ -60,6 +60,18 @@ export function conversionAperturaDesdeCatalogo(input: {
 }
 
 /**
+ * Convierte una línea ya persistida del snapshot a unidad base.
+ * `inventory_lines` congela el factor de captura, por lo que el contenido de
+ * la presentación no debe volver a aplicarse en la apertura FIFO.
+ */
+export function cantidadBaseDesdeLineaSnapshot(input: { qtyCaptura: number; factor: number }) {
+  const cantidad = Number(input.qtyCaptura);
+  const factor = Number(input.factor);
+  if (!Number.isFinite(cantidad) || !Number.isFinite(factor) || cantidad < 0 || factor <= 0) return null;
+  return round(cantidad * factor, 4);
+}
+
+/**
  * Convierte el snapshot de apertura de una semana en lotes FIFO iniciales.
  *
  * El snapshot sigue siendo la fuente física histórica. Los lotes creados aquí
@@ -124,7 +136,11 @@ export async function prepararAperturaFifo(input: {
     const porId = new Map(productos.map((p) => [p.id.toString(), p]));
     const cantidades = new Map<string, number>();
     for (const linea of lineas) {
-      const cantidad = Number(linea.qty_captura) * Number(linea.factor);
+      const cantidad = cantidadBaseDesdeLineaSnapshot({
+        qtyCaptura: Number(linea.qty_captura),
+        factor: Number(linea.factor),
+      });
+      if (cantidad == null) continue;
       const key = linea.product_id.toString();
       cantidades.set(key, round((cantidades.get(key) ?? 0) + cantidad, 4));
     }
@@ -146,11 +162,17 @@ export async function prepararAperturaFifo(input: {
           // operativo correspondiente al snapshot físico de apertura.
           fuente: { not: 'historico_prueba' },
         },
-        select: { product_id: true },
+        select: { product_id: true, cantidad_restante: true },
       })
       : [];
     const productosConSaldo = new Set(lotesPrevios.map((lote) => lote.product_id.toString()));
+    const saldoPrevioPorProducto = new Map<string, number>();
+    for (const lote of lotesPrevios) {
+      const key = lote.product_id.toString();
+      saldoPrevioPorProducto.set(key, round((saldoPrevioPorProducto.get(key) ?? 0) + Number(lote.cantidad_restante), 4));
+    }
     const omitidos = new Set<string>();
+    const diferenciasExistencia: { product_id: number; producto: string; fisico: number; fifo: number; diferencia: number }[] = [];
 
     const faltantesCosto: { product_id: number; producto: string; cantidad: number }[] = [];
     const lotes = [] as { product_id: bigint; cantidad: number; costo: number }[];
@@ -158,6 +180,17 @@ export async function prepararAperturaFifo(input: {
       if (cantidad <= 0) continue;
       if (modo === 'normal' && productosConSaldo.has(key)) {
         omitidos.add(key);
+        const saldoFifo = saldoPrevioPorProducto.get(key) ?? 0;
+        const diferencia = round(saldoFifo - cantidad, 4);
+        if (Math.abs(diferencia) > 0.0001) {
+          diferenciasExistencia.push({
+            product_id: Number(key),
+            producto: porId.get(key)?.name ?? `Producto ${key}`,
+            fisico: cantidad,
+            fifo: saldoFifo,
+            diferencia,
+          });
+        }
         continue;
       }
       const producto = porId.get(key);
@@ -167,9 +200,11 @@ export async function prepararAperturaFifo(input: {
         continue;
       }
       // Tanto la prueba histórica como la operación normal guardan el conteo
-      // físico en presentaciones (botellas, bolsas, cajas). El FIFO debe
-      // recibir unidades base para que las recetas en g/ml/pieza consuman sin
-      // inflar costos ni producir excepciones falsas.
+      // físico en `inventory_lines` como qty_captura × factor. Ese producto
+      // YA está en unidad base (g/ml/pieza); volver a multiplicarlo por
+      // contenido_compra inflaría el lote (p. ej. 1 paquete × 400 g termina
+      // erróneamente en 160,000 g). El contenido sólo se usa para convertir
+      // el costo de la presentación a costo por unidad base.
       const contenidoHistorico = CONTENIDO_HISTORICO_CONFIRMADO[key] ?? (producto?.contenido_compra == null ? null : Number(producto.contenido_compra));
       const contenido = producto?.unidad_base && contenidoHistorico != null ? contenidoHistorico : 1;
       if (!Number.isFinite(contenido) || contenido <= 0) {
@@ -183,18 +218,9 @@ export async function prepararAperturaFifo(input: {
         faltantesCosto.push({ product_id: Number(key), producto: producto?.name ?? `Producto ${key}`, cantidad });
         continue;
       }
-      const cantidadBase = conversionAperturaDesdeCatalogo({
-        cantidadPresentaciones: cantidad,
-        factor: 1,
-        contenidoCompra: contenido,
-        rendimientoUtil: producto?.rendimiento_util == null ? 1 : Number(producto.rendimiento_util),
-        modo,
-      });
-      if (cantidadBase == null) {
-        faltantesCosto.push({ product_id: Number(key), producto: producto?.name ?? `Producto ${key}`, cantidad });
-        continue;
-      }
-      lotes.push({ product_id: BigInt(key), cantidad: cantidadBase, costo: round(costoBase, 6) });
+      // `cantidad` se obtuvo arriba como Σ(qty_captura × factor), por lo que
+      // ya es cantidad base. No aplicar contenido_compra una segunda vez.
+      lotes.push({ product_id: BigInt(key), cantidad, costo: round(costoBase, 6) });
     }
     if (faltantesCosto.length) {
       throw new HttpError(409, `Falta costo de catálogo para ${faltantesCosto.map((f) => f.producto).join(', ')}`);
@@ -233,6 +259,7 @@ export async function prepararAperturaFifo(input: {
       referencia,
       valor,
       omitidos_por_lote_existente: [...omitidos].map(Number),
+      diferencias_existencia_fifo: diferenciasExistencia,
       lotes: creados.map((l) => ({ id: Number(l.id), product_id: Number(l.product_id), cantidad_inicial: Number(l.cantidad_inicial), cantidad_restante: Number(l.cantidad_inicial), costo_unitario: Number(l.costo_unitario) })),
       faltantes_costo: faltantesCosto,
     };
