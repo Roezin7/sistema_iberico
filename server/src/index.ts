@@ -13,7 +13,7 @@ import { errorHandler } from './middleware/error.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../public');
 
-const app = express();
+export const app = express();
 
 // Detrás de un proxy (Coolify/Traefik, Render): confiar en 1 salto para que el
 // rate-limit y los logs vean la IP real del cliente (X-Forwarded-For), no la del proxy.
@@ -95,6 +95,10 @@ app.get(/^(?!\/api).*/, (_req, res) => {
 
 app.use(errorHandler);
 
-app.listen(env.PORT, () => {
-  console.log(`🐗 Sistema Ibérico API + PWA escuchando en http://localhost:${env.PORT}`);
-});
+// Permite importar la app desde pruebas HTTP sin abrir un puerto. En producción
+// esta variable nunca se define y el comportamiento de arranque no cambia.
+if (process.env.IBERICO_NO_LISTEN !== '1') {
+  app.listen(env.PORT, () => {
+    console.log(`🐗 Sistema Ibérico API + PWA escuchando en http://localhost:${env.PORT}`);
+  });
+}
