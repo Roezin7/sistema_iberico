@@ -149,6 +149,21 @@ export default function Home() {
         </section>
       )}
 
+      {usuario.rol === 'admin' && semana && resumen && (
+        <section className="decision-pulse" aria-labelledby="decision-pulse-titulo">
+          <div className="section-heading"><div><span className="eyebrow">Control de dirección</span><h2 id="decision-pulse-titulo">Decisiones pendientes</h2></div><Link className="inline-link" to={`/finanzas?semana=${semana.id}&tab=resumen`}>Ver resultado completo →</Link></div>
+          <div className="decision-grid">
+            <Link className={`decision-card ${resumen.excepciones_costeo.length ? 'decision-card--warn' : 'decision-card--ok'}`} to={`/finanzas?semana=${semana.id}&tab=resumen`}>
+              <small>Costeo FIFO</small><strong>{resumen.excepciones_costeo.length ? `${resumen.excepciones_costeo.length} por revisar` : 'Sin excepciones'}</strong><span>{resumen.excepciones_costeo.length ? 'Resolver antes de cerrar' : 'Costo de ventas trazable'}</span>
+            </Link>
+            <Link className={`decision-card ${resumen.conciliacion_inventario.productos_con_incidencia ? 'decision-card--warn' : 'decision-card--ok'}`} to={`/finanzas?semana=${semana.id}&tab=resumen`}>
+              <small>Inventario físico vs FIFO</small><strong>{resumen.conciliacion_inventario.productos_con_incidencia ? `${resumen.conciliacion_inventario.productos_con_incidencia} incidencias` : 'Sin incidencias'}</strong><span>{resumen.conciliacion_inventario.productos_con_incidencia ? 'Investigar merma o captura' : 'Fuente física consistente'}</span>
+            </Link>
+            <Link className="decision-card" to="/costos-menu"><small>Rentabilidad</small><strong>{resumen.resultado_operativo == null ? 'Pendiente' : mxn(resumen.resultado_operativo)}</strong><span>{resumen.resultado_operativo == null ? 'Completa ventas y costos' : `Resultado operativo · ${resumen.utilidad_pct.toFixed(1)}%`}</span></Link>
+          </div>
+        </section>
+      )}
+
       <section className="operating-cycle" aria-labelledby="ciclo-operativo-titulo">
         <div className="section-heading">
           <div><span className="eyebrow">Un solo ciclo</span><h2 id="ciclo-operativo-titulo">De la entrada al cierre</h2></div>

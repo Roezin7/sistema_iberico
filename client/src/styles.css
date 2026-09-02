@@ -2329,6 +2329,16 @@ select:disabled {
 .closure-flow__step.is-done strong { background: var(--success); color: #fff; }
 .cierre-bloqueado { display: grid; gap: .2rem; margin-top: 1rem; border-color: color-mix(in srgb, var(--warning) 55%, var(--border)); background: var(--warning-bg); }
 .cierre-bloqueado strong { color: var(--warning); }
+.decision-pulse { margin: 0 0 1.1rem; }
+.decision-pulse .section-heading { margin-bottom: .65rem; }
+.decision-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
+.decision-card { display: grid; gap: .18rem; min-width: 0; padding: .8rem; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface); color: var(--ink); text-decoration: none; box-shadow: var(--sh-sm); }
+.decision-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.decision-card small { color: var(--ink-3); font-size: .72rem; }
+.decision-card strong { font-family: var(--font-ui); font-size: 1rem; }
+.decision-card span { color: var(--ink-2); font-size: .76rem; }
+.decision-card--ok { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
+.decision-card--warn { border-color: color-mix(in srgb, var(--warning) 60%, var(--border)); background: var(--warning-bg); }
 .operating-cycle .section-heading { margin: 0 0 .75rem; }
 .operating-cycle__steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; }
 .operating-cycle__steps a { display: flex; align-items: center; gap: .55rem; min-width: 0; padding: .65rem .7rem; border: 1px solid var(--border); border-radius: var(--r-input); color: var(--ink); text-decoration: none; background: var(--surface-2); }
@@ -2342,6 +2352,7 @@ select:disabled {
 @media (max-width: 700px) {
   .operating-progress { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .closure-flow__steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .decision-grid { grid-template-columns: 1fr; }
   .page-head { align-items: flex-start; flex-direction: column; gap: .35rem; }
   .page-head .muted { margin: 0; }
   .compras-weekbar { align-items: stretch; flex-direction: column; }
