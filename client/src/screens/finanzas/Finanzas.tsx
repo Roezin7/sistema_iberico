@@ -172,6 +172,9 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
   useEffect(() => { void cargar(); }, [semana.id]);
 
   const abierta = semana.estado === 'abierta';
+  const inventarioListo = resumen?.inventario.estado === 'cerrado' && resumen.inventario.cierre_snapshot_id != null;
+  const costeoListo = resumen != null && resumen.ventas_epos_pendientes === 0 && resumen.excepciones_costeo.length === 0;
+  const puedeCerrar = abierta && inventarioListo && costeoListo;
 
   return (
     <>
@@ -210,7 +213,9 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
       )}
 
       {abierta && tab === 'cuadre' && (
-        <button className="btn-primary" style={{ marginTop: '1.5rem' }} onClick={async () => {
+        <>
+          {!puedeCerrar && <div className="info-box cierre-bloqueado" role="status"><strong>El cierre todavía está bloqueado</strong><span>{!inventarioListo ? 'Captura el inventario físico de cierre. ' : ''}{!costeoListo ? 'Resuelve las excepciones o ventas Epos pendientes. ' : ''}El arqueo de caja se recomienda antes de confirmar.</span></div>}
+          <button className="btn-primary" style={{ marginTop: '1.5rem' }} disabled={!puedeCerrar} onClick={async () => {
           const ok = await confirmar({
             message: '¿Cerrar la semana? Se generará la comisión de terminal y se congelarán los saldos.',
             confirmText: 'Cerrar semana',
@@ -221,7 +226,8 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
           } catch (e) {
             error(e instanceof Error ? e.message : 'No se pudo cerrar la semana');
           }
-        }}>Cerrar semana</button>
+          }}>Cerrar semana</button>
+        </>
       )}
     </>
   );
@@ -967,7 +973,7 @@ function CuadreView({ ref_, semana, filas, resumen, onChange }: { ref_: Referenc
   const [monto, setMonto] = useState('');
   const desc = (n: number | null) => (n == null ? 0 : Math.round(n * 100) / 100);
   const inventarioListo = resumen?.inventario.estado === 'cerrado' && resumen.inventario.cierre_snapshot_id != null;
-  const ventasListas = resumen?.ventas_operativas != null;
+  const ventasListas = resumen != null && resumen.ventas_operativas != null && resumen.ventas_epos_pendientes === 0 && resumen.excepciones_costeo.length === 0;
   const cajaLista = filas.length > 0 && filas.every((f) => f.saldo_real != null);
   return (
     <>
