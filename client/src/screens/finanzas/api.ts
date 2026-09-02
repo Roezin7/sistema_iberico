@@ -91,6 +91,30 @@ export interface Resumen {
     }[];
   };
 }
+
+export interface SaludOperativa {
+  generado_at: string;
+  estado: 'saludable' | 'operable_con_alertas' | 'requiere_atencion';
+  catalogo: { productos_activos: number; sin_zona: number; sin_categoria: number; menu_activo: number; menu_sin_epos: number; menu_sin_receta: number };
+  operacion: { compras_pendientes: number; ventas_pendientes: number; semanas_abiertas: number; snapshots_sin_semana: number };
+  bloqueadores: string[];
+  advertencias: string[];
+}
+
+export interface TableroSnapshot {
+  generado_at: string;
+  semanas: Array<{
+    semana_id: number; etiqueta: string; estado: string; ventas: number;
+    costo_ventas: number | null; food_cost_pct: number | null;
+    utilidad_operativa: number | null; margen_operativo_pct: number | null;
+    compras_inventario: number; inventario_final: number | null;
+    excepciones_costeo: number; ventas_epos_pendientes: number;
+    resultado_independiente: boolean;
+  }>;
+  incidencias: Array<{ id: string; semana_id: number; semana: string; tipo: 'costeo' | 'inventario'; responsable: string; fecha_limite: string; accion: string; detalle: string }>;
+  alertas: Array<{ tipo: string; severidad: 'media' | 'alta'; semana_id: number; mensaje: string; valor: number | null; referencia: number | null }>;
+  salud: { semanas_consultadas: number; semanas_con_bloqueadores: number; incidencias_abiertas: number; alertas_activas: number };
+}
 export interface ExcepcionCosteoSemana {
   producto: string;
   estado: 'pendiente' | 'excepcion';
@@ -173,6 +197,8 @@ export const finanzas = {
   cuadre: (id: number) => api<{ ubicaciones: FilaCuadre[] }>(`/finanzas/semanas/${id}/cuadre`),
   resumen: (id: number) => api<Resumen>(`/finanzas/semanas/${id}/resumen`),
   conciliacionInventario: (id: number) => api<Resumen['conciliacion_inventario']>(`/finanzas/semanas/${id}/conciliacion-inventario`),
+  saludOperativa: () => api<SaludOperativa>('/finanzas/salud-operativa'),
+  tableroDecisiones: (semanas = 8) => api<TableroSnapshot>(`/finanzas/tablero-decisiones?semanas=${semanas}`),
   excepcionesCosteo: (id: number) => api<ExcepcionCosteoSemana[]>(`/finanzas/semanas/${id}/excepciones-costeo`),
   recalcularConciliacionInventario: (id: number) => api<Resumen['conciliacion_inventario'] & { persistida: boolean; filas_persistidas: number }>(`/finanzas/semanas/${id}/conciliacion-inventario/recalcular`, { method: 'POST', body: {} }),
   correccionesReferencias: (semanaId: number) => api<CorreccionReferencias>(`/finanzas/semanas/${semanaId}/inventario-correcciones/referencias`),

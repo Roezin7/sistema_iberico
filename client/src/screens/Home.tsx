@@ -2,26 +2,26 @@ import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../auth';
 import { Icono } from '../icons';
-import { finanzas, epos, mxn, type ConciliacionDiaria, type DiaFila, type Resumen, type Semana } from './finanzas/api';
+import { Cargando } from '../ui/Cargando';
+import { epos, finanzas, mxn, type ConciliacionDiaria, type DiaFila, type Resumen, type SaludOperativa, type Semana, type TableroSnapshot } from './finanzas/api';
 import { weekLabel, weekStateLabel } from '../operating';
 
-interface Modulo {
-  clave: string;
-  titulo: string;
-  icono: Parameters<typeof Icono>[0]['name'];
-  desc: string;
-  ruta?: string; // si no hay ruta -> aún no disponible
-  soloAdmin?: boolean;
+interface DashboardState {
+  semana: Semana | null;
+  dias: DiaFila[];
+  conciliaciones: ConciliacionDiaria[];
+  resumen: Resumen | null;
+  salud: SaludOperativa | null;
+  tablero: TableroSnapshot | null;
+  cargando: boolean;
+  error: string;
+  actualizado: string | null;
 }
 
-const MODULOS: Modulo[] = [
-  { clave: 'compras', titulo: 'Entradas', icono: 'package', desc: 'Compras, tickets y gastos', ruta: '/compras' },
-  { clave: 'operacion', titulo: 'Operación', icono: 'wallet', desc: 'Ventas, pagos y cortes diarios', ruta: '/finanzas', soloAdmin: true },
-  { clave: 'inventario', titulo: 'Inventario físico', icono: 'package', desc: 'Conteo, faltantes y compras', ruta: '/inventario' },
-  { clave: 'checklist', titulo: 'Checklist', icono: 'checks', desc: 'Apertura y cierre del local', ruta: '/tareas' },
-  { clave: 'decisiones', titulo: 'Decisiones', icono: 'trending', desc: 'Comparativos, alertas e incidencias', ruta: '/decisiones', soloAdmin: true },
-  { clave: 'rentabilidad', titulo: 'Menú y rentabilidad', icono: 'trending', desc: 'Costo, margen y recetas', ruta: '/costos-menu', soloAdmin: true },
-];
+const initialState: DashboardState = {
+  semana: null, dias: [], conciliaciones: [], resumen: null, salud: null, tablero: null,
+  cargando: true, error: '', actualizado: null,
+};
 
 function saludo() {
   const h = Number(new Date().toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/Mexico_City' }));
@@ -30,179 +30,110 @@ function saludo() {
   return 'Buenas noches';
 }
 
+function estadoSalud(salud: SaludOperativa | null) {
+  if (!salud || salud.estado === 'saludable') return { label: 'Sistema listo', tone: 'ok' };
+  if (salud.estado === 'operable_con_alertas') return { label: 'Operable con alertas', tone: 'warn' };
+  return { label: 'Requiere atención', tone: 'danger' };
+}
+
+function EstadoPunto({ tone = 'neutral' }: { tone?: 'ok' | 'warn' | 'danger' | 'neutral' }) {
+  return <span className={`dashboard-dot dashboard-dot--${tone}`} aria-hidden="true" />;
+}
+
 export default function Home() {
   const { usuario } = useAuth();
-  const [estado, setEstado] = useState<{
-    semana: Semana | null;
-    dia: DiaFila | null;
-    conciliacion: ConciliacionDiaria | null;
-    resumen: Resumen | null;
-    cargando: boolean;
-    error: string;
-  }>({ semana: null, dia: null, conciliacion: null, resumen: null, cargando: true, error: '' });
-
+  const [recarga, setRecarga] = useState(0);
+  const [estado, setEstado] = useState<DashboardState>(initialState);
   const hoyMx = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
-  const weekdayMx = new Date(`${hoyMx}T12:00:00`).getDay();
-  const operativo = weekdayMx === 0 || weekdayMx === 5 || weekdayMx === 6;
 
   useEffect(() => {
     if (!usuario || usuario.rol !== 'admin') return;
     let activo = true;
     setEstado((prev) => ({ ...prev, cargando: true, error: '' }));
-    void finanzas.semanaActual()
-      .then(async (semana) => {
-        if (!semana) return { semana: null, dia: null, conciliacion: null, resumen: null };
+    void Promise.all([finanzas.semanaActual(), finanzas.saludOperativa(), finanzas.tableroDecisiones(8)])
+      .then(async ([semana, salud, tablero]) => {
+        if (!semana) return { semana: null, dias: [], conciliaciones: [], resumen: null, salud, tablero };
         const [dias, resumen, conciliaciones] = await Promise.all([
           finanzas.dias(semana.id),
           finanzas.resumen(semana.id),
           epos.conciliaciones(semana.id).catch(() => []),
         ]);
-        return {
-          semana,
-          dia: dias.dias.find((dia) => dia.fecha === hoyMx) ?? null,
-          conciliacion: conciliaciones.find((c) => c.fecha === hoyMx) ?? null,
-          resumen,
-        };
+        return { semana, dias: dias.dias, conciliaciones, resumen, salud, tablero };
       })
       .then((data) => {
-        if (activo) setEstado({ ...data, cargando: false, error: '' });
+        if (activo) setEstado({ ...data, cargando: false, error: '', actualizado: new Date().toISOString() });
       })
       .catch((error) => {
-        if (activo) setEstado((prev) => ({ ...prev, cargando: false, error: error instanceof Error ? error.message : 'No se pudo cargar el estado de hoy' }));
+        if (activo) setEstado((prev) => ({ ...prev, cargando: false, error: error instanceof Error ? error.message : 'No se pudo cargar el estado de Ibérico' }));
       });
     return () => { activo = false; };
-  }, [usuario, hoyMx]);
+  }, [usuario, hoyMx, recarga]);
 
   if (!usuario) return null;
+  if (usuario.rol !== 'admin') {
+    return <div className="page"><header className="page-head"><div><h1>{saludo()}, {usuario.nombre}</h1><p className="page-sub">Centro de operación de Ibérico</p></div></header><section className="card dashboard-staff"><Icono name="checks" size={22} /><div><strong>Tu operación está lista</strong><p className="muted">Usa el menú para registrar entradas, conteos físicos y checklist. Los indicadores financieros son visibles para administración.</p></div></section></div>;
+  }
 
-  const visibles = MODULOS.filter((m) => !m.soloAdmin || usuario.rol === 'admin');
-  const { semana, dia, conciliacion, resumen } = estado;
+  const { semana, dias, conciliaciones, resumen, salud, tablero } = estado;
   const semanaCerrada = semana?.estado === 'cerrada';
-  const estadoHoy = !semana
-    ? 'Semana sin preparar'
-    : semanaCerrada
-      ? 'Semana cerrada'
-      : operativo
-        ? (conciliacion ? 'Corte diario confirmado' : 'Corte diario pendiente')
-        : 'Preparación semanal';
-  const siguienteAccion = !semana
-    ? 'Crea la semana operativa para comenzar.'
-    : semanaCerrada
-      ? 'Consulta el resultado y las decisiones de la semana.'
-      : !operativo
-        ? 'Termina el cierre anterior y registra las compras generales de la semana.'
-        : conciliacion
-          ? resumen?.inventario.estado === 'pendiente_cierre' ? 'Revisa las compras y prepara el conteo físico de cierre.' : 'Revisa el detalle de ventas y excepciones.'
-          : 'Sincroniza las ventas de Epos, revisa pagos y confirma el corte del día.';
-  const accionRuta = !semana || semanaCerrada ? '/finanzas' : !operativo ? '/compras' : conciliacion && resumen?.inventario.estado === 'pendiente_cierre' ? `/inventario?tipo=cierre&semana=${semana.id}&return=finanzas` : `/finanzas?semana=${semana.id}&tab=dia`;
-  const fase = !semana ? 'Sin semana' : semanaCerrada ? 'Cerrada' : operativo ? 'Operación' : 'Preparación';
+  const diaSemana = new Date(`${hoyMx}T12:00:00`).getDay();
+  const enSemana = Boolean(semana && hoyMx >= semana.fecha_inicio && hoyMx <= semana.fecha_fin);
+  const esFinDeSemana = enSemana && (diaSemana === 0 || diaSemana === 5 || diaSemana === 6);
+  const fase = !semana ? 'Sin semana' : semanaCerrada ? 'Cierre completado' : esFinDeSemana ? 'Operación' : 'Preparación';
+  const corteHoy = conciliaciones.find((c) => c.fecha === hoyMx) ?? null;
+  const ventas = resumen?.ventas_operativas ?? resumen?.ventas.total ?? null;
+  const inventarioFisico = resumen?.inventario.valor_fisico_actual ?? resumen?.inventario.cierre_valor ?? resumen?.inventario.apertura_valor;
+  const inventarioFisicoLabel = resumen?.inventario.valor_fisico_actual != null ? 'Inventario físico actual' : resumen?.inventario.apertura_valor != null ? 'Inventario físico base' : 'Inventario físico';
+  const brecha = resumen?.inventario.diferencia_fifo_vs_fisico ?? null;
+  const saludVisual = estadoSalud(salud);
+  const accionRuta = !semana ? '/finanzas' : semanaCerrada ? `/finanzas?semana=${semana.id}&tab=resumen` : !esFinDeSemana ? '/compras' : `/finanzas?semana=${semana.id}&tab=dia`;
+  const accionLabel = !semana ? 'Preparar semana' : semanaCerrada ? 'Ver resultado' : !esFinDeSemana ? 'Revisar preparación' : corteHoy ? 'Abrir operación' : 'Confirmar corte de hoy';
+  const atenciones = [
+    ...(salud?.bloqueadores ?? []).map((mensaje) => ({ tone: 'danger' as const, mensaje })),
+    ...(salud?.advertencias ?? []).map((mensaje) => ({ tone: 'warn' as const, mensaje })),
+    ...(tablero?.alertas ?? []).map((alerta) => ({ tone: alerta.severidad === 'alta' ? 'danger' as const : 'warn' as const, mensaje: alerta.mensaje })),
+    ...(tablero?.incidencias ?? []).slice(0, 4).map((incidencia) => ({ tone: 'warn' as const, mensaje: incidencia.detalle })),
+  ];
+  const diasConVenta = dias.filter((fila) => fila.total_ventas > 0).length;
+  const cortesConfirmados = conciliaciones.filter((c) => c.estado === 'confirmada' || c.confirmado_at).length;
 
-  return (
-    <div className="page">
-      <header className="page-head">
-        <div>
-          <h1>{saludo()}, {usuario.nombre}</h1>
-          <p className="page-sub">Semana actual · centro de operación de Ibérico</p>
-        </div>
-      </header>
+  return <div className="page dashboard-page">
+    <header className="page-head dashboard-head">
+      <div><span className="eyebrow">Centro de mando</span><h1>{saludo()}, {usuario.nombre}</h1><p className="page-sub">Una lectura del estado real de Ibérico. El menú lateral sirve para operar; aquí se decide.</p></div>
+      <div className="dashboard-head__actions"><span className="muted">{estado.actualizado ? `Actualizado ${new Date(estado.actualizado).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}` : 'Sincronizando…'}</span><button className="btn-ghost" type="button" onClick={() => setRecarga((n) => n + 1)} disabled={estado.cargando}><Icono name="refresh" size={16} className={estado.cargando ? 'cargando__spin' : undefined} /> Actualizar</button></div>
+    </header>
 
-      <section className={`operating-brief ${fase === 'Operación' ? 'operating-brief--on' : ''}`}>
-        <div>
-          <span className="eyebrow">{semana ? weekLabel(semana) : 'Semana actual'}</span>
-          <h2>{estadoHoy}</h2>
-          <p className="muted">
-            {estado.error || siguienteAccion}
-          </p>
-        </div>
-        {usuario.rol === 'admin' && (
-          <div className="operating-brief__meta">
-            <span className={semana?.estado === 'cerrada' ? 'badge-ok' : 'badge-neutral'}>
-              {estado.cargando ? 'Cargando estado…' : semana ? `${weekLabel(semana)} · ${weekStateLabel(semana)}` : 'Semana actual'}
-            </span>
-            <Link className="btn-primary" to={accionRuta}>
-              {!semana ? 'Preparar semana' : semanaCerrada ? 'Ver resultado' : !operativo ? 'Registrar compras' : (conciliacion ? 'Abrir operación' : 'Abrir corte de hoy')}
-            </Link>
-          </div>
-        )}
+    {estado.error && <div className="empty-state empty-state--error"><strong>No se pudo actualizar el tablero</strong><p>{estado.error}</p></div>}
+    {estado.cargando && !resumen ? <div className="card"><Cargando etiqueta="Sincronizando ventas, inventario y operación…" /></div> : <>
+      <section className={`dashboard-hero dashboard-hero--${saludVisual.tone}`}>
+        <div><span className="eyebrow">{semana ? weekLabel(semana) : 'Semana actual'}</span><h2>{fase}</h2><p>{semanaCerrada ? 'El periodo está cerrado y sus cifras quedan congeladas para consulta.' : !semana ? 'Todavía no existe una semana operativa preparada.' : esFinDeSemana ? (corteHoy ? 'El corte de hoy ya está confirmado. Revisa excepciones antes de cerrar.' : 'Hay operación prevista. Confirma el corte diario al terminar.') : 'La semana está en preparación. Completa entradas y deja listo el inventario físico.'}</p></div>
+        <div className="dashboard-hero__right"><span className={`dashboard-status dashboard-status--${saludVisual.tone}`}><EstadoPunto tone={saludVisual.tone as 'ok' | 'warn' | 'danger'} /> {saludVisual.label}</span><Link className="btn-primary" to={accionRuta}>{accionLabel}</Link></div>
       </section>
 
-      {usuario.rol === 'admin' && !estado.cargando && semana && (
-        <section className="summary-grid home-today-summary" aria-label="Estado operativo de hoy">
-          <div><small>Día</small><strong>{dia?.dia ?? hoyMx.slice(5)}</strong><span>{operativo ? 'Viernes a domingo' : 'Sin ventas regulares'}</span></div>
-          <div><small>Ventas registradas</small><strong>{dia ? mxn(dia.total_ventas) : '—'}</strong><span>{conciliacion ? 'Corte confirmado' : 'Según captura diaria'}</span></div>
-          <div><small>Compras de la semana</small><strong>{resumen ? mxn(resumen.compras_inventario) : '—'}</strong><span>Tickets y lotes FIFO</span></div>
-          <div><small>Inventario</small><strong>{resumen?.inventario.estado === 'cerrado' ? 'Cerrado' : 'Pendiente'}</strong><span>{resumen?.inventario.estado === 'cerrado' ? 'Disponible para consulta' : 'Requiere cierre físico'}</span></div>
-        </section>
-      )}
-
-      {usuario.rol === 'admin' && semana && (
-        <section className="operating-progress" aria-label="Progreso de la semana">
-          {[
-            ['1', 'Preparar', fase === 'Preparación', '/compras'],
-            ['2', 'Comprar', fase === 'Preparación', '/compras'],
-            ['3', 'Operar', fase === 'Operación', `/finanzas?semana=${semana.id}&tab=dia`],
-            ['4', 'Cerrar', fase === 'Cerrada', `/finanzas?semana=${semana.id}&tab=cuadre`],
-          ].map(([n, label, actual, ruta]) => (
-            <Link key={String(n)} className={`operating-progress__item ${actual ? 'is-current' : ''}`} to={String(ruta)}>
-              <strong>{n}</strong><span>{label}</span>
-            </Link>
-          ))}
-        </section>
-      )}
-
-      {usuario.rol === 'admin' && semana && resumen && (
-        <section className="decision-pulse" aria-labelledby="decision-pulse-titulo">
-          <div className="section-heading"><div><span className="eyebrow">Control de dirección</span><h2 id="decision-pulse-titulo">Decisiones pendientes</h2></div><Link className="inline-link" to={`/finanzas?semana=${semana.id}&tab=resumen`}>Ver resultado completo →</Link></div>
-          <div className="decision-grid">
-            <Link className={`decision-card ${resumen.excepciones_costeo.length ? 'decision-card--warn' : 'decision-card--ok'}`} to={`/finanzas?semana=${semana.id}&tab=resumen`}>
-              <small>Costeo FIFO</small><strong>{resumen.excepciones_costeo.length ? `${resumen.excepciones_costeo.length} por revisar` : 'Sin excepciones'}</strong><span>{resumen.excepciones_costeo.length ? 'Resolver antes de cerrar' : 'Costo de ventas trazable'}</span>
-            </Link>
-            <Link className={`decision-card ${resumen.conciliacion_inventario.productos_con_incidencia ? 'decision-card--warn' : 'decision-card--ok'}`} to={`/finanzas?semana=${semana.id}&tab=resumen`}>
-              <small>Inventario físico vs FIFO</small><strong>{resumen.conciliacion_inventario.productos_con_incidencia ? `${resumen.conciliacion_inventario.productos_con_incidencia} incidencias` : 'Sin incidencias'}</strong><span>{resumen.conciliacion_inventario.productos_con_incidencia ? 'Investigar merma o captura' : 'Fuente física consistente'}</span>
-            </Link>
-            <Link className="decision-card" to="/costos-menu"><small>Rentabilidad</small><strong>{resumen.resultado_operativo == null ? 'Pendiente' : mxn(resumen.resultado_operativo)}</strong><span>{resumen.resultado_operativo == null ? 'Completa ventas y costos' : `Resultado operativo · ${resumen.utilidad_pct.toFixed(1)}%`}</span></Link>
-          </div>
-        </section>
-      )}
-
-      <section className="operating-cycle" aria-labelledby="ciclo-operativo-titulo">
-        <div className="section-heading">
-          <div><span className="eyebrow">Un solo ciclo</span><h2 id="ciclo-operativo-titulo">De la entrada al cierre</h2></div>
-          <span className="muted">La misma fuente alimenta cada paso</span>
-        </div>
-        <div className="operating-cycle__steps">
-          <Link to="/compras"><strong>1</strong><span><b>Entradas</b><small>Tickets y gastos</small></span></Link>
-          <Link to="/finanzas"><strong>2</strong><span><b>Operación</b><small>Ventas y pagos</small></span></Link>
-          <Link to="/inventario"><strong>3</strong><span><b>Inventario</b><small>Conteo físico</small></span></Link>
-          <Link to="/finanzas"><strong>4</strong><span><b>Cierre</b><small>FIFO y decisión</small></span></Link>
-        </div>
+      <section className="dashboard-kpis" aria-label="Indicadores de la semana">
+        <article className="dashboard-kpi dashboard-kpi--primary"><span>Ventas de la semana</span><strong>{mxn(ventas)}</strong><small>{resumen?.ventas_operativas != null ? 'Venta neta de EPOS' : 'Captura financiera provisional'}</small></article>
+        <article className="dashboard-kpi"><span>Resultado operativo</span><strong className={resumen?.resultado_operativo != null && resumen.resultado_operativo < 0 ? 'text-danger' : ''}>{mxn(resumen?.resultado_operativo)}</strong><small>{resumen?.resultado_operativo_estado === 'verificado' ? `Verificado · ${resumen.utilidad_pct.toFixed(1)}%` : resumen?.resultado_operativo == null ? 'Se calcula al cerrar' : 'Provisional, pendiente de verificación'}</small></article>
+        <article className="dashboard-kpi"><span>Compras de inventario</span><strong>{mxn(resumen?.compras_inventario)}</strong><small>Entradas registradas esta semana</small></article>
+        <article className="dashboard-kpi"><span>{inventarioFisicoLabel}</span><strong>{mxn(inventarioFisico)}</strong><small>{resumen?.inventario.estado === 'cerrado' ? 'Conteo físico confirmado' : 'Fuente de verdad operativa'}</small></article>
+        <article className="dashboard-kpi"><span>FIFO activo</span><strong>{mxn(resumen?.inventario.valor_fifo_corte)}</strong><small>Auditoría de rotación y consumo</small></article>
+        <article className={`dashboard-kpi ${brecha != null && Math.abs(brecha) > 1 ? 'dashboard-kpi--warn' : ''}`}><span>Brecha físico vs FIFO</span><strong>{brecha == null ? 'Pendiente' : mxn(brecha)}</strong><small>{brecha == null ? 'Se valida en el cierre físico' : Math.abs(brecha) <= 1 ? 'Consistente' : 'Investigar al cierre'}</small></article>
       </section>
 
-      <div className="section-heading">
-        <div>
-          <span className="eyebrow">Flujo principal</span>
-          <h2>Acciones de esta semana</h2>
-        </div>
+      <div className="dashboard-columns">
+        <section className="card dashboard-pulse"><div className="section-heading"><div><span className="eyebrow">Pulso operativo</span><h2>Qué está pasando ahora</h2></div></div><div className="dashboard-pulse__rows">
+          <div><span><EstadoPunto tone={semana ? 'ok' : 'warn'} /> Semana</span><strong>{semana ? `${weekLabel(semana)} · ${weekStateLabel(semana)}` : 'Sin semana activa'}</strong></div>
+          <div><span><EstadoPunto tone={corteHoy ? 'ok' : esFinDeSemana ? 'warn' : 'neutral'} /> Corte de hoy</span><strong>{corteHoy ? 'Confirmado' : esFinDeSemana ? 'Pendiente' : 'No aplica fuera de operación'}</strong></div>
+          <div><span><EstadoPunto tone={resumen?.inventario.estado === 'cerrado' ? 'ok' : 'warn'} /> Inventario físico</span><strong>{resumen?.inventario.estado === 'cerrado' ? 'Cierre confirmado' : 'Pendiente de cierre'}</strong></div>
+          <div><span><EstadoPunto tone={resumen?.resultado_independiente ? 'ok' : 'warn'} /> Rentabilidad</span><strong>{resumen?.resultado_independiente ? 'Trazable' : 'Provisional hasta validar FIFO/EPOS'}</strong></div>
+          <div><span><EstadoPunto tone={saludVisual.tone as 'ok' | 'warn' | 'danger'} /> Preparación del sistema</span><strong>{saludVisual.label}</strong></div>
+        </div></section>
+
+        <section className="card dashboard-activity"><div className="section-heading"><div><span className="eyebrow">Actividad</span><h2>Avance de la semana</h2></div></div><div className="dashboard-activity__stats"><div><strong>{diasConVenta}</strong><span>días con venta</span></div><div><strong>{cortesConfirmados}</strong><span>cortes confirmados</span></div><div><strong>{resumen?.ventas_epos_pendientes ?? 0}</strong><span>ventas pendientes</span></div></div><p className="muted">Las ventas regulares de Ibérico se concentran en viernes, sábado y domingo. El resto de la semana prepara compras, costos y conteo.</p><Link className="inline-link" to={semana ? `/finanzas?semana=${semana.id}&tab=dia` : '/finanzas'}>Abrir operación →</Link></section>
       </div>
 
-      <div className="module-grid">
-        {visibles.map((m) =>
-          m.ruta ? (
-            <Link key={m.clave} className="module-card module-card--active" to={m.ruta}>
-              <span className="module-icon"><Icono name={m.icono} size={22} /></span>
-              <strong>{m.titulo}</strong>
-              <small>{m.desc}</small>
-            </Link>
-          ) : (
-            <button key={m.clave} className="module-card" disabled>
-              <span className="module-icon"><Icono name={m.icono} size={22} /></span>
-              <strong>{m.titulo}</strong>
-              <small>{m.desc}</small>
-              <em className="badge-soon">próximamente</em>
-            </button>
-          ),
-        )}
-      </div>
-    </div>
-  );
+      <section className="card dashboard-attention"><div className="section-heading"><div><span className="eyebrow">Control</span><h2>{atenciones.length ? 'Requiere decisión' : 'Sin pendientes críticos'}</h2><p className="muted">{atenciones.length ? 'Hallazgos actuales que pueden afectar la operación o la rentabilidad.' : 'El sistema está listo; las diferencias históricas permanecen sólo como auditoría.'}</p></div><Link className="inline-link" to="/decisiones">Ver auditoría →</Link></div>{atenciones.length ? <div className="dashboard-attention__list">{atenciones.slice(0, 6).map((item, i) => <div className={`dashboard-attention__item dashboard-attention__item--${item.tone}`} key={`${item.mensaje}-${i}`}><EstadoPunto tone={item.tone} /><span>{item.mensaje}</span></div>)}</div> : <div className="aviso aviso--info"><Icono name="checkCircle" size={17} /> No hay alertas ni incidencias abiertas después del rebase físico de la semana 65.</div>}</section>
+
+      {tablero && <section className="card dashboard-trend"><div className="section-heading"><div><span className="eyebrow">Contexto</span><h2>Últimas semanas</h2><p className="muted">Tendencia para dirección; el periodo actual siempre aparece primero.</p></div><Link className="inline-link" to="/costos-menu">Ver rentabilidad →</Link></div><div className="table-wrap"><table><thead><tr><th>Semana</th><th>Ventas</th><th>Food cost</th><th>Resultado</th><th>Estado</th></tr></thead><tbody>{tablero.semanas.slice(-4).reverse().map((fila) => <tr key={fila.semana_id}><td><strong>{fila.etiqueta}</strong>{fila.estado === 'abierta' && <small className="muted"> · abierta</small>}</td><td>{mxn(fila.ventas)}</td><td>{fila.food_cost_pct == null ? '—' : `${fila.food_cost_pct.toFixed(1)}%`}</td><td className={fila.utilidad_operativa != null && fila.utilidad_operativa < 0 ? 'text-danger' : ''}>{mxn(fila.utilidad_operativa)}</td><td>{fila.excepciones_costeo || fila.ventas_epos_pendientes ? <span className="chip chip--warn">Revisar</span> : <span className="chip chip--ok">Consistente</span>}</td></tr>)}</tbody></table></div></section>}
+    </>}
+  </div>;
 }
