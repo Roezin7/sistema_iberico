@@ -1427,11 +1427,18 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
  */
 export async function tableroDecisiones(negocioId: bigint, limite = 8) {
   const n = Math.min(Math.max(Math.trunc(limite) || 8, 2), 16);
-  const semanas = await prisma.semanas.findMany({
-    where: { negocio_id: negocioId },
-    orderBy: { fecha_inicio: 'desc' },
-    take: n,
-  });
+  const [semanas, ultimoRebase] = await Promise.all([
+    prisma.semanas.findMany({
+      where: { negocio_id: negocioId },
+      orderBy: { fecha_inicio: 'desc' },
+      take: n,
+    }),
+    prisma.inventory_adjustments.findFirst({
+      where: { negocio_id: negocioId, motivo: { startsWith: 'Rebase FIFO al inventario físico' } },
+      orderBy: { creado_at: 'desc' },
+      select: { semana_id: true },
+    }),
+  ]);
   const ordenadas = [...semanas].reverse();
   const filas = await Promise.all(ordenadas.map(async (semana) => {
     const r = await resumen(negocioId, semana.id);
@@ -1460,8 +1467,16 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
     };
   }));
 
+  // Un rebase físico explícito establece un nuevo punto de partida. Las
+  // diferencias anteriores permanecen en el historial de cada semana, pero
+  // no deben seguir apareciendo como trabajo pendiente ni alimentar alertas
+  // recurrentes de la operación actual.
+  const semanaBaseAlertas = ultimoRebase ? Number(ultimoRebase.semana_id) : null;
+  const filasOperativas = semanaBaseAlertas == null
+    ? filas
+    : filas.filter((fila) => fila.semana_id > semanaBaseAlertas);
   const incidencias: { id: string; semana_id: number; semana: string; tipo: 'costeo' | 'inventario'; responsable: string; fecha_limite: string; accion: string; detalle: string }[] = [];
-  for (const fila of filas) {
+  for (const fila of filasOperativas) {
     if (fila.ventas_epos_pendientes > 0 || fila.excepciones_costeo > 0) {
       incidencias.push({
         id: `costeo-${fila.semana_id}`,
@@ -1489,7 +1504,7 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
     alertas.push({ tipo: 'baja_rotacion', severidad: 'media', semana_id: ultima.semana_id, mensaje: `El inventario cubre aproximadamente ${ultima.cobertura_semanas} semanas de costo`, valor: ultima.cobertura_semanas, referencia: 4 });
   }
   const repetidas = new Map<string, number>();
-  filas.forEach((fila) => fila.incidencias_inventario.forEach((inc) => repetidas.set(inc.producto, (repetidas.get(inc.producto) ?? 0) + 1)));
+  filasOperativas.forEach((fila) => fila.incidencias_inventario.forEach((inc) => repetidas.set(inc.producto, (repetidas.get(inc.producto) ?? 0) + 1)));
   repetidas.forEach((veces, producto) => {
     if (veces >= 2 && ultima) alertas.push({ tipo: 'diferencia_recurrente', severidad: 'alta', semana_id: ultima.semana_id, mensaje: `${producto} presenta diferencias en ${veces} semanas`, valor: veces, referencia: 2 });
   });
