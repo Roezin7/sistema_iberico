@@ -33,6 +33,11 @@ finanzasRouter.get('/estado-resultados', asyncHandler(async (req, res) => {
   res.json(await svc.estadoResultados(req.auth!.negocioId, meses));
 }));
 
+finanzasRouter.get('/tablero-decisiones', asyncHandler(async (req, res) => {
+  const semanas = req.query.semanas == null ? undefined : z.coerce.number().int().positive().optional().parse(req.query.semanas);
+  res.json(await svc.tableroDecisiones(req.auth!.negocioId, semanas));
+}));
+
 finanzasRouter.post('/saldos-iniciales', asyncHandler(async (req, res) => {
   const body = z.object({
     saldos: z.array(z.object({ ubicacion_id: id, monto: z.coerce.number() })).min(1),

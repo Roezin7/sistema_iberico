@@ -1420,6 +1420,86 @@ export async function resumen(negocioId: bigint, semanaId: bigint) {
   };
 }
 
+/**
+ * Mando de decisiones para dirección. Consolida las últimas semanas sin
+ * crear saldos paralelos: ventas y costo salen del resumen semanal; FIFO sólo
+ * se usa para medir consumo, rotación y cobertura cuando hay datos suficientes.
+ */
+export async function tableroDecisiones(negocioId: bigint, limite = 8) {
+  const n = Math.min(Math.max(Math.trunc(limite) || 8, 2), 16);
+  const semanas = await prisma.semanas.findMany({
+    where: { negocio_id: negocioId },
+    orderBy: { fecha_inicio: 'desc' },
+    take: n,
+  });
+  const ordenadas = [...semanas].reverse();
+  const filas = await Promise.all(ordenadas.map(async (semana) => {
+    const r = await resumen(negocioId, semana.id);
+    const ventas = r.ventas_operativas ?? r.ventas.total;
+    const costo = r.costo_ventas_fifo_activo;
+    const foodCost = ventas > 0 && costo != null ? redondear((costo / ventas) * 100) : null;
+    const margen = ventas > 0 && r.resultado_operativo != null ? redondear((r.resultado_operativo / ventas) * 100) : null;
+    const inventarioInicial = r.inventario.apertura_valor;
+    const inventarioFinal = r.inventario.cierre_valor ?? r.inventario.valor_fisico_actual;
+    const inventarioPromedio = inventarioInicial != null && inventarioFinal != null
+      ? (inventarioInicial + inventarioFinal) / 2
+      : inventarioFinal;
+    const rotacion = costo != null && inventarioPromedio != null && inventarioPromedio > 0 ? redondear(costo / inventarioPromedio) : null;
+    const cobertura = costo != null && costo > 0 && inventarioFinal != null ? redondear(inventarioFinal / costo) : null;
+    const incidenciasInventario = r.conciliacion_inventario.filas
+      .filter((f) => f.incidencia_tipo !== 'sin_diferencia')
+      .map((f) => ({ producto: f.producto, incidencia: f.incidencia, tipo: f.incidencia_tipo }));
+    return {
+      semana_id: Number(semana.id), etiqueta: etiquetaCanonica(semana.fecha_inicio, semana.fecha_fin),
+      fecha_inicio: iso(semana.fecha_inicio), fecha_fin: iso(semana.fecha_fin), estado: semana.estado,
+      ventas, costo_ventas: costo, food_cost_pct: foodCost, utilidad_operativa: r.resultado_operativo,
+      margen_operativo_pct: margen, compras_inventario: r.compras_inventario,
+      inventario_final: inventarioFinal, rotacion_semanal: rotacion, cobertura_semanas: cobertura,
+      excepciones_costeo: r.excepciones_costeo.length, ventas_epos_pendientes: r.ventas_epos_pendientes,
+      incidencias_inventario: incidenciasInventario, resultado_independiente: r.resultado_independiente,
+    };
+  }));
+
+  const incidencias: { id: string; semana_id: number; semana: string; tipo: 'costeo' | 'inventario'; responsable: string; fecha_limite: string; accion: string; detalle: string }[] = [];
+  for (const fila of filas) {
+    if (fila.ventas_epos_pendientes > 0 || fila.excepciones_costeo > 0) {
+      incidencias.push({
+        id: `costeo-${fila.semana_id}`,
+        semana_id: fila.semana_id, semana: fila.etiqueta, tipo: 'costeo', responsable: 'Administración',
+        fecha_limite: fila.fecha_fin, accion: 'Resolver mapeo, receta o existencia antes de cerrar',
+        detalle: `${fila.excepciones_costeo} excepción(es) FIFO · ${fila.ventas_epos_pendientes} venta(s) Epos pendiente(s)`,
+      });
+    }
+    fila.incidencias_inventario.slice(0, 12).forEach((inc, index) => incidencias.push({
+      id: `inventario-${fila.semana_id}-${index}`, semana_id: fila.semana_id, semana: fila.etiqueta,
+      tipo: 'inventario', responsable: 'Administración', fecha_limite: fila.fecha_fin,
+      accion: 'Comparar conteo físico, compras y consumo FIFO', detalle: `${inc.producto}: ${inc.incidencia}`,
+    }));
+  }
+
+  const alertas: { tipo: 'costo_creciente' | 'baja_rotacion' | 'diferencia_recurrente'; severidad: 'media' | 'alta'; semana_id: number; mensaje: string; valor: number | null; referencia: number | null }[] = [];
+  for (let i = 1; i < filas.length; i += 1) {
+    const actual = filas[i]!; const anterior = filas[i - 1]!;
+    if (actual.food_cost_pct != null && anterior.food_cost_pct != null && actual.food_cost_pct - anterior.food_cost_pct >= 5) {
+      alertas.push({ tipo: 'costo_creciente', severidad: 'alta', semana_id: actual.semana_id, mensaje: `Food cost subió ${redondear(actual.food_cost_pct - anterior.food_cost_pct)} puntos frente a ${anterior.etiqueta}`, valor: actual.food_cost_pct, referencia: anterior.food_cost_pct });
+    }
+  }
+  const ultima = filas[filas.length - 1];
+  if (ultima?.cobertura_semanas != null && ultima.cobertura_semanas >= 4) {
+    alertas.push({ tipo: 'baja_rotacion', severidad: 'media', semana_id: ultima.semana_id, mensaje: `El inventario cubre aproximadamente ${ultima.cobertura_semanas} semanas de costo`, valor: ultima.cobertura_semanas, referencia: 4 });
+  }
+  const repetidas = new Map<string, number>();
+  filas.forEach((fila) => fila.incidencias_inventario.forEach((inc) => repetidas.set(inc.producto, (repetidas.get(inc.producto) ?? 0) + 1)));
+  repetidas.forEach((veces, producto) => {
+    if (veces >= 2 && ultima) alertas.push({ tipo: 'diferencia_recurrente', severidad: 'alta', semana_id: ultima.semana_id, mensaje: `${producto} presenta diferencias en ${veces} semanas`, valor: veces, referencia: 2 });
+  });
+  const conBloqueador = filas.filter((f) => f.excepciones_costeo > 0 || f.ventas_epos_pendientes > 0 || f.incidencias_inventario.length > 0).length;
+  return {
+    generado_at: new Date().toISOString(), semanas: filas, incidencias: incidencias.slice(0, 80), alertas,
+    salud: { semanas_consultadas: filas.length, semanas_con_bloqueadores: conBloqueador, incidencias_abiertas: incidencias.length, alertas_activas: alertas.length },
+  };
+}
+
 // ---------------------------------------------------------------------------
 //  Cierre de semana
 // ---------------------------------------------------------------------------

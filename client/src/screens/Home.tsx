@@ -19,6 +19,7 @@ const MODULOS: Modulo[] = [
   { clave: 'operacion', titulo: 'Operación', icono: 'wallet', desc: 'Ventas, pagos y cortes diarios', ruta: '/finanzas', soloAdmin: true },
   { clave: 'inventario', titulo: 'Inventario físico', icono: 'package', desc: 'Conteo, faltantes y compras', ruta: '/inventario' },
   { clave: 'checklist', titulo: 'Checklist', icono: 'checks', desc: 'Apertura y cierre del local', ruta: '/tareas' },
+  { clave: 'decisiones', titulo: 'Decisiones', icono: 'trending', desc: 'Comparativos, alertas e incidencias', ruta: '/decisiones', soloAdmin: true },
   { clave: 'rentabilidad', titulo: 'Menú y rentabilidad', icono: 'trending', desc: 'Costo, margen y recetas', ruta: '/costos-menu', soloAdmin: true },
 ];
 

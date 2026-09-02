@@ -19,6 +19,7 @@ const ITEMS: Item[] = [
   { ruta: '/finanzas', label: 'Semana', icono: 'checks', soloAdmin: true },
   { ruta: '/inventario', label: 'Inventario', icono: 'package' },
   { ruta: '/tareas', label: 'Checklist', icono: 'checks' },
+  { ruta: '/decisiones', label: 'Decisiones', icono: 'trending', soloAdmin: true },
 ];
 
 const ADMIN_ITEMS: Item[] = [

@@ -10,6 +10,7 @@ import Marketing from './screens/marketing/Marketing';
 import Compras from './screens/compras/Compras';
 import CostosMenu from './screens/costos-menu/CostosMenu';
 import Tareas from './screens/tareas/Tareas';
+import Decisiones from './screens/decisiones/Decisiones';
 import OfflineBanner from './OfflineBanner';
 import SilviaBubble from './silvia/SilviaBubble';
 import Shell from './Shell';
@@ -52,6 +53,7 @@ function AppBody() {
         <Route path="/marketing" element={<SoloAdmin rol="admin"><Marketing /></SoloAdmin>} />
         <Route path="/compras" element={<Compras />} />
         <Route path="/tareas" element={<Tareas />} />
+        <Route path="/decisiones" element={<SoloAdmin rol="admin"><Decisiones /></SoloAdmin>} />
         <Route path="/costos-menu" element={<SoloAdmin rol="admin"><CostosMenu /></SoloAdmin>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

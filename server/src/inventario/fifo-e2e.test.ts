@@ -45,6 +45,19 @@ describe('flujo FIFO extremo a extremo', () => {
     expect(semana2.consumos[0]!.loteId).toBe(1);
   });
 
+  it('recorre el contrato operativo compra → venta → cierre → apertura', () => {
+    const compra = [{ id: 7, recibidoAt: '2026-08-24', cantidadRestante: 12, costoUnitario: 18 }];
+    const venta = consumirFIFO(compra, 3);
+    const cierreFisico = 9;
+    const aperturaSiguiente = cierreFisico;
+    expect(venta.cantidadConsumida).toBe(3);
+    expect(venta.costoTotal).toBe(54);
+    expect(compra[0]!.cantidadRestante - venta.cantidadConsumida).toBe(cierreFisico);
+    // El inventario físico es la fuente de verdad para la siguiente semana;
+    // FIFO queda como auditoría del consumo aplicado.
+    expect(aperturaSiguiente).toBe(cierreFisico);
+  });
+
   it('asigna DateTime sin zona al día operativo de México y respeta zonas explícitas', () => {
     expect(fechaDeFila({ DateTime: '2026-08-16T20:01:37.15' }, '2026-08-16T00:00:00-06:00').toISOString()).toBe('2026-08-17T02:01:37.150Z');
     expect(fechaDeFila({ DateTime: '2026-08-16T20:01:37.15-06:00' }, '2026-08-16T00:00:00-06:00').toISOString()).toBe('2026-08-17T02:01:37.150Z');

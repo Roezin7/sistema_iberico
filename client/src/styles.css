@@ -2346,6 +2346,19 @@ select:disabled {
 .resultados-mensuales__total small { color: var(--ink-3); font-size: .72rem; }
 .resultados-mensuales__total strong { font-family: var(--font-ui); font-size: 1.05rem; }
 .resultados-mensuales table { min-width: 720px; }
+.decision-health { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; margin: 0 0 1rem; }
+.decision-health > div { display: grid; gap: .15rem; padding: .75rem; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface); }
+.decision-health small { color: var(--ink-3); font-size: .72rem; }
+.decision-health strong { font-family: var(--font-ui); font-size: 1.2rem; }
+.decision-alerts, .decision-trend, .decision-queue { margin-bottom: 1rem; }
+.decision-alert-list, .decision-queue-list { display: grid; gap: .5rem; }
+.decision-alert { display: grid; gap: .15rem; padding: .7rem .8rem; border-left: 3px solid var(--warning); background: var(--warning-bg); }
+.decision-alert--alta { border-left-color: var(--danger); background: var(--danger-bg); }
+.decision-alert small, .decision-queue-item small { color: var(--ink-3); font-size: .74rem; }
+.decision-queue-item { display: flex; justify-content: space-between; gap: 1rem; padding: .7rem 0; border-bottom: 1px solid var(--border); }
+.decision-queue-item:last-child { border-bottom: 0; }
+.decision-queue-item > div { display: grid; gap: .15rem; min-width: 0; }
+.decision-queue-item > span { flex: 0 0 42%; color: var(--ink-2); font-size: .78rem; text-align: right; }
 .operating-cycle .section-heading { margin: 0 0 .75rem; }
 .operating-cycle__steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; }
 .operating-cycle__steps a { display: flex; align-items: center; gap: .55rem; min-width: 0; padding: .65rem .7rem; border: 1px solid var(--border); border-radius: var(--r-input); color: var(--ink); text-decoration: none; background: var(--surface-2); }
@@ -2361,6 +2374,9 @@ select:disabled {
   .closure-flow__steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .decision-grid { grid-template-columns: 1fr; }
   .resultados-mensuales__total { grid-template-columns: 1fr; }
+  .decision-health { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .decision-queue-item { display: grid; }
+  .decision-queue-item > span { text-align: left; }
   .page-head { align-items: flex-start; flex-direction: column; gap: .35rem; }
   .page-head .muted { margin: 0; }
   .compras-weekbar { align-items: stretch; flex-direction: column; }
