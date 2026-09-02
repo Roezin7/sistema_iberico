@@ -21,6 +21,8 @@ import { generarSnapshotEnCierre, sumaPasivosActivos } from '../patrimonio/servi
 import { inventarioActual, valorSnapshot } from '../inventario/service.js';
 import { valorFifoAlCorte } from '../inventario/consumo-epos.js';
 import { esConsumoFifoActivo, esReversionFifo, filtroConsumoFifoActivo } from '../inventario/fuentes.js';
+import { etiquetaCanonica } from './weeks.js';
+export { etiquetaCanonica } from './weeks.js';
 
 // --- Fechas (semana lunes→domingo) -----------------------------------------
 function lunesDe(fecha: Date): Date {
@@ -218,32 +220,6 @@ export async function crearSemana(negocioId: bigint, fechaInicioStr?: string) {
   if (!actualizado) throw new HttpError(404, 'Semana no encontrada');
   await asegurarInventarioSemanal(negocioId, actualizado.id);
   return serializarSemana(actualizado);
-}
-
-// La numeración de semana es una convención operativa, no el ID interno de
-// PostgreSQL. Algunos registros históricos fueron importados fuera de orden,
-// por lo que usar `id` produce etiquetas como "Semana 14" después de la 64.
-// El ancla corresponde a la semana operativa vigente al introducir esta
-// normalización; las semanas futuras e históricas se calculan hacia delante o
-// atrás desde ella.
-const SEMANA_ANCLA_FECHA = Date.UTC(2026, 7, 17); // lunes 17-ago-2026
-const SEMANA_ANCLA_NUMERO = 64;
-
-function numeroSemanaOperativa(inicio: Date): number {
-  const fecha = Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), inicio.getUTCDate());
-  const semanasDesdeAncla = Math.round((fecha - SEMANA_ANCLA_FECHA) / (7 * 24 * 60 * 60 * 1000));
-  return SEMANA_ANCLA_NUMERO + semanasDesdeAncla;
-}
-
-export function etiquetaCanonica(inicio: Date, fin: Date) {
-  const inicioNumero = numeroSemanaOperativa(inicio);
-  const dias = Math.round((Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth(), fin.getUTCDate()) -
-    Date.UTC(inicio.getUTCFullYear(), inicio.getUTCMonth(), inicio.getUTCDate())) / (24 * 60 * 60 * 1000)) + 1;
-  const semanasCubiertas = Math.max(1, Math.round(dias / 7));
-  const numero = semanasCubiertas > 1
-    ? `${inicioNumero}–${inicioNumero + semanasCubiertas - 1}`
-    : `${inicioNumero}`;
-  return `Semana ${numero} (${iso(inicio)} → ${iso(fin)})`;
 }
 
 function serializarSemana(s: { id: bigint; etiqueta: string; fecha_inicio: Date; fecha_fin: Date; estado: string; cerrada_at: Date | null }) {
