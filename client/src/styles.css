@@ -2365,6 +2365,7 @@ select:disabled {
 .system-health__metrics { display: flex; gap: .45rem; flex-wrap: wrap; margin-bottom: .75rem; }
 .system-health__metrics span { padding: .45rem .6rem; border-radius: var(--r-input); background: var(--surface-2); color: var(--ink-2); font-size: .74rem; }
 .system-health__metrics b { color: var(--ink); }
+.system-health__actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; padding-top: .15rem; font-size: .78rem; }
 .system-health__list { display: grid; gap: .2rem; margin-top: .65rem; padding: .6rem .7rem; border-left: 3px solid var(--danger); background: var(--danger-bg); color: var(--ink-2); font-size: .78rem; }
 .system-health__list--muted { border-left-color: var(--warning); background: var(--warning-bg); }
 .operating-cycle .section-heading { margin: 0 0 .75rem; }
