@@ -104,7 +104,7 @@ export async function crearCorreccionInventario(input: AjusteInput) {
     }
 
     const [producto, zona, pzu, lineas] = await Promise.all([
-      tx.products.findFirst({ where: { id: input.productId, negocio_id: input.negocioId, active: true }, select: { id: true, name: true, unit_cost: true, unidad_base: true } }),
+      tx.products.findFirst({ where: { id: input.productId, negocio_id: input.negocioId, active: true }, select: { id: true, name: true, unit_cost: true, unidad_base: true, contenido_compra: true } }),
       tx.zonas_inventario.findFirst({ where: { id: input.zonaId, negocio_id: input.negocioId }, select: { id: true, nombre: true } }),
       tx.product_zone_units.findUnique({ where: { product_id_zona_id: { product_id: input.productId, zona_id: input.zonaId } }, select: { unidad_captura: true, factor: true } }),
       tx.inventory_lines.findMany({ where: { snapshot_id: semanal.cierre_snapshot_id }, select: { product_id: true, zona_id: true, qty_captura: true, factor: true } }),
@@ -118,7 +118,9 @@ export async function crearCorreccionInventario(input: AjusteInput) {
     const qtyActual = existente ? num0(existente.qty_captura) : 0;
     if (qtyActual + deltaCaptura < -0.0001) throw new HttpError(409, 'La corrección dejaría inventario físico negativo en esa zona');
 
-    let costo = producto.unit_cost == null ? null : num0(producto.unit_cost);
+    // Los lotes FIFO y las cantidades de corrección viven en unidad base;
+    // nunca guardar aquí el precio completo de la presentación.
+    let costo = costoUnitarioBase(producto);
     if (costo == null) {
       const ultimo = await tx.inventory_lots.findFirst({ where: { negocio_id: input.negocioId, product_id: input.productId }, orderBy: [{ recibido_at: 'desc' }, { id: 'desc' }], select: { costo_unitario: true } });
       costo = ultimo ? num0(ultimo.costo_unitario) : null;
