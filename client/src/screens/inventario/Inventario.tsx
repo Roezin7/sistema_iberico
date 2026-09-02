@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { Cargando } from '../../ui/Cargando';
-import { weekLabel, weekStateLabel } from '../../operating';
+import WeekSelector from '../../components/WeekSelector';
 
 // --- Tipos de la API ---
 interface Zona { id: number; nombre: string; orden: number }
@@ -298,7 +298,15 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           ))}
         </div>}
         {tipo !== 'conteo_operativo' && <div className="form-grid form-grid--two">
-          {(tipo === 'apertura' || tipo === 'cierre') && <label>Semana<select aria-label="Semana del conteo" value={semanaId ?? ''} onChange={(e) => setSemanaId(e.target.value ? Number(e.target.value) : null)}><option value="">Selecciona…</option>{semanas.map((s) => <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>)}</select></label>}
+          {(tipo === 'apertura' || tipo === 'cierre') && <WeekSelector
+            compact
+            semanas={semanas}
+            value={semanaId}
+            onChange={setSemanaId}
+            label="Semana del conteo"
+            description="Apertura o cierre que vas a registrar."
+            ariaLabel="Semana del conteo"
+          />}
           {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}
         </div>}
         <p className="muted inventory-unit-help">Captura botellas, cajas, paquetes o piezas.</p>

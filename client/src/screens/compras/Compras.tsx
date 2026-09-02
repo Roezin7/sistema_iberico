@@ -5,6 +5,7 @@ import { Icono } from '../../icons';
 import { useAuth } from '../../auth';
 import { Cargando } from '../../ui/Cargando';
 import { todayMexico, weekLabel, weekStateLabel } from '../../operating';
+import WeekSelector from '../../components/WeekSelector';
 import { cantidadBaseDesdePresentacion, conversionCompraTexto, costoBase, formatoCantidad, presentacionTexto } from './fifo-form';
 
 interface Producto { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null; rendimiento_util?: number | null }
@@ -108,7 +109,16 @@ export default function Compras() {
   return <div className="page compras-page">
     <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Entradas</h1></div><p className="muted">Registra compras y gastos.</p>{volverAFinanzas && <Link className="inline-link" to={`/finanzas?semana=${semanaId ?? ''}&tab=cuadre`}>← Volver a Semana</Link>}</header>
     {!esAdmin && <div className="info-box purchase-operator-note"><strong>Para registrar una compra</strong><span>Sube la foto, confirma fecha y forma de pago y envíala a revisión. No necesitas calcular FIFO.</span></div>}
-    {esAdmin && <div className="compras-weekbar"><label>Semana de consulta<select aria-label="Semana de consulta" value={semanaId ?? ''} onChange={(e) => setSemanaId(Number(e.target.value))} disabled={cargandoSemanas || !semanas.length}><option value="">{cargandoSemanas ? 'Cargando semanas…' : 'Seleccionar semana'}</option>{semanas.map((s) => <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>)}</select></label>{semana && <span className={`status status--${semana.estado === 'abierta' ? 'ok' : 'cargando'}`}>{weekStateLabel(semana)}</span>}</div>}
+    {esAdmin && <WeekSelector
+      semanas={semanas}
+      value={semanaId}
+      onChange={setSemanaId}
+      label="Periodo de entradas"
+      description="Compras y lotes recibidos en la semana."
+      ariaLabel="Semana de consulta"
+      loading={cargandoSemanas}
+      disabled={!semanas.length}
+    />}
     <CapturaRapida key={semana?.id ?? fechaInicial} fechaInicial={semana?.fecha_inicio ?? fechaInicial} onSaved={() => { if (esAdmin) void cargar(); }} />
     {esAdmin && semana && <GastoRapido semana={semana} onSaved={() => void cargarTickets()} />}
     {esAdmin && <nav className="tabs">

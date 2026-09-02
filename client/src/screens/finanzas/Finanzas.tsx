@@ -12,7 +12,7 @@ import { useToast } from '../../ui/ToastProvider';
 import { Cargando } from '../../ui/Cargando';
 import { api } from '../../api';
 import { cantidadBaseDesdePresentacion, conversionCompraTexto, costoBase, formatoCantidad, presentacionTexto } from '../compras/fifo-form';
-import { weekLabel, weekStateLabel } from '../../operating';
+import WeekSelector from '../../components/WeekSelector';
 
 interface ProductoCompra { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null; rendimiento_util?: number | null }
 
@@ -97,18 +97,24 @@ export default function Finanzas() {
 
   return (
     <Marco>
-      <div className="semana-bar">
-        <select aria-label="Semana de consulta" value={semanaId ?? ''} onChange={(e) => setSemanaId(Number(e.target.value))}>
-          {semanas.map((s) => (
-            <option key={s.id} value={s.id}>{weekLabel(s)} · {weekStateLabel(s)}</option>
-          ))}
-        </select>
-        <input aria-label="Fecha de inicio de la nueva semana" type="date" value={fechaNueva} onChange={(e) => setFechaNueva(e.target.value)} title="Lunes de la semana a abrir" />
-        <button className="pill" aria-label="Crear semana" onClick={async () => {
-          try { const s = await finanzas.crearSemana(fechaNueva || undefined); setSemanaId(s.id); recargar(); }
-          catch (e) { error(e instanceof Error ? e.message : 'No se pudo crear la semana'); }
-        }}>+ Semana</button>
-      </div>
+      <WeekSelector
+        semanas={semanas}
+        value={semanaId}
+        onChange={setSemanaId}
+        label="Periodo operativo"
+        description="Ventas, gastos y resultado de la semana."
+        ariaLabel="Semana de consulta"
+        actions={<>
+          <label className="week-selector__date">
+            <span>Nuevo inicio</span>
+            <input aria-label="Fecha de inicio de la nueva semana" type="date" value={fechaNueva} onChange={(e) => setFechaNueva(e.target.value)} title="Lunes de la semana a abrir" />
+          </label>
+          <button className="pill" aria-label="Crear semana" onClick={async () => {
+            try { const s = await finanzas.crearSemana(fechaNueva || undefined); setSemanaId(s.id); recargar(); }
+            catch (e) { error(e instanceof Error ? e.message : 'No se pudo crear la semana'); }
+          }}>+ Semana</button>
+        </>}
+      />
       {!semana ? (
         <p className="muted">No hay semanas. Crea una para empezar.</p>
       ) : (
