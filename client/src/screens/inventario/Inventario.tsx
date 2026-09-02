@@ -516,9 +516,6 @@ function InventarioActual() {
   if (!data) return <Cargando />;
   const grupos = agruparPorCategoria(data.productos, categorias);
   const diferenciaFisicoFifo = Math.round((data.valor_fifo_actual_total - data.valor_total) * 100) / 100;
-  const etiquetaValuacion: Record<ProductoActual['fuente_valoracion'], string> = {
-    fifo: 'FIFO', catalogo: 'catálogo', mixta: 'mixta', sin_costo: 'sin costo',
-  };
 
   return (
     <>
@@ -557,9 +554,6 @@ function InventarioActual() {
                       {' · '}conteo físico
                       {p.diferencia_fifo_vs_fisico_base != null && Math.abs(p.diferencia_fifo_vs_fisico_base) > 0.0001
                         ? <> · FIFO esperado {formatoCantidad(p.cantidad_fifo_operativa ?? 0)} {pluralUnidad(p.unidad_operativa, p.cantidad_fifo_operativa ?? 0)}</>
-                        : ''}
-                      {p.fuente_existencia_actual === 'fifo' && p.total_operativo !== totalOperativo
-                        ? ` · físico ${formatoCantidad(p.total_operativo)} ${pluralUnidad(p.unidad_operativa, p.total_operativo)}`
                         : ''}
                       {' · '}mínimo {formatoCantidad(minimoOperativo)} {pluralUnidad(p.unidad_operativa, minimoOperativo)}
                       {' · '}{p.store}
