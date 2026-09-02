@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../auth';
 import { Icono } from '../icons';
 import { Cargando } from '../ui/Cargando';
-import { epos, finanzas, mxn, type ConciliacionDiaria, type DiaFila, type Resumen, type SaludOperativa, type Semana, type TableroSnapshot } from './finanzas/api';
+import { epos, finanzas, mxn, type ConciliacionDiaria, type DiaFila, type EstadoResultadosData, type PatrimonioSnapshot, type Resumen, type SaludOperativa, type Semana, type TableroSnapshot } from './finanzas/api';
 import { weekLabel, weekStateLabel } from '../operating';
 
 interface DashboardState {
@@ -13,13 +13,15 @@ interface DashboardState {
   resumen: Resumen | null;
   salud: SaludOperativa | null;
   tablero: TableroSnapshot | null;
+  patrimonio: PatrimonioSnapshot[];
+  resultados: EstadoResultadosData | null;
   cargando: boolean;
   error: string;
   actualizado: string | null;
 }
 
 const initialState: DashboardState = {
-  semana: null, dias: [], conciliaciones: [], resumen: null, salud: null, tablero: null,
+  semana: null, dias: [], conciliaciones: [], resumen: null, salud: null, tablero: null, patrimonio: [], resultados: null,
   cargando: true, error: '', actualizado: null,
 };
 
@@ -40,6 +42,15 @@ function EstadoPunto({ tone = 'neutral' }: { tone?: 'ok' | 'warn' | 'danger' | '
   return <span className={`dashboard-dot dashboard-dot--${tone}`} aria-hidden="true" />;
 }
 
+function mesCorto(mes: string) {
+  return new Date(`${mes}-01T12:00:00Z`).toLocaleDateString('es-MX', { month: 'short', year: '2-digit', timeZone: 'UTC' }).replace('.', '');
+}
+
+function porcentajeBarra(valor: number, maximo: number) {
+  if (!maximo || valor <= 0) return 0;
+  return Math.max(5, Math.min(100, (valor / maximo) * 100));
+}
+
 export default function Home() {
   const { usuario } = useAuth();
   const [recarga, setRecarga] = useState(0);
@@ -50,15 +61,15 @@ export default function Home() {
     if (!usuario || usuario.rol !== 'admin') return;
     let activo = true;
     setEstado((prev) => ({ ...prev, cargando: true, error: '' }));
-    void Promise.all([finanzas.semanaActual(), finanzas.saludOperativa(), finanzas.tableroDecisiones(8)])
-      .then(async ([semana, salud, tablero]) => {
-        if (!semana) return { semana: null, dias: [], conciliaciones: [], resumen: null, salud, tablero };
+    void Promise.all([finanzas.semanaActual(), finanzas.saludOperativa(), finanzas.tableroDecisiones(8), finanzas.patrimonioTendencia(), finanzas.estadoResultados(12)])
+      .then(async ([semana, salud, tablero, patrimonioData, resultados]) => {
+        if (!semana) return { semana: null, dias: [], conciliaciones: [], resumen: null, salud, tablero, patrimonio: patrimonioData.serie, resultados };
         const [dias, resumen, conciliaciones] = await Promise.all([
           finanzas.dias(semana.id),
           finanzas.resumen(semana.id),
           epos.conciliaciones(semana.id).catch(() => []),
         ]);
-        return { semana, dias: dias.dias, conciliaciones, resumen, salud, tablero };
+        return { semana, dias: dias.dias, conciliaciones, resumen, salud, tablero, patrimonio: patrimonioData.serie, resultados };
       })
       .then((data) => {
         if (activo) setEstado({ ...data, cargando: false, error: '', actualizado: new Date().toISOString() });
@@ -74,7 +85,7 @@ export default function Home() {
     return <div className="page"><header className="page-head"><div><h1>{saludo()}, {usuario.nombre}</h1><p className="page-sub">Operación de Ibérico</p></div></header><section className="card dashboard-staff"><Icono name="checks" size={22} /><div><strong>Operación lista</strong><p className="muted">Registra entradas, inventario y checklist desde el menú.</p></div></section></div>;
   }
 
-  const { semana, dias, conciliaciones, resumen, salud, tablero } = estado;
+  const { semana, dias, conciliaciones, resumen, salud, tablero, patrimonio, resultados } = estado;
   const semanaCerrada = semana?.estado === 'cerrada';
   const diaSemana = new Date(`${hoyMx}T12:00:00`).getDay();
   const enSemana = Boolean(semana && hoyMx >= semana.fecha_inicio && hoyMx <= semana.fecha_fin);
@@ -96,6 +107,11 @@ export default function Home() {
   ];
   const diasConVenta = dias.filter((fila) => fila.total_ventas > 0).length;
   const cortesConfirmados = conciliaciones.filter((c) => c.estado === 'confirmada' || c.confirmado_at).length;
+  const resultadosConMovimiento = resultados?.meses.filter((fila) => !fila.sin_movimientos) ?? [];
+  const maxVentas = Math.max(...resultadosConMovimiento.map((fila) => fila.ventas_netas), 0);
+  const ultimoPatrimonio = patrimonio[patrimonio.length - 1] ?? null;
+  const patrimonioAnterior = patrimonio.length > 1 ? patrimonio[patrimonio.length - 2] : null;
+  const variacionPatrimonio = ultimoPatrimonio && patrimonioAnterior ? ultimoPatrimonio.patrimonio_neto - patrimonioAnterior.patrimonio_neto : null;
 
   return <div className="page dashboard-page">
     <header className="page-head dashboard-head">
@@ -117,6 +133,17 @@ export default function Home() {
         <article className="dashboard-kpi"><span>{inventarioFisicoLabel}</span><strong>{mxn(inventarioFisico)}</strong><small>{resumen?.inventario.estado === 'cerrado' ? 'Conteo confirmado' : 'Fuente física'}</small></article>
         <article className="dashboard-kpi"><span>FIFO activo</span><strong>{mxn(resumen?.inventario.valor_fifo_corte)}</strong><small>Auditoría</small></article>
         <article className={`dashboard-kpi ${brecha != null && Math.abs(brecha) > 1 ? 'dashboard-kpi--warn' : ''}`}><span>Brecha físico vs FIFO</span><strong>{brecha == null ? 'Pendiente' : mxn(brecha)}</strong><small>{brecha == null ? 'Al cierre' : Math.abs(brecha) <= 1 ? 'Consistente' : 'Revisar'}</small></article>
+        <article className="dashboard-kpi dashboard-kpi--equity"><span>Patrimonio neto</span><strong>{mxn(resumen?.patrimonio_neto ?? ultimoPatrimonio?.patrimonio_neto)}</strong><small>{resumen?.patrimonio_neto != null ? 'Semana actual' : 'Último cierre'}</small></article>
+      </section>
+
+      <section className="dashboard-longitudinal" aria-label="Tendencias de ventas y patrimonio">
+        <section className="card dashboard-performance"><div className="section-heading"><div><span className="eyebrow">Tendencia</span><h2>Ventas y rentabilidad</h2><p className="muted">Por mes · datos registrados.</p></div><Link className="inline-link" to="/costos-menu">Ver detalle →</Link></div>
+          {resultadosConMovimiento.length === 0 ? <p className="muted">Sin historial suficiente.</p> : <div className="dashboard-month-list">{resultadosConMovimiento.slice(-6).map((fila) => <div className="dashboard-month" key={fila.mes}><div className="dashboard-month__label"><strong>{mesCorto(fila.mes)}</strong><span>{mxn(fila.ventas_netas)}</span></div><div className="dashboard-month__bar"><span style={{ width: `${porcentajeBarra(fila.ventas_netas, maxVentas)}%` }} /></div><div className="dashboard-month__meta"><span>Utilidad {mxn(fila.utilidad_operativa)}</span><span>Margen {(fila.margen_operativo * 100).toFixed(1)}%</span></div></div>)}</div>}
+          {resultados && <div className="dashboard-performance__total"><span>Acumulado {resultados.total.meses} meses</span><strong>{mxn(resultados.total.ventas_netas)} ventas · {mxn(resultados.total.utilidad_operativa)} utilidad</strong></div>}
+        </section>
+        <section className="card dashboard-equity"><div className="section-heading"><div><span className="eyebrow">Patrimonio</span><h2>Valor neto en el tiempo</h2><p className="muted">Cierres semanales.</p></div><Link className="inline-link" to="/patrimonio">Ver patrimonio →</Link></div>
+          {ultimoPatrimonio ? <><div className="dashboard-equity__headline"><strong>{mxn(ultimoPatrimonio.patrimonio_neto)}</strong><span className={variacionPatrimonio != null && variacionPatrimonio < 0 ? 'text-danger' : 'text-success'}>{variacionPatrimonio == null ? 'Primer cierre' : `${variacionPatrimonio >= 0 ? '+' : ''}${mxn(variacionPatrimonio)} vs. anterior`}</span></div><div className="dashboard-equity__parts"><div><span>Banco</span><strong>{mxn(ultimoPatrimonio.total_banco)}</strong></div><div><span>Efectivo</span><strong>{mxn(ultimoPatrimonio.total_efectivo)}</strong></div><div><span>Inventario físico</span><strong>{mxn(ultimoPatrimonio.total_inventario)}</strong></div><div><span>Pasivos</span><strong className="text-danger">−{mxn(ultimoPatrimonio.total_pasivos)}</strong></div></div><p className="dashboard-formula">Neto = banco + efectivo + inventario − pasivos</p><div className="dashboard-equity__history">{patrimonio.slice(-5).reverse().map((fila) => <div key={fila.id}><span>{fila.fecha}</span><strong>{mxn(fila.patrimonio_neto)}</strong></div>)}</div></> : <p className="muted">Sin cierres patrimoniales.</p>}
+        </section>
       </section>
 
       <div className="dashboard-columns">

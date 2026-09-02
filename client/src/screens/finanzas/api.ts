@@ -115,6 +115,27 @@ export interface TableroSnapshot {
   alertas: Array<{ tipo: string; severidad: 'media' | 'alta'; semana_id: number; mensaje: string; valor: number | null; referencia: number | null }>;
   salud: { semanas_consultadas: number; semanas_con_bloqueadores: number; incidencias_abiertas: number; alertas_activas: number };
 }
+
+export interface PatrimonioSnapshot {
+  id: number; fecha: string; total_banco: number; total_efectivo: number;
+  total_inventario: number; total_pasivos: number; patrimonio_neto: number;
+}
+
+export interface EstadoResultadosMensual {
+  mes: string;
+  ventas: { efectivo: number; tarjeta: number; propinas: number; total: number };
+  ventas_netas: number; compras_inventario: number; variacion_inventario: number | null;
+  costo_ventas: number; costo_ventas_metodo: 'fifo' | 'inventario' | 'compras';
+  utilidad_bruta: number; margen_bruto: number; sueldos: number; gastos_totales: number;
+  utilidad_operativa: number; margen_operativo: number; sin_movimientos: boolean;
+  inventario: { inicial: number | null; final: number | null; fecha_inicial: string | null; fecha_final: string | null } | null;
+}
+
+export interface EstadoResultadosData {
+  desde: string; hasta: string; mes_en_curso: string;
+  meses: EstadoResultadosMensual[];
+  total: { ventas: { efectivo: number; tarjeta: number; propinas: number; total: number }; ventas_netas: number; compras_inventario: number; costo_ventas: number; utilidad_bruta: number; sueldos: number; gastos_totales: number; utilidad_operativa: number; margen_operativo: number; meses: number };
+}
 export interface ExcepcionCosteoSemana {
   producto: string;
   estado: 'pendiente' | 'excepcion';
@@ -199,6 +220,8 @@ export const finanzas = {
   conciliacionInventario: (id: number) => api<Resumen['conciliacion_inventario']>(`/finanzas/semanas/${id}/conciliacion-inventario`),
   saludOperativa: () => api<SaludOperativa>('/finanzas/salud-operativa'),
   tableroDecisiones: (semanas = 8) => api<TableroSnapshot>(`/finanzas/tablero-decisiones?semanas=${semanas}`),
+  estadoResultados: (meses = 12) => api<EstadoResultadosData>(`/finanzas/estado-resultados?meses=${meses}`),
+  patrimonioTendencia: () => api<{ serie: PatrimonioSnapshot[]; ultimo: PatrimonioSnapshot | null }>('/patrimonio/tendencia'),
   excepcionesCosteo: (id: number) => api<ExcepcionCosteoSemana[]>(`/finanzas/semanas/${id}/excepciones-costeo`),
   recalcularConciliacionInventario: (id: number) => api<Resumen['conciliacion_inventario'] & { persistida: boolean; filas_persistidas: number }>(`/finanzas/semanas/${id}/conciliacion-inventario/recalcular`, { method: 'POST', body: {} }),
   correccionesReferencias: (semanaId: number) => api<CorreccionReferencias>(`/finanzas/semanas/${semanaId}/inventario-correcciones/referencias`),
