@@ -23,8 +23,11 @@ interface ProductoActual {
   valor: number; valor_fifo: number; valor_catalogo: number;
   cantidad_fifo_base: number | null; cantidad_fifo_operativa: number | null;
   valor_fifo_actual: number | null;
+  existencia_fisica_base?: number; existencia_fisica_operativa?: number;
+  existencia_fifo_base?: number | null; existencia_fifo_operativa?: number | null;
+  diferencia_fifo_vs_fisico_base?: number | null;
   existencia_actual_base: number; existencia_actual_operativa: number;
-  fuente_existencia_actual: 'fifo' | 'fisico';
+  fuente_existencia_actual: 'fisico';
   costo_fifo_base: number | null; cantidad_con_lote: number; cantidad_sin_lote: number;
   fuente_valoracion: 'fifo' | 'catalogo' | 'mixta' | 'sin_costo';
   categoria_id: number | null; categoria: string | null;
@@ -66,7 +69,7 @@ function SeccionCategoria({ titulo, count, children }: { titulo: string; count: 
 interface Actual {
   snapshot_id: number | null; fecha: string | null; tipo: string | null; semana_id: number | null; productos: ProductoActual[];
   valor_total: number; valor_fifo_total: number; valor_catalogo_total: number; valor_fifo_actual_total: number;
-  fuente_existencia_actual: 'fifo' | 'fisico' | 'mixta';
+  fuente_existencia_actual: 'fisico';
   sin_costo: { product_id: number; nombre: string }[];
 }
 interface ItemCompra {
@@ -512,7 +515,7 @@ function InventarioActual() {
   }, []);
   if (!data) return <Cargando />;
   const grupos = agruparPorCategoria(data.productos, categorias);
-  const diferenciaValuacion = Math.round((data.valor_fifo_total - data.valor_catalogo_total) * 100) / 100;
+  const diferenciaFisicoFifo = Math.round((data.valor_fifo_actual_total - data.valor_total) * 100) / 100;
   const etiquetaValuacion: Record<ProductoActual['fuente_valoracion'], string> = {
     fifo: 'FIFO', catalogo: 'catálogo', mixta: 'mixta', sin_costo: 'sin costo',
   };
@@ -522,10 +525,10 @@ function InventarioActual() {
       <div className="resumen-card" style={{ gap: '0.8rem' }}>
         <span className="muted">Valuación del inventario físico</span>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.7rem' }}>
-          <div><small className="muted">FIFO disponible ahora</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_fifo_actual_total)}</strong><small className="muted">Incluye lotes recibidos y consumos aplicados</small></div>
-          <div><small className="muted">FIFO del último conteo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_fifo_total)}</strong><small className="muted">Valuación del conteo físico</small></div>
-          <div><small className="muted">Catálogo del mismo conteo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_catalogo_total)}</strong><small className="muted">Referencia con el costo vigente</small></div>
-          <div><small className="muted">Diferencia FIFO vs catálogo</small><strong className="big-number" style={{ display: 'block', color: diferenciaValuacion === 0 ? undefined : '#e3b341' }}>{mxn(diferenciaValuacion)}</strong><small className="muted">No es una merma por sí sola</small></div>
+          <div><small className="muted">Inventario físico real</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_total)}</strong><small className="muted">Último conteo por zona</small></div>
+          <div><small className="muted">FIFO esperado</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_fifo_actual_total)}</strong><small className="muted">Auditoría de compras y consumos</small></div>
+          <div><small className="muted">Diferencia FIFO − físico</small><strong className="big-number" style={{ display: 'block', color: diferenciaFisicoFifo === 0 ? undefined : '#e3b341' }}>{mxn(diferenciaFisicoFifo)}</strong><small className="muted">No cambia la existencia real</small></div>
+          <div><small className="muted">Físico a costo catálogo</small><strong className="big-number" style={{ display: 'block' }}>{mxn(data.valor_catalogo_total)}</strong><small className="muted">Referencia de valuación</small></div>
         </div>
         <small className="muted">
           {data.fecha ? `Último conteo: ${new Date(data.fecha).toLocaleString('es-MX')} · ${data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'operativo'}${data.semana_id ? ` · semana ${data.semana_id}` : ''}` : 'Sin conteos aún'}
@@ -543,15 +546,18 @@ function InventarioActual() {
           <ul className="conteo-list">
             {g.items.map((p) => (
               (() => {
-                const totalOperativo = p.existencia_actual_operativa ?? p.total_operativo ?? p.total_base;
+                const totalOperativo = p.existencia_fisica_operativa ?? p.existencia_actual_operativa ?? p.total_operativo ?? p.total_base;
                 const minimoOperativo = p.minimo_operativo ?? p.base_qty;
-                const valorActual = p.valor_fifo_actual ?? p.valor_fifo;
+                const valorActual = p.valor;
                 return <li key={p.product_id} className="conteo-row">
                   <div className="conteo-info">
                     <strong>{p.nombre}</strong>
                     <small className="muted">
                       Existencia {formatoCantidad(totalOperativo)} {pluralUnidad(p.unidad_operativa, totalOperativo)}
-                      {' · '}{p.fuente_existencia_actual === 'fifo' ? 'FIFO actual' : 'conteo físico'}
+                      {' · '}conteo físico
+                      {p.diferencia_fifo_vs_fisico_base != null && Math.abs(p.diferencia_fifo_vs_fisico_base) > 0.0001
+                        ? <> · FIFO esperado {formatoCantidad(p.cantidad_fifo_operativa ?? 0)} {pluralUnidad(p.unidad_operativa, p.cantidad_fifo_operativa ?? 0)}</>
+                        : ''}
                       {p.fuente_existencia_actual === 'fifo' && p.total_operativo !== totalOperativo
                         ? ` · físico ${formatoCantidad(p.total_operativo)} ${pluralUnidad(p.unidad_operativa, p.total_operativo)}`
                         : ''}
@@ -559,7 +565,10 @@ function InventarioActual() {
                       {' · '}{p.store}
                     </small>
                     <small className="muted">
-                      Valuación {p.valor_fifo_actual != null ? 'FIFO actual' : etiquetaValuacion[p.fuente_valoracion]} · {mxn(valorActual)}
+                      Valuación física · {mxn(valorActual)}
+                      {p.diferencia_fifo_vs_fisico_base != null && Math.abs(p.diferencia_fifo_vs_fisico_base) > 0.0001
+                        ? <> · diferencia FIFO {formatoCantidad(p.diferencia_fifo_vs_fisico_base)}</>
+                        : ''}
                       {p.cantidad_sin_lote > 0 ? ' · parte sin lote' : ''}
                     </small>
                   </div>

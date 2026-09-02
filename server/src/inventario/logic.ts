@@ -75,11 +75,11 @@ export function faltanteOperativoInventario(minimo: number, actual: number): num
 /**
  * Selecciona la existencia que debe ver la operación.
  *
- * El conteo físico sigue siendo la referencia para conciliación, pero cuando
- * existen lotes FIFO abiertos éstos representan el saldo operativo vigente
- * (incluyen compras recientes y consumos ya aplicados). Nunca se suman ambos:
- * el lote de apertura ya nació del conteo físico y sumarlo de nuevo duplicaría
- * existencias.
+ * Compatibilidad para consumidores antiguos. El sistema actual ya no usa FIFO
+ * como existencia operativa: el conteo físico es la única existencia real y
+ * FIFO se expone aparte como expectativa/auditoría. Esta función se conserva
+ * para cálculos históricos y pruebas, pero no debe alimentar compras ni
+ * inventario físico.
  */
 export function seleccionarExistenciaOperativa(input: {
   fisicoBase: number;

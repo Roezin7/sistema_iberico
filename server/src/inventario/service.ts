@@ -14,7 +14,6 @@ import {
   faltanteOperativoInventario,
   normalizarUnidadBase,
   unidadOperativaInventario,
-  seleccionarExistenciaOperativa,
   redondear,
   type ProductoFaltante,
 } from './logic.js';
@@ -54,10 +53,17 @@ export interface ProductoActual {
   cantidad_fifo_operativa: number | null;
   /** Valor de todos los lotes FIFO abiertos, sin truncarlo al conteo físico. */
   valor_fifo_actual: number | null;
-  /** Existencia recomendada para operación: FIFO si existe, físico si no. */
+  /** Existencia física del último conteo por zona. Fuente de verdad operativa. */
+  existencia_fisica_base: number;
+  existencia_fisica_operativa: number;
+  /** Saldo del libro FIFO, usado únicamente como expectativa/auditoría. */
+  existencia_fifo_base: number | null;
+  existencia_fifo_operativa: number | null;
+  diferencia_fifo_vs_fisico_base: number | null;
+  /** Alias de compatibilidad: siempre representa el físico, nunca FIFO. */
   existencia_actual_base: number;
   existencia_actual_operativa: number;
-  fuente_existencia_actual: 'fifo' | 'fisico';
+  fuente_existencia_actual: 'fisico';
   fuente_valoracion: 'fifo' | 'catalogo' | 'mixta' | 'sin_costo';
   valor: number;
   categoria_id: number | null;
@@ -76,7 +82,7 @@ export interface InventarioActual {
   valor_catalogo_total: number;
   /** Valuación del saldo FIFO operativo actual (no del último conteo). */
   valor_fifo_actual_total: number;
-  fuente_existencia_actual: 'fifo' | 'fisico' | 'mixta';
+  fuente_existencia_actual: 'fisico';
   sin_costo: { product_id: number; nombre: string }[];
 }
 
@@ -180,7 +186,6 @@ export async function crearSnapshotConsolidado(
  * zona: no borra lo ya contado en las demás.
  */
 export async function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
-  const vista = options.vista ?? 'operativa';
   const [productos, snaps, lotes] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
@@ -297,17 +302,10 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const valorCatalogo = valorProducto(totalBase, unitCostBase);
     const valorado = valorarFisicoConLotes(totalBase, lotesProducto, unitCostBase);
     const cantidadesLotes = lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante), 0);
-    // La vista física nunca sustituye el conteo por el saldo del libro FIFO.
-    // Esto evita que compras recientes o lotes arrastrados de otra semana
-    // inflen la existencia que se presenta al operador y al cierre. La vista
-    // operativa sí usa el saldo FIFO vivo para la lista de compras.
-    const existenciaOperativa = vista === 'fisica'
-      ? { base: redondear(totalBase), fuente: 'fisico' as const }
-      : seleccionarExistenciaOperativa({
-          fisicoBase: totalBase,
-          fifoBase: cantidadesLotes,
-          tieneLotes: lotesProducto.length > 0,
-        });
+    // El físico es la única existencia real para operación. FIFO se conserva
+    // como expectativa/auditoría y nunca sustituye ni se suma al conteo.
+    const existenciaFisicaBase = redondear(totalBase);
+    const existenciaFifoBase = lotesProducto.length ? redondear(cantidadesLotes) : null;
     const cantidadFifoOperativa = lotesProducto.length
       ? cantidadOperativaInventario({
           totalBase: cantidadesLotes,
@@ -356,13 +354,22 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       cantidad_fifo_base: lotesProducto.length ? Math.round(cantidadesLotes * 1_000_000) / 1_000_000 : null,
       cantidad_fifo_operativa: cantidadFifoOperativa,
       valor_fifo_actual: valorFifoActual,
-      existencia_actual_base: existenciaOperativa.base,
-      existencia_actual_operativa: cantidadOperativaInventario({
-        totalBase: existenciaOperativa.base,
+      existencia_fisica_base: existenciaFisicaBase,
+      existencia_fisica_operativa: cantidadOperativaInventario({
+        totalBase: existenciaFisicaBase,
         unidadBase: p.unidad_base,
         contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
       }),
-      fuente_existencia_actual: existenciaOperativa.fuente,
+      existencia_fifo_base: existenciaFifoBase,
+      existencia_fifo_operativa: cantidadFifoOperativa,
+      diferencia_fifo_vs_fisico_base: existenciaFifoBase == null ? null : redondear(existenciaFifoBase - existenciaFisicaBase),
+      existencia_actual_base: existenciaFisicaBase,
+      existencia_actual_operativa: cantidadOperativaInventario({
+        totalBase: existenciaFisicaBase,
+        unidadBase: p.unidad_base,
+        contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
+      }),
+      fuente_existencia_actual: 'fisico',
       fuente_valoracion: valorado.fuente,
       valor: Math.round(valorado.valor * 100) / 100,
       categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
@@ -381,8 +388,6 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
   const valorFifoTotal = Math.round(result.reduce((a, p) => a + p.valor_fifo, 0) * 100) / 100;
   const valorCatalogoTotal = Math.round(result.reduce((a, p) => a + p.valor_catalogo, 0) * 100) / 100;
   const valorFifoActualTotal = Math.round(result.reduce((a, p) => a + (p.valor_fifo_actual ?? p.valor_fifo), 0) * 100) / 100;
-  const fuentes = new Set(result.map((p) => p.fuente_existencia_actual));
-
   return {
     snapshot_id: snapIdActual != null ? Number(snapIdActual) : null,
     fecha: fechaActual ? fechaActual.toISOString() : null,
@@ -395,7 +400,7 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     valor_fifo_total: valorFifoTotal,
     valor_catalogo_total: valorCatalogoTotal,
     valor_fifo_actual_total: valorFifoActualTotal,
-    fuente_existencia_actual: fuentes.size === 1 ? [...fuentes][0]! : 'mixta',
+    fuente_existencia_actual: 'fisico',
     sin_costo: sinCosto,
   };
 }
@@ -423,7 +428,9 @@ export async function listarSnapshots(
   }));
 }
 
-/** Lista de compras: faltantes (base_qty - total_base) agrupados por tienda. */
+/** Lista de compras: faltantes contra el inventario físico, agrupados por tienda.
+ * FIFO sólo se consulta como auditoría y nunca cambia la sugerencia de compra.
+ */
 export async function listaCompras(negocioId: bigint) {
   const actual = await inventarioActual(negocioId, { vista: 'operativa' });
   const faltantes: ProductoFaltante[] = actual.productos.map((p) => {

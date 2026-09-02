@@ -59,9 +59,9 @@ export async function contextoNegocio(negocioId: bigint): Promise<string> {
 
   // --- Inventario ---
   try {
-    const [inv, compras] = await Promise.all([inventarioActual(negocioId, { vista: 'operativa' }), listaCompras(negocioId)]);
+    const [inv, compras] = await Promise.all([inventarioActual(negocioId, { vista: 'fisica' }), listaCompras(negocioId)]);
     partes.push(
-      `Inventario: valor FIFO disponible ${mxn(inv.valor_fifo_actual_total)}; compra sugerida ${mxn(compras.total)} ` +
+      `Inventario físico: ${mxn(inv.valor_total)}; FIFO auditoría ${mxn(inv.valor_fifo_actual_total)}; compra sugerida ${mxn(compras.total)} ` +
         `en ${compras.grupos.length} tiendas` +
         (inv.sin_costo.length ? `; ${inv.sin_costo.length} productos sin costo` : '') +
         `. El detalle completo por producto, categoría, tienda y zona está disponible en la herramienta consultar_inventario.`,

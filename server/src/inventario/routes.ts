@@ -15,9 +15,9 @@ export const inventarioRouter = Router();
 inventarioRouter.use(requireAuth);
 
 /** GET /inventario/current — conteo físico y existencia FIFO actual.
- * La pantalla de existencia solicita `vista=fisica` para que el valor
- * principal corresponda al último conteo; las compras y Silvia siguen usando
- * `vista=operativa` directamente en el servicio.
+ * `vista=fisica` es la vista canónica. El parámetro `vista=operativa` se
+ * conserva por compatibilidad, pero la existencia devuelta siempre es física;
+ * FIFO se entrega en campos separados para auditoría.
  */
 inventarioRouter.get(
   '/current',

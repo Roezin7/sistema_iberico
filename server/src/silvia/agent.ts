@@ -29,7 +29,7 @@ Reglas:
 - Piensa como negocio de bar en México: margen, rotación de inventario, comisión de terminal (1.99%), control de efectivo y faltantes, costos de cerveza/licor, propinas, sueldos.
 - Tienes acceso al inventario detallado y actualizado mediante consultar_inventario. Úsala siempre que pregunten por productos, categorías, tiendas, zonas, faltantes, excedentes, compras o capital parado. Aplica exactamente filtros como "sin alcohol" y no afirmes que falta el desglose sin consultar primero.
 - Tienes el estado de resultados mes a mes mediante estado_resultados, con historia desde julio 2025. Úsala siempre que pregunten por P&L, utilidad, rentabilidad, márgenes, costos, gastos o cómo va el negocio contra meses anteriores; el contexto de abajo sólo trae las últimas semanas, así que no respondas de memoria ni digas que no hay histórico sin consultar. Lee las notas que devuelve y respeta lo que dicen sobre meses parciales, propinas y el método del costo de ventas.
-- Para inventario, "capital parado" es el valor a costo de la existencia operativa FIFO que excede el nivel objetivo en unidad base (minimo_base): max(existencia_actual_base - minimo_base, 0) × costo por unidad base. Distingue ese excedente del valor total existente y aclara cuando un producto no tenga costo o categoría.
+- Para inventario, la existencia real siempre es el conteo físico. "Capital parado" es el valor a costo de la existencia física que excede el nivel objetivo en unidad base (minimo_base): max(existencia_actual_base - minimo_base, 0) × costo por unidad base. FIFO es sólo una expectativa/auditoría: usa diferencia_fifo_vs_fisico_base para señalar faltantes o sobrantes teóricos, nunca para reemplazar el físico.
 - Si detectas algo relevante y duradero del negocio (un patrón, una decisión, una preferencia, el efecto de un cambio), guárdalo con la herramienta recordar_aprendizaje para recordarlo en el futuro. No guardes trivialidades ni datos que ya están en los números.
 - Toma en cuenta los eventos y aprendizajes previos (memoria) para dar continuidad: si el dueño hizo un cambio, evalúa su efecto.
 - Responde en Markdown breve. Usa viñetas para las acciones. Nada de saludos largos ni disculpas.
@@ -161,7 +161,7 @@ async function loopHerramientas(
             listaCompras(negocioId),
           ]);
           const productos = inv.productos.map((p) => {
-            const existenciaActual = p.existencia_actual_base;
+            const existenciaActual = p.existencia_fisica_base;
             const excedente = Math.max(existenciaActual - p.minimo_base, 0);
             const faltante = Math.max(p.minimo_base - existenciaActual, 0);
             return {
@@ -171,7 +171,10 @@ async function loopHerramientas(
               objetivo: p.minimo_base,
               existencia: existenciaActual,
               costo_unitario: p.unit_cost,
-              valor_existente: p.valor_fifo_actual ?? p.valor,
+              valor_existente: p.valor,
+              existencia_fifo_esperada: p.existencia_fifo_base,
+              diferencia_fifo_vs_fisico: p.diferencia_fifo_vs_fisico_base,
+              valor_fifo_esperado: p.valor_fifo_actual,
               excedente,
               capital_parado: p.unit_cost == null ? null : Math.round(excedente * p.unit_cost * 100) / 100,
               faltante,
