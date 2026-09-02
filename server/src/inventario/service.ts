@@ -301,7 +301,9 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const unitCostPresentation = num(p.unit_cost);
     const unitCostBase = costoUnitarioBase(p);
     const lotesProducto = (lotesPorProducto.get(p.id.toString()) ?? []) as LoteValuacion[];
-    const valorCatalogo = valorProducto(totalBase, unitCostBase);
+    // Conserva precisión hasta el total; redondear cada producto antes de
+    // sumar puede desfasar el valor del snapshot oficial por algunos centavos.
+    const valorCatalogo = unitCostBase == null ? 0 : totalBase * unitCostBase;
     const valorado = valorarFisicoConLotes(totalBase, lotesProducto, unitCostBase);
     const cantidadesLotes = lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante), 0);
     // El físico es la única existencia real para operación. FIFO se conserva
