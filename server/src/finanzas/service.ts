@@ -1500,6 +1500,41 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
   };
 }
 
+/** Diagnóstico de preparación de datos maestros y colas operativas. Sólo
+ * lectura: sirve para saber si los indicadores pueden usarse para decidir. */
+export async function saludOperativa(negocioId: bigint) {
+  const [productosActivos, sinZona, sinCategoria, menuActivo, menuSinEpos, menuSinReceta, comprasPendientes, ventasPendientes, semanasAbiertas, snapshotsLegado] = await Promise.all([
+    prisma.products.count({ where: { negocio_id: negocioId, active: true } }),
+    prisma.products.count({ where: { negocio_id: negocioId, active: true, product_zone_units: { none: {} } } }),
+    prisma.products.count({ where: { negocio_id: negocioId, active: true, categoria_id: null } }),
+    prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true } }),
+    prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, epos_product_id: null } }),
+    prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, recetas: { none: { estado: 'completada' } } } }),
+    prisma.purchases.count({ where: { negocio_id: negocioId, estado: 'pendiente' } }),
+    prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: { in: ['pendiente', 'excepcion'] } } }),
+    prisma.semanas.count({ where: { negocio_id: negocioId, estado: 'abierta' } }),
+    prisma.inventory_snapshot.count({ where: { negocio_id: negocioId, semana_id: null } }),
+  ]);
+  const bloqueadores = [
+    ...(sinZona ? [`${sinZona} producto(s) activo(s) sin zona de conteo`] : []),
+    ...(menuSinEpos ? [`${menuSinEpos} producto(s) de menú sin vínculo Epos`] : []),
+    ...(menuSinReceta ? [`${menuSinReceta} producto(s) de menú sin receta completada`] : []),
+    ...(ventasPendientes ? [`${ventasPendientes} venta(s) Epos pendientes o con excepción`] : []),
+  ];
+  const advertencias = [
+    ...(sinCategoria ? [`${sinCategoria} producto(s) activo(s) sin categoría`] : []),
+    ...(comprasPendientes ? [`${comprasPendientes} compra(s) pendientes de revisión`] : []),
+    ...(semanasAbiertas > 1 ? [`Hay ${semanasAbiertas} semanas abiertas simultáneamente`] : []),
+    ...(snapshotsLegado ? [`${snapshotsLegado} snapshot(s) histórico(s) sin semana`] : []),
+  ].filter(Boolean);
+  return {
+    generado_at: new Date().toISOString(), estado: bloqueadores.length ? 'requiere_atencion' : advertencias.length ? 'operable_con_alertas' : 'saludable',
+    catalogo: { productos_activos: productosActivos, sin_zona: sinZona, sin_categoria: sinCategoria, menu_activo: menuActivo, menu_sin_epos: menuSinEpos, menu_sin_receta: menuSinReceta },
+    operacion: { compras_pendientes: comprasPendientes, ventas_pendientes: ventasPendientes, semanas_abiertas: semanasAbiertas, snapshots_sin_semana: snapshotsLegado },
+    bloqueadores, advertencias,
+  };
+}
+
 // ---------------------------------------------------------------------------
 //  Cierre de semana
 // ---------------------------------------------------------------------------
