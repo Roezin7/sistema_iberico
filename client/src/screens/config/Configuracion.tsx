@@ -247,6 +247,7 @@ function RecetasCfg() {
   const [estado, setEstado] = useState<'borrador' | 'validada'>('borrador');
   const [lineas, setLineas] = useState<DraftLinea[]>([]);
   const [filtroMenu, setFiltroMenu] = useState('');
+  const [filtroCalidad, setFiltroCalidad] = useState<'todos' | 'sin_epos' | 'sin_receta' | 'incompleta'>('todos');
   const [draft, setDraft] = useState<DraftLinea>({ product_id: '', cantidad: '', unidad: 'ml', nota: '' });
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -330,9 +331,13 @@ function RecetasCfg() {
 
       <div className="resumen-card" style={{ gap: '0.5rem' }}>
         <div className="card-head"><div><strong>Catálogo de recetas</strong><p className="muted">Selecciona un producto para preparar una nueva versión. La versión anterior permanece intacta.</p></div><span className="badge-neutral">{menu.length} productos</span></div>
-        <input className="buscador" placeholder="Buscar en el menú…" value={filtroMenu} onChange={(e) => setFiltroMenu(e.target.value)} />
+        <div className="config-quality-filters"><input className="buscador" placeholder="Buscar en el menú…" value={filtroMenu} onChange={(e) => setFiltroMenu(e.target.value)} /><select aria-label="Filtrar calidad del menú" value={filtroCalidad} onChange={(e) => setFiltroCalidad(e.target.value as typeof filtroCalidad)}><option value="todos">Todos los productos</option><option value="sin_epos">Sin vínculo Epos</option><option value="sin_receta">Sin receta</option><option value="incompleta">Receta incompleta</option></select></div>
         {menu.length === 0 && <p className="muted">Aún no hay recetas cargadas.</p>}
-        {menu.filter((p) => p.nombre.toLowerCase().includes(filtroMenu.toLowerCase())).map((p) => {
+        {menu.filter((p) => {
+          const receta = p.recetas[0];
+          const calidad = filtroCalidad === 'sin_epos' ? p.epos_product_id == null : filtroCalidad === 'sin_receta' ? !receta : filtroCalidad === 'incompleta' ? !!receta && receta.lineas.some((l) => l.falta_configuracion.length > 0) : true;
+          return calidad && p.nombre.toLowerCase().includes(filtroMenu.toLowerCase());
+        }).map((p) => {
           const r = p.recetas[0];
           const total = r?.lineas.reduce((s, l) => s + (l.costo_estimado ?? 0), 0) ?? null;
           return <div key={p.id} className="conteo-row" style={{ flexWrap: 'wrap', gap: '0.6rem' }}>
@@ -368,6 +373,7 @@ function InventarioCfg() {
   const [filtro, setFiltro] = useState('');
   const [storeFilter, setStoreFilter] = useState<number | ''>('');
   const [categoriaFilter, setCategoriaFilter] = useState<number | ''>('');
+  const [calidadFilter, setCalidadFilter] = useState<'todos' | 'sin_zona' | 'sin_categoria' | 'sin_conversion'>('todos');
   const [mostrarInactivos, setMostrarInactivos] = useState(false);
   const [nuevoAbierto, setNuevoAbierto] = useState(false);
   const [seleccionado, setSeleccionado] = useState<number | null>(null);
@@ -385,8 +391,9 @@ function InventarioCfg() {
       .filter((p) => mostrarInactivos || p.active)
       .filter((p) => storeFilter === '' || p.store_id === storeFilter)
       .filter((p) => categoriaFilter === '' || p.categoria_id === categoriaFilter)
+      .filter((p) => calidadFilter === 'todos' || calidadFilter === 'sin_zona' && p.unidades.length === 0 || calidadFilter === 'sin_categoria' && p.categoria_id == null || calidadFilter === 'sin_conversion' && (!p.unidad_base || !p.contenido_compra))
       .filter((p) => `${p.nombre} ${p.store} ${p.categoria ?? ''}`.toLowerCase().includes(filtro.toLowerCase())),
-    [productos, filtro, mostrarInactivos, storeFilter, categoriaFilter],
+    [productos, filtro, mostrarInactivos, storeFilter, categoriaFilter, calidadFilter],
   );
 
   useEffect(() => {
@@ -431,6 +438,7 @@ function InventarioCfg() {
           <option value="">Todas las categorías</option>
           {categorias.filter((c) => c.activo).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
         </select>
+        <select value={calidadFilter} onChange={(e) => setCalidadFilter(e.target.value as typeof calidadFilter)} aria-label="Filtrar calidad de datos"><option value="todos">Todos los datos</option><option value="sin_zona">Sin zona de conteo</option><option value="sin_categoria">Sin categoría</option><option value="sin_conversion">Sin conversión FIFO</option></select>
         <label className="config-check"><input type="checkbox" checked={mostrarInactivos} onChange={(e) => setMostrarInactivos(e.target.checked)} /> <span>Incluir inactivos</span></label>
       </div>
 
