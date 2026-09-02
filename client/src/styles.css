@@ -2371,6 +2371,14 @@ select:disabled {
 .system-health__actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; padding-top: .15rem; font-size: .78rem; }
 .system-health__list { display: grid; gap: .2rem; margin-top: .65rem; padding: .6rem .7rem; border-left: 3px solid var(--danger); background: var(--danger-bg); color: var(--ink-2); font-size: .78rem; }
 .system-health__list--muted { border-left-color: var(--warning); background: var(--warning-bg); }
+.inventory-history { margin-top: 1rem; }
+.inventory-history > summary { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; padding: .8rem; cursor: pointer; list-style: none; }
+.inventory-history > summary::-webkit-details-marker { display: none; }
+.inventory-history > summary::before { content: '＋'; color: var(--brand); font-weight: 800; margin-right: .35rem; }
+.inventory-history[open] > summary::before { content: '−'; }
+.inventory-history > summary span:first-of-type { display: grid; gap: .15rem; }
+.inventory-history > summary small { color: var(--ink-3); font-weight: 400; }
+.inventory-history__body { padding: 0 .8rem .25rem; }
 .operating-cycle .section-heading { margin: 0 0 .75rem; }
 .operating-cycle__steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .6rem; }
 .operating-cycle__steps a { display: flex; align-items: center; gap: .55rem; min-width: 0; padding: .65rem .7rem; border: 1px solid var(--border); border-radius: var(--r-input); color: var(--ink); text-decoration: none; background: var(--surface-2); }

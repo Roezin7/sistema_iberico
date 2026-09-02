@@ -581,10 +581,9 @@ function InventarioActual() {
           </ul>
         </SeccionCategoria>
       ))}
-      <section className="resumen-card inventory-history">
-        <div className="section-heading">
-          <div><strong>Historial de conteos</strong><p className="muted">Cada conteo indica si fue apertura, cierre o ajuste. El operativo no cambia por sí solo el cierre semanal.</p></div>
-        </div>
+      <details className="resumen-card inventory-history">
+        <summary><span><strong>Historial de conteos</strong><small>Cierres, aperturas, ajustes y conteos operativos</small></span><span className="muted">Auditoría</span></summary>
+        <div className="inventory-history__body"><p className="muted">Cada conteo indica si fue apertura, cierre o ajuste. El operativo no cambia por sí solo el cierre semanal.</p>
         {historial.length === 0 ? <p className="muted">Sin conteos registrados.</p> : (
           <ul className="conteo-list">
             {historial.slice(0, 12).map((s) => {
@@ -596,7 +595,8 @@ function InventarioActual() {
             })}
           </ul>
         )}
-      </section>
+        </div>
+      </details>
     </>
   );
 }
