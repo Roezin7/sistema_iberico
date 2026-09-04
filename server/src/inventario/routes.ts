@@ -14,10 +14,11 @@ export const inventarioRouter = Router();
 // Inventario y tareas son accesibles para admin y empleado.
 inventarioRouter.use(requireAuth);
 
-/** GET /inventario/current — conteo físico y existencia FIFO actual.
+/** GET /inventario/current — existencia física operativa y existencia FIFO actual.
  * `vista=fisica` es la vista canónica. El parámetro `vista=operativa` se
- * conserva por compatibilidad, pero la existencia devuelta siempre es física;
- * FIFO se entrega en campos separados para auditoría.
+ * conserva por compatibilidad, pero la existencia devuelta siempre parte del
+ * físico y aplica entradas/consumos registrados; FIFO se entrega separado para
+ * auditoría.
  */
 inventarioRouter.get(
   '/current',

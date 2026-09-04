@@ -17,6 +17,7 @@ import {
   redondear,
   type ProductoFaltante,
 } from './logic.js';
+import { filtroConsumoFifoActivo } from './fuentes.js';
 
 export interface ProductoActual {
   product_id: number;
@@ -37,7 +38,7 @@ export interface ProductoActual {
   contenido_compra: number | null;
   unidad_compra: string | null;
   rendimiento_util: number;
-  /** Valor del conteo físico usando lotes FIFO, sólo como referencia de costo. */
+  /** Valor del físico operativo usando lotes FIFO, sólo como referencia de costo. */
   valor_fifo: number;
   /** Valor calculado con el costo vigente del catálogo. */
   valor_catalogo: number;
@@ -53,9 +54,13 @@ export interface ProductoActual {
   cantidad_fifo_operativa: number | null;
   /** Valor de todos los lotes FIFO abiertos, sin truncarlo al conteo físico. */
   valor_fifo_actual: number | null;
-  /** Existencia física del último conteo por zona. Fuente de verdad operativa. */
+  /** Existencia física operativa: último conteo + entradas - consumos. */
   existencia_fisica_base: number;
   existencia_fisica_operativa: number;
+  /** Punto de partida físico antes de movimientos posteriores. */
+  conteo_fisico_base: number;
+  entradas_posteriores_base: number;
+  consumos_posteriores_base: number;
   /** Saldo del libro FIFO, usado únicamente como expectativa/auditoría. */
   existencia_fifo_base: number | null;
   existencia_fifo_operativa: number | null;
@@ -79,7 +84,7 @@ export interface InventarioActual {
   semana_id: number | null;
   productos: ProductoActual[];
   valor_total: number;
-  /** Valuación FIFO del mismo conteo físico, sólo para comparar costos. */
+  /** Valuación FIFO del mismo físico operativo, sólo para comparar costos. */
   valor_fifo_total: number;
   valor_catalogo_total: number;
   /** Valuación del saldo FIFO operativo actual (no del último conteo). */
@@ -183,12 +188,13 @@ export async function crearSnapshotConsolidado(
 }
 
 /**
- * Inventario "actual" = el ÚLTIMO conteo de CADA zona (Bodega, Local, …) por
- * separado, agregado por producto. Volver a contar una zona reemplaza SOLO esa
- * zona: no borra lo ya contado en las demás.
+ * Inventario "actual" = el último conteo de cada zona (Bodega, Local, …),
+ * agregado por producto, más las entradas físicas registradas después de ese
+ * conteo, menos los consumos físicos posteriores. El conteo sigue siendo el
+ * punto de partida; las compras confirmadas no se quedan sólo en FIFO.
  */
 export async function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
-  const [productos, snaps, lotes] = await Promise.all([
+  const [productos, snaps, lotesTodos, consumosPosteriores] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
       include: { stores: true, categorias_inventario: true },
@@ -205,14 +211,22 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     prisma.inventory_lots.findMany({
       where: {
         negocio_id: negocioId,
-        estado: 'abierto',
-        cantidad_restante: { gt: 0 },
         ...(options.hasta ? { recibido_at: { lte: options.hasta } } : {}),
       },
-      select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true },
+      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchase_id: true, estado: true, creado_at: true },
       orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
     }),
+    prisma.inventory_consumptions.findMany({
+      where: {
+        negocio_id: negocioId,
+        ...(options.hasta ? { fecha: { lte: options.hasta } } : {}),
+        ...filtroConsumoFifoActivo({ incluirAjustes: true }),
+      },
+      select: { product_id: true, cantidad: true, creado_at: true },
+    }),
   ]);
+
+  const lotes = lotesTodos.filter((lote) => lote.estado === 'abierto' && num0(lote.cantidad_restante) > 0);
 
   // No mezclar el libro histórico de pruebas con lotes operativos. Si un
   // producto ya tiene entradas reales, esas son la fuente de costo vigente.
@@ -295,9 +309,21 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
   const sinCosto: { product_id: number; nombre: string }[] = [];
   const result: ProductoActual[] = productos.map((p) => {
     const ls = lineasPorProducto.get(p.id.toString()) ?? [];
-    const totalBase = totalBaseProducto(
+    const conteoFisicoBase = totalBaseProducto(
       ls.map((l) => ({ qty_captura: num0(l.qty_captura), factor: num0(l.factor) })),
     );
+    const entradasPosterioresBase = lotesTodos
+      .filter((l) => l.product_id === p.id
+        && l.estado !== 'cancelado'
+        && (l.purchase_id != null || l.fuente === 'ajuste_inventario')
+        && (fechaActual == null || l.creado_at > fechaActual))
+      .reduce((total, l) => total + num0(l.cantidad_inicial), 0);
+    const consumosPosterioresBase = consumosPosteriores
+      .filter((c) => c.product_id === p.id && (fechaActual == null || c.creado_at > fechaActual))
+      .reduce((total, c) => total + num0(c.cantidad), 0);
+    // No permitir existencia negativa: si los consumos superan el saldo
+    // esperado, la diferencia se conserva en el contraste contra FIFO.
+    const totalBase = Math.max(0, conteoFisicoBase + entradasPosterioresBase - consumosPosterioresBase);
     const unitCostPresentation = num(p.unit_cost);
     const unitCostBase = costoUnitarioBase(p);
     const lotesProducto = (lotesPorProducto.get(p.id.toString()) ?? []) as LoteValuacion[];
@@ -306,8 +332,9 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const valorCatalogo = unitCostBase == null ? 0 : totalBase * unitCostBase;
     const valorado = valorarFisicoConLotes(totalBase, lotesProducto, unitCostBase);
     const cantidadesLotes = lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante), 0);
-    // El físico es la única existencia real para operación. FIFO se conserva
-    // como expectativa/auditoría y nunca sustituye ni se suma al conteo.
+    // El físico operativo parte del conteo y aplica las entradas/consumos
+    // registrados. FIFO sigue siendo el libro de lotes y una auditoría, no una
+    // segunda existencia que se sume por separado.
     const existenciaFisicaBase = redondear(totalBase);
     const existenciaFifoBase = lotesProducto.length ? redondear(cantidadesLotes) : null;
     const cantidadFifoOperativa = lotesProducto.length
@@ -364,6 +391,9 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
         unidadBase: p.unidad_base,
         contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
       }),
+      conteo_fisico_base: redondear(conteoFisicoBase),
+      entradas_posteriores_base: redondear(entradasPosterioresBase),
+      consumos_posteriores_base: redondear(consumosPosterioresBase),
       existencia_fifo_base: existenciaFifoBase,
       existencia_fifo_operativa: cantidadFifoOperativa,
       diferencia_fifo_vs_fisico_base: existenciaFifoBase == null ? null : redondear(existenciaFifoBase - existenciaFisicaBase),
@@ -375,10 +405,9 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       }),
       fuente_existencia_actual: 'fisico',
       fuente_valoracion: unitCostBase == null ? 'sin_costo' : 'catalogo',
-      // La existencia física se valora con el costo vigente del catálogo para
-      // mantenerla consistente con valorSnapshot y con el cierre oficial. La
-      // valuación FIFO del mismo conteo se conserva en valor_fifo como dato de
-      // auditoría; nunca cambia la cantidad ni el valor físico principal.
+      // La existencia física operativa se valora con el costo vigente del
+      // catálogo. La valuación FIFO del mismo saldo se conserva en valor_fifo
+      // como dato de auditoría; nunca cambia la cantidad física principal.
       valor: valorCatalogo,
       categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
       categoria: p.categorias_inventario?.nombre ?? null,
