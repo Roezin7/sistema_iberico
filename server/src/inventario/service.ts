@@ -194,7 +194,7 @@ export async function crearSnapshotConsolidado(
  * punto de partida; las compras confirmadas no se quedan sólo en FIFO.
  */
 export async function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
-  const [productos, snaps, lotesTodos, consumosPosteriores] = await Promise.all([
+  const [productos, snaps, lotesTodos, consumosPosteriores, ajustesInventario] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
       include: { stores: true, categorias_inventario: true },
@@ -222,7 +222,11 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
         ...(options.hasta ? { fecha: { lte: options.hasta } } : {}),
         ...filtroConsumoFifoActivo({ incluirAjustes: true }),
       },
-      select: { product_id: true, cantidad: true, creado_at: true },
+      select: { product_id: true, cantidad: true, creado_at: true, fuente: true },
+    }),
+    prisma.inventory_adjustments.findMany({
+      where: { negocio_id: negocioId },
+      select: { product_id: true, cantidad_base: true, snapshot_nuevo_id: true, creado_at: true },
     }),
   ]);
 
@@ -275,6 +279,18 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
   }
   const pares = [...ultimoPorZona.values()];
   const snapshotVigente = new Map(pares.map((p) => [`${p.snapshot_id}:${p.zona_id}`, true]));
+  const snapshotIdsVigentes = new Set(pares.map((p) => p.snapshot_id.toString()));
+  // Los ajustes que crearon el snapshot vigente forman parte del conteo base,
+  // aunque su fila de consumo/lote se haya escrito unos milisegundos después.
+  // Excluirlos evita volver a restar el rebase FIFO al físico operativo.
+  const esAjusteDelConteoVigente = (input: { product_id: bigint; cantidad: Prisma.Decimal | number | null; creado_at: Date; fuente?: string | null }) => {
+    if (input.fuente !== 'ajuste_inventario') return false;
+    const cantidad = Math.abs(num0(input.cantidad));
+    return ajustesInventario.some((ajuste) => snapshotIdsVigentes.has(ajuste.snapshot_nuevo_id?.toString() ?? '')
+      && ajuste.product_id === input.product_id
+      && Math.abs(Math.abs(num0(ajuste.cantidad_base)) - cantidad) <= 0.0001
+      && Math.abs(ajuste.creado_at.getTime() - input.creado_at.getTime()) <= 10_000);
+  };
   const lineas = todasLasLineas.filter((linea) => snapshotVigente.has(`${linea.snapshot_id}:${linea.zona_id}`));
 
   const unidadesCaptura = lineas.length
@@ -316,10 +332,13 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       .filter((l) => l.product_id === p.id
         && l.estado !== 'cancelado'
         && (l.purchase_id != null || l.fuente === 'ajuste_inventario')
+        && !esAjusteDelConteoVigente({ product_id: l.product_id, cantidad: l.cantidad_inicial, creado_at: l.creado_at, fuente: l.fuente })
         && (fechaActual == null || l.creado_at > fechaActual))
       .reduce((total, l) => total + num0(l.cantidad_inicial), 0);
     const consumosPosterioresBase = consumosPosteriores
-      .filter((c) => c.product_id === p.id && (fechaActual == null || c.creado_at > fechaActual))
+      .filter((c) => c.product_id === p.id
+        && !esAjusteDelConteoVigente({ product_id: c.product_id, cantidad: c.cantidad, creado_at: c.creado_at, fuente: c.fuente })
+        && (fechaActual == null || c.creado_at > fechaActual))
       .reduce((total, c) => total + num0(c.cantidad), 0);
     // No permitir existencia negativa: si los consumos superan el saldo
     // esperado, la diferencia se conserva en el contraste contra FIFO.
