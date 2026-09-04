@@ -231,11 +231,18 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       // basta editar ese campo y guardar, sin recapturar todo de nuevo.
       const previos: Record<string, string> = {};
       for (const prod of actual.productos) {
+        const tieneMovimientos = (prod.entradas_posteriores_base ?? 0) > 0 || (prod.consumos_posteriores_base ?? 0) > 0;
         for (const pz of prod.por_zona) {
           const producto = p.find((item) => item.id === prod.product_id);
           const unidad = producto?.unidades.find((item) => item.zona_id === pz.zona_id)
             ?? { zona_id: pz.zona_id, unidad_captura: pz.unidad_captura ?? 'unidad', factor: pz.factor || 1 };
-          previos[`${prod.product_id}:${pz.zona_id}`] = String(capturaAOperativa(pz.qty_captura, producto, unidad));
+          // Si sólo hay una zona contada, la existencia física operativa se
+          // puede prellenar sin ambigüedad después de aplicar entradas y
+          // consumos. Con varias zonas se conserva el último conteo por zona
+          // y el operador confirma la distribución real.
+          previos[`${prod.product_id}:${pz.zona_id}`] = String(tieneMovimientos && prod.por_zona.length === 1
+            ? (prod.existencia_fisica_operativa ?? capturaAOperativa(pz.qty_captura, producto, unidad))
+            : capturaAOperativa(pz.qty_captura, producto, unidad));
         }
       }
       setValores(previos);
@@ -329,7 +336,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       </div>
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
         <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>
-        Se muestra tu último conteo por zona como referencia. Elige arriba si esto es una apertura, cierre o ajuste antes de guardar.
+        Se muestra el último conteo por zona. Cuando sólo hay una zona, se prellena con el saldo físico después de entradas y consumos; confirma la cantidad real antes de guardar.
       </p>
 
       {zonaActiva != null && grupos.map((g) => (
