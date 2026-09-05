@@ -281,14 +281,17 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
   const snapshotVigente = new Map(pares.map((p) => [`${p.snapshot_id}:${p.zona_id}`, true]));
   const snapshotIdsVigentes = new Set(pares.map((p) => p.snapshot_id.toString()));
   // Los ajustes que crearon el snapshot vigente forman parte del conteo base,
-  // aunque su fila de consumo/lote se haya escrito unos milisegundos después.
-  // Excluirlos evita volver a restar el rebase FIFO al físico operativo.
+  // aunque cada ajuste se haya dividido en varias filas de consumo/lote (una
+  // por lote FIFO) unos milisegundos después. No se puede comparar la cantidad
+  // de cada fila contra el total del ajuste: eso volvería a restar el rebase al
+  // físico operativo cuando un producto cruza más de un lote.
+  const ajustesConteoVigente = ajustesInventario.filter((ajuste) =>
+    snapshotIdsVigentes.has(ajuste.snapshot_nuevo_id?.toString() ?? ''),
+  );
   const esAjusteDelConteoVigente = (input: { product_id: bigint; cantidad: Prisma.Decimal | number | null; creado_at: Date; fuente?: string | null }) => {
     if (input.fuente !== 'ajuste_inventario') return false;
-    const cantidad = Math.abs(num0(input.cantidad));
-    return ajustesInventario.some((ajuste) => snapshotIdsVigentes.has(ajuste.snapshot_nuevo_id?.toString() ?? '')
-      && ajuste.product_id === input.product_id
-      && Math.abs(Math.abs(num0(ajuste.cantidad_base)) - cantidad) <= 0.0001
+    return ajustesConteoVigente.some((ajuste) =>
+      ajuste.product_id === input.product_id
       && Math.abs(ajuste.creado_at.getTime() - input.creado_at.getTime()) <= 10_000);
   };
   const lineas = todasLasLineas.filter((linea) => snapshotVigente.has(`${linea.snapshot_id}:${linea.zona_id}`));
