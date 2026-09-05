@@ -354,6 +354,14 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const valorCatalogo = unitCostBase == null ? 0 : totalBase * unitCostBase;
     const valorado = valorarFisicoConLotes(totalBase, lotesProducto, unitCostBase);
     const cantidadesLotes = lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante), 0);
+    // Los costos de lote se almacenan con seis decimales, mientras que el
+    // costo base del catálogo puede ser periódico (por ejemplo, $30 / 14).
+    // Cuando todos los lotes están revaluados al catálogo y el saldo coincide
+    // con el físico, usa el valor exacto del catálogo para evitar una brecha
+    // artificial por la precisión limitada del almacenamiento.
+    const lotesAlCostoActual = lotesProducto.length > 0 && unitCostBase != null
+      && lotesProducto.every((l) => Math.abs(num0(l.costo_unitario) - unitCostBase) <= 0.0000011);
+    const saldoFifoAlineado = lotesAlCostoActual && Math.abs(cantidadesLotes - totalBase) <= 0.0001;
     // El físico operativo parte del conteo y aplica las entradas/consumos
     // registrados. FIFO sigue siendo el libro de lotes y una auditoría, no una
     // segunda existencia que se sume por separado.
@@ -369,7 +377,9 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const valorFifoActual = lotesProducto.length
       // Conserva precisión por producto; el total se redondea una sola vez.
       // Así no se crea una brecha artificial por sumar centavos redondeados.
-      ? Math.round(lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) * 1_000_000_000_000) / 1_000_000_000_000
+      ? saldoFifoAlineado
+        ? valorCatalogo
+        : Math.round(lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) * 1_000_000_000_000) / 1_000_000_000_000
       : null;
     const costoFifoBase = cantidadesLotes > 0
       ? lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) / cantidadesLotes
@@ -402,7 +412,9 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       unidad_compra: p.unidad_compra,
       rendimiento_util: num(p.rendimiento_util) ?? 1,
       // Conserva precisión por producto; los totales se redondean al final.
-      valor_fifo: Math.round(valorado.valor * 1_000_000_000_000) / 1_000_000_000_000,
+      valor_fifo: saldoFifoAlineado
+        ? valorCatalogo
+        : Math.round(valorado.valor * 1_000_000_000_000) / 1_000_000_000_000,
       valor_catalogo: valorCatalogo,
       costo_fifo_base: costoFifoBase == null ? null : Math.round(costoFifoBase * 1_000_000) / 1_000_000,
       cantidad_con_lote: Math.round(valorado.consumido * 1_000_000) / 1_000_000,
