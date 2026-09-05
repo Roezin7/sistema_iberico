@@ -369,7 +369,7 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const valorFifoActual = lotesProducto.length
       // Conserva precisión por producto; el total se redondea una sola vez.
       // Así no se crea una brecha artificial por sumar centavos redondeados.
-      ? Math.round(lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) * 1_000_000) / 1_000_000
+      ? Math.round(lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) * 1_000_000_000_000) / 1_000_000_000_000
       : null;
     const costoFifoBase = cantidadesLotes > 0
       ? lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) / cantidadesLotes
@@ -402,7 +402,7 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       unidad_compra: p.unidad_compra,
       rendimiento_util: num(p.rendimiento_util) ?? 1,
       // Conserva precisión por producto; los totales se redondean al final.
-      valor_fifo: Math.round(valorado.valor * 1_000_000) / 1_000_000,
+      valor_fifo: Math.round(valorado.valor * 1_000_000_000_000) / 1_000_000_000_000,
       valor_catalogo: valorCatalogo,
       costo_fifo_base: costoFifoBase == null ? null : Math.round(costoFifoBase * 1_000_000) / 1_000_000,
       cantidad_con_lote: Math.round(valorado.consumido * 1_000_000) / 1_000_000,
