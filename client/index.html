@@ -32,7 +32,19 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div id="boot-fallback" role="status">
+        <strong>Ibérico</strong>
+        <span>Cargando la aplicación…</span>
+        <a href="/">Recargar</a>
+      </div>
+    </div>
+    <style>
+      #boot-fallback { min-height: 100vh; display: grid; place-content: center; gap: .65rem; padding: 2rem; box-sizing: border-box; color: #e9e7e2; background: #151311; font: 500 1rem/1.4 Inter, system-ui, sans-serif; text-align: center; }
+      #boot-fallback strong { font: 600 2rem/1 Cormorant Garamond, Georgia, serif; }
+      #boot-fallback span { color: #a8a39b; font-size: .9rem; }
+      #boot-fallback a { color: #e5a7a0; font-size: .85rem; text-decoration: underline; }
+    </style>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
