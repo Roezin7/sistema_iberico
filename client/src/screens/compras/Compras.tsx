@@ -270,7 +270,7 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
       const cantidadCalculada = cantidadBaseDesdePresentacion({ cantidadCompra: Number(l.cantidad_fuente), unidadCompra: l.unidad_fuente || l.unidad_compra, contenidoPorPresentacion: Number(l.contenido_compra), unidadBase: producto?.unidad_base, rendimientoUtil: producto?.rendimiento_util });
       const costoCalculado = costoBase(Number(l.importe), cantidadCalculada ?? Number(l.cantidad_base));
       return <div className="quick-line" key={i}><div className="quick-line__head"><strong>Línea {i + 1}</strong>{l.confianza != null && <span className="muted">sugerencia {Math.round(l.confianza * 100)}%</span>}</div>
-        <input placeholder="Descripción de la fuente" value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} />
+        <input aria-label={`Descripción de la línea ${i + 1}`} placeholder="Descripción de la fuente" value={l.descripcion_fuente} onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} />
         <select aria-label="Destino de la línea" value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value as LineaRapida['tipo_linea'])}><option value="pendiente">Necesita revisión</option><option value="inventario">Entra a inventario</option><option value="gasto">Es un gasto</option></select>
         {l.tipo_linea === 'inventario' && <><select aria-label="Producto de inventario" value={l.product_id ?? ''} onChange={(e) => editar(i, 'product_id', e.target.value ? Number(e.target.value) : null)}><option value="">Selecciona producto…</option>{refs?.productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {p.unidad_base ?? 'sin unidad'}</option>)}</select><small className="quick-line__presentation">{presentacionTexto(producto)}</small><small className="fifo-entry-conversion">Conversión automática: {conversionCompraTexto(producto)}</small></>}
         {l.tipo_linea === 'inventario' && <><div className="fifo-entry-help">Captura la cantidad tal como aparece en el ticket. La presentación configurada se convertirá automáticamente.</div>
@@ -284,10 +284,14 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
           <label>Total en unidad base {cantidadCalculada != null && <small>(automático)</small>}<input type="number" min="0" step="any" value={cantidadCalculada ?? l.cantidad_base} readOnly={cantidadCalculada != null} placeholder="Se calcula solo" onChange={(e) => editar(i, 'cantidad_base', e.target.value)} /></label>
         </div></details>{cantidadCalculada != null && <div className="fifo-entry-result fifo-entry-result--visible">Entrada calculada: <strong>{formatoCantidad(cantidadCalculada)} {producto?.unidad_base ?? 'unidades base'}</strong> · {costoCalculado == null ? 'costo pendiente' : `costo ${mxn(costoCalculado)}`}</div>}</>}
         {l.tipo_linea === 'gasto' && <label className="fifo-expense-amount">Importe del gasto<input type="number" min="0" step="0.01" placeholder="Ej. 146" value={l.importe} onChange={(e) => editar(i, 'importe', e.target.value)} /></label>}
-        {lineas.length > 1 && <button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))}>Quitar</button>}
+        {lineas.length > 1 && <button type="button" className="btn-ghost" aria-label={`Quitar línea ${i + 1}`} disabled={guardando || leyendo} onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))}>Quitar</button>}
       </div>;
     })}</div>
-    <div className="sticky-action"><button className="btn-secondary" onClick={() => setLineas((v) => [...v, { product_id: null, tipo_linea: 'pendiente', descripcion_fuente: '', cantidad_fuente: '', unidad_fuente: '', cantidad_base: '', unidad_compra: '', contenido_compra: '', costo_unitario: '', importe: '', confianza: null }])}>Agregar línea</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Enviando…' : 'Enviar a revisión'}</button></div>
+    <div className="ticket-form-actions">
+      <button type="button" className="btn-secondary" disabled={guardando || leyendo} onClick={() => setLineas((v) => [...v, { product_id: null, tipo_linea: 'pendiente', descripcion_fuente: '', cantidad_fuente: '', unidad_fuente: '', cantidad_base: '', unidad_compra: '', contenido_compra: '', costo_unitario: '', importe: '', confianza: null }])}>+ Agregar línea</button>
+      <span className="muted" role="status" aria-live="polite">{lineas.length} {lineas.length === 1 ? 'línea' : 'líneas'}</span>
+      <button type="button" className="btn-primary" disabled={guardando || leyendo} onClick={() => void guardar()}>{guardando ? 'Enviando…' : 'Enviar a revisión'}</button>
+    </div>
     <div className="info-box quick-purchase__single-source"><strong>Después:</strong> un supervisor revisará el ticket. Nada entra a inventario ni a finanzas hasta confirmarlo.</div>
   </section>;
 }

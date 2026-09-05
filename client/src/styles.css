@@ -2412,6 +2412,27 @@ select:disabled {
 .file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .ticket-preview { display: block; max-width: min(100%, 360px); max-height: 420px; object-fit: contain; border-radius: var(--r-input); border: 1px solid var(--border); margin: .65rem 0; }
 .quick-lines { display: grid; gap: .7rem; margin-top: .8rem; }
+/* Cada ticket conserva sus acciones dentro de la tarjeta. Varias barras
+   fijas en la misma página se superponían y ocultaban Agregar línea. */
+.ticket-form-actions,
+.quick-pending__card > .sticky-action {
+  position: static;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .65rem;
+  margin-top: .85rem;
+  padding: .85rem 0 0;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.ticket-form-actions > .btn-primary { margin-left: auto; }
+.ticket-form-actions button { min-height: 44px; }
+@media (max-width: 520px) {
+  .ticket-form-actions > .btn-primary { flex-basis: 100%; }
+}
 .quick-line { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(150px, .9fr) minmax(0, 1.2fr) minmax(180px, 1fr) auto; gap: .5rem; align-items: center; padding: .65rem; border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface-2); }
 .quick-line__head { grid-column: 1 / -1; display: flex; justify-content: space-between; }
 .quick-line__presentation { grid-column: 1 / -1; color: var(--ink-2); font-size: .78rem; }
