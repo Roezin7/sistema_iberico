@@ -222,7 +222,9 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
         ...(options.hasta ? { fecha: { lte: options.hasta } } : {}),
         ...filtroConsumoFifoActivo({ incluirAjustes: true }),
       },
-      select: { product_id: true, cantidad: true, creado_at: true, fuente: true },
+      // `fecha` es el día operativo en que ocurrió el consumo. `creado_at`
+      // sólo indica cuándo se importó/costeó y puede ser posterior al conteo.
+      select: { product_id: true, cantidad: true, fecha: true, creado_at: true, fuente: true },
     }),
     prisma.inventory_adjustments.findMany({
       where: { negocio_id: negocioId },
@@ -336,12 +338,17 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
         && l.estado !== 'cancelado'
         && (l.purchase_id != null || l.fuente === 'ajuste_inventario')
         && !esAjusteDelConteoVigente({ product_id: l.product_id, cantidad: l.cantidad_inicial, creado_at: l.creado_at, fuente: l.fuente })
-        && (fechaActual == null || l.creado_at > fechaActual))
+        // Una compra capturada tarde no debe volver a sumarse si su recepción
+        // ya estaba incluida en el conteo físico. La fecha de recepción es el
+        // evento físico; creado_at sólo es el momento de alta en el sistema.
+        && (fechaActual == null || l.recibido_at > fechaActual))
       .reduce((total, l) => total + num0(l.cantidad_inicial), 0);
     const consumosPosterioresBase = consumosPosteriores
       .filter((c) => c.product_id === p.id
         && !esAjusteDelConteoVigente({ product_id: c.product_id, cantidad: c.cantidad, creado_at: c.creado_at, fuente: c.fuente })
-        && (fechaActual == null || c.creado_at > fechaActual))
+        // Igual que con las entradas, el conteo ya refleja consumos ocurridos
+        // antes de esa fecha aunque se hayan importado después.
+        && (fechaActual == null || c.fecha > fechaActual))
       .reduce((total, c) => total + num0(c.cantidad), 0);
     // No permitir existencia negativa: si los consumos superan el saldo
     // esperado, la diferencia se conserva en el contraste contra FIFO.
