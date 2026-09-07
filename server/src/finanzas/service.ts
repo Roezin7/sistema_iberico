@@ -301,9 +301,12 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     // El corte termina el lunes a las 06:00Z para incluir todo el domingo
     // civil. Usar fecha_fin a medianoche excluía ventas y lotes del domingo.
     valorFifoAlCorte(negocioId, limiteCorte),
-    // Este snapshot pertenece a la semana consultada. Nunca se usa el último
-    // snapshot global, porque eso mezclaría periodos.
-    inventarioActual(negocioId, { semanaId, hasta: limiteCorte, vista: 'fisica' }),
+    // La apertura puede venir del cierre de la semana anterior (por ejemplo,
+    // el snapshot 62 es el arranque de la semana 66 aunque conserve semana_id
+    // 65). Filtrar por semana_id aquí lo excluía y dejaba el patrimonio físico
+    // en null. El corte temporal sigue aislando la semana y evita mezclar
+    // snapshots futuros.
+    inventarioActual(negocioId, { hasta: limiteCorte, vista: 'fisica' }),
     // Sólo movimientos FIFO activos. Las reversiones quedan en el ledger
     // para auditoría, pero no son costo de ventas.
     prisma.inventory_consumptions.aggregate({
