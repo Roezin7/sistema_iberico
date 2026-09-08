@@ -1,0 +1,24 @@
+import { PrismaClient } from '@prisma/client';
+const prisma = new PrismaClient();
+const N = 1n;
+const WEEK = 66n;
+const MARK = 'CORRECCION-CIERRE-FRUTOS-SECOS-S36-2026-09-08';
+const json = (v) => JSON.stringify(v, (_, x) => typeof x === 'bigint' ? x.toString() : x, 2);
+const result = await prisma.$transaction(async (tx) => {
+  const weekly = await tx.inventario_semanal.findFirst({ where: { negocio_id: N, semana_id: WEEK }, select: { id: true, cierre_snapshot_id: true } });
+  if (!weekly?.cierre_snapshot_id) throw new Error('La semana 36 no tiene cierre vinculado');
+  const existing = await tx.inventory_snapshot.findFirst({ where: { negocio_id: N, semana_id: WEEK, motivo: MARK }, select: { id: true } });
+  if (existing) return { alreadyApplied: true, snapshotId: existing.id };
+  const source = await tx.inventory_snapshot.findUnique({ where: { id: weekly.cierre_snapshot_id }, select: { id: true, created_at: true } });
+  if (!source) throw new Error('No existe el snapshot de cierre actual');
+  const lines = await tx.inventory_lines.findMany({ where: { snapshot_id: source.id }, select: { product_id: true, zona_id: true, qty_captura: true, factor: true } });
+  const corrected = lines.map((line) => line.product_id === 88n && line.zona_id === 1n ? { ...line, qty_captura: 0.02 } : line);
+  const snapshot = await tx.inventory_snapshot.create({ data: { negocio_id: N, tipo: 'ajuste', semana_id: WEEK, motivo: MARK, nota: 'Correccion del cierre: Frutos secos tenia 40 g al inicio y consumio 20 g; el cierre estaba capturado como 1 kg. Se corrige a 20 g sin modificar FIFO ni registrar merma.' } });
+  await tx.inventory_lines.createMany({ data: corrected.map((line) => ({ snapshot_id: snapshot.id, product_id: line.product_id, zona_id: line.zona_id, qty_captura: line.qty_captura, factor: line.factor })) });
+  const valued = await tx.inventory_lines.findMany({ where: { snapshot_id: snapshot.id }, include: { products: { select: { unit_cost: true, unidad_base: true, contenido_compra: true } } } });
+  const value = Math.round(valued.reduce((sum, line) => { const cost = line.products.unit_cost == null ? 0 : Number(line.products.unidad_base && line.products.contenido_compra ? line.products.unit_cost : line.products.unit_cost) / (line.products.unidad_base && line.products.contenido_compra ? Number(line.products.contenido_compra) : 1); return sum + Number(line.qty_captura) * Number(line.factor) * cost; }, 0) * 100) / 100;
+  await tx.inventario_semanal.update({ where: { id: weekly.id }, data: { cierre_snapshot_id: snapshot.id, cierre_valor: value } });
+  return { alreadyApplied: false, previousSnapshotId: source.id, snapshotId: snapshot.id, cierreValor: value, correctedProduct: 'Frutos secos', correctedQtyBase: 20 };
+});
+console.log(json({ ok: true, result }));
+await prisma.$disconnect();
