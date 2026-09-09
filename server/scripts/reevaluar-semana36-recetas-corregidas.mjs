@@ -31,19 +31,23 @@ async function main() {
   const unitByProduct = new Map(products.map((p) => [p.id.toString(), p.unidad_base]));
   const baseLots = lots.map((l) => ({ id: l.id, product_id: l.product_id, recibido_at: l.recibido_at, remaining: Number(l.cantidad_inicial) - priorConsumptions.filter((c) => c.lote_id === l.id).reduce((s, c) => s + Number(c.cantidad), 0), costo_unitario: Number(l.costo_unitario) })).filter((l) => l.remaining > 0.000001);
   const byEpos = new Map(menus.filter((m) => m.epos_product_id != null).map((m) => [m.epos_product_id, m]));
+  const affectedMenus = new Set(['Mezcalita Piña','Mezcalita Mango','Perla Negra','Paloma Chica','Paloma Grande','Limonada Ibérica','Limonada','Piña Colada','Cubanito Chico','Cubanito Grande']);
   const choose = (menu, corrected) => {
-    const valid = menu.recetas.filter((r) => corrected ? (r.vigente_desde == null || r.vigente_desde <= START_DATE) : !(r.fuente ?? '').includes('correcciones manuscritas'));
-    return valid.at(-1) ?? null;
+    const valid = menu.recetas.filter((r) => !(r.fuente ?? '').includes('correcciones manuscritas'));
+    const historical = valid.filter((r) => r.vigente_desde == null || r.vigente_desde <= START_DATE);
+    if (!corrected) return historical.at(-1) ?? valid.at(-1) ?? null;
+    const correctedRecipe = menu.recetas.filter((r) => (r.fuente ?? '').includes('correcciones manuscritas') && (r.vigente_desde == null || r.vigente_desde <= START_DATE)).at(-1);
+    return correctedRecipe ?? (affectedMenus.has(menu.nombre) ? historical.at(-1) ?? null : valid.at(-1) ?? null);
   };
   function simulate(corrected) {
     const state = baseLots.map((l) => ({ ...l }));
-    let total = 0, costed = 0, exceptions = 0, pending = 0, units = 0;
+    let total = 0, costed = 0, exceptions = 0, pending = 0, units = 0; const pendingNames = new Set();
     const affected = new Map();
     for (const sale of sales) {
       units += Number(sale.cantidad);
       const menu = byEpos.get(sale.epos_product_id);
       const recipe = menu ? choose(menu, corrected) : null;
-      if (!recipe) { pending++; continue; }
+      if (!recipe) { pending++; pendingNames.add(menu?.nombre ?? sale.producto_nombre); continue; }
       const changes = []; let saleCost = 0; let error = null;
       for (const line of recipe.lineas) {
         const baseUnit = unitByProduct.get(line.product_id.toString());
@@ -59,7 +63,7 @@ async function main() {
       total += saleCost; costed++;
       if (menu && ['Mezcalita Piña','Mezcalita Mango','Perla Negra','Paloma Chica','Paloma Grande','Limonada Ibérica','Limonada','Piña Colada','Cubanito Chico','Cubanito Grande'].includes(menu.nombre)) affected.set(menu.nombre, (affected.get(menu.nombre) ?? 0) + Number(sale.cantidad));
     }
-    return { costo_fifo: Number(total.toFixed(4)), ventas_costeadas: costed, excepciones: exceptions, pendientes: pending, unidades: units, affected: Object.fromEntries(affected) };
+    return { costo_fifo: Number(total.toFixed(4)), ventas_costeadas: costed, excepciones: exceptions, pendientes: pending, pendientes_productos: [...pendingNames], unidades: units, affected: Object.fromEntries(affected) };
   }
   const before = simulate(false); const after = simulate(true);
   const actual = sales.reduce((s, v) => s + (v.costo_fifo == null ? 0 : Number(v.costo_fifo)), 0);
