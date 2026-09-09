@@ -76,6 +76,7 @@ for sheet_name in ('01_Menu','02_Costeo','25_Margenes_Menu'):
 prod = wb['29_Recetas_Produccion']
 for r in range(5, prod.max_row+1):
     menu, pid = prod.cell(r,1).value, prod.cell(r,4).value
+    if menu in ('Aperol Spritz','Raspberry Spritz') and pid == 12: prod.cell(r,6).value = 118.29
     if menu in ('Mezcalita Piña','Mezcalita Mango') and pid == 25: blank_row(prod, r)
     if menu == 'Perla Negra' and pid == 29: prod.cell(r,4).value = 24; prod.cell(r,5).value = 'Sprite'
     if menu in ('Paloma Chica','Paloma Grande') and pid == 25: prod.cell(r,4).value = 27; prod.cell(r,5).value = 'Agua Mineral'
