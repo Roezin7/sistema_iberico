@@ -1,6 +1,7 @@
 from copy import copy
 from pathlib import Path
 from openpyxl import load_workbook
+from openpyxl.workbook.properties import CalcProperties
 
 SRC = Path('/Users/arturohernandez/Desktop/Negocios/Ibérico/04_FINANZAS/Modelos/Activo/IBERICO_MENU_COSTEO_MAESTRO_CANONICO_2026-09-04.xlsx')
 OUT = SRC.with_name('IBERICO_MENU_COSTEO_MAESTRO_CORREGIDO_2026-09-09.xlsx')
@@ -90,5 +91,6 @@ for menu, pid, name, qty, unit in [
 control = wb['00_Control']
 control['A1'] = 'IBÉRICO · COSTEO MAESTRO DEL MENÚ · RECETAS CORREGIDAS'
 control['A20'] = 'Actualización 2026-09-09: ruta de bebidas manuscrita aplicada. Las notas sin cantidad permanecen fuera del FIFO.'
+wb.calculation = CalcProperties(calcMode='auto', fullCalcOnLoad=True, forceFullCalc=True)
 wb.save(OUT)
 print(OUT)
