@@ -4,6 +4,8 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { cantidadBaseDesdePresentacion, notasDeValidacion, resumirCompra, validarDiscrepanciasCompra, type ProductoReglaCompra } from './compras-rapidas-logic.js';
 import { costearVentasPendientesEnVivo } from './consumo-epos.js';
+import { inventarioActual } from './service.js';
+import { redondear } from './logic.js';
 
 export type CapturaCompraLinea = {
   product_id?: bigint | null;
@@ -162,12 +164,36 @@ export async function listarBorradoresCompra(negocioId: bigint) {
 }
 
 export async function referenciasCompra(negocioId: bigint) {
-  const [productos, ubicaciones] = await Promise.all([
-    prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, unidad_compra: true, contenido_compra: true, rendimiento_util: true }, orderBy: { name: 'asc' } }),
+  const [productos, ubicaciones, actual] = await Promise.all([
+    prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, unidad_compra: true, contenido_compra: true, rendimiento_util: true, unit_cost: true }, orderBy: { name: 'asc' } }),
     prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true }, select: { id: true, nombre: true, tipo: true }, orderBy: { id: 'asc' } }),
+    inventarioActual(negocioId, { vista: 'fisica' }),
   ]);
+  const actualPorProducto = new Map(actual.productos.map((p) => [p.product_id, p]));
   return {
-    productos: productos.map((p) => ({ id: Number(p.id), nombre: p.name, unidad_base: p.unidad_base, unidad_compra: p.unidad_compra, contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra), rendimiento_util: Number(p.rendimiento_util ?? 1) })),
+    productos: productos.map((p) => {
+      const estado = actualPorProducto.get(Number(p.id));
+      const contenido = p.contenido_compra == null ? null : Number(p.contenido_compra);
+      const minimo = estado?.minimo_operativo ?? 0;
+      const existencia = estado?.existencia_fisica_operativa ?? 0;
+      const faltante = redondear(Math.max(0, minimo - existencia));
+      const ultimoCostoBase = estado?.ultimo_costo_fifo_base ?? null;
+      const precioUltimoFifo = ultimoCostoBase != null && contenido != null
+        ? redondear(ultimoCostoBase * contenido * Number(p.rendimiento_util ?? 1))
+        : null;
+      return {
+        id: Number(p.id), nombre: p.name, unidad_base: p.unidad_base, unidad_compra: p.unidad_compra,
+        contenido_compra: contenido, rendimiento_util: Number(p.rendimiento_util ?? 1),
+        existencia_actual_operativa: existencia, minimo_operativo: minimo, faltante_operativo: faltante,
+        existencia_fifo_operativa: estado?.existencia_fifo_operativa ?? null,
+        diferencia_fifo_vs_fisico_base: estado?.diferencia_fifo_vs_fisico_base ?? null,
+        fuente_existencia_actual: 'fisico' as const,
+        ultimo_costo_fifo_base: ultimoCostoBase,
+        ultimo_costo_fifo_fecha: estado?.ultimo_costo_fifo_fecha ?? null,
+        precio_ultimo_fifo: precioUltimoFifo,
+        precio_catalogo: p.unit_cost == null ? null : Number(p.unit_cost),
+      };
+    }),
     ubicaciones: ubicaciones.map((u) => ({ id: Number(u.id), nombre: u.nombre, tipo: u.tipo })),
   };
 }

@@ -197,6 +197,10 @@ export interface ProductoFaltante {
   presentaciones_faltantes?: number | null;
   /** Permite distinguir un costo cero real de una configuración faltante. */
   costo_configurado?: boolean;
+  /** Origen del precio usado para la sugerencia de compra. */
+  fuente_costo?: 'ultimo_fifo' | 'catalogo' | 'sin_costo';
+  ultimo_costo_fifo_base?: number | null;
+  ultimo_costo_fifo_fecha?: string | null;
 }
 
 export interface GrupoTienda {

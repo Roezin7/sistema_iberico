@@ -34,6 +34,9 @@ export interface ProductoActual {
   total_operativo: number;
   unit_cost: number | null;
   unit_cost_base: number | null;
+  /** Último costo unitario base registrado en un lote FIFO (referencia de compra). */
+  ultimo_costo_fifo_base: number | null;
+  ultimo_costo_fifo_fecha: string | null;
   unidad_base: string | null;
   contenido_compra: number | null;
   unidad_compra: string | null;
@@ -234,6 +237,24 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
 
   const lotes = lotesTodos.filter((lote) => lote.estado === 'abierto' && num0(lote.cantidad_restante) > 0);
 
+  // El precio de compra sugerido debe ser el último precio realmente recibido
+  // en FIFO, no el costo estático del catálogo. Preferimos un lote operativo
+  // sobre uno marcado como prueba histórica; dentro de la misma fuente gana
+  // la recepción más reciente.
+  const ultimoLotePorProducto = new Map<string, typeof lotesTodos[number]>();
+  for (const lote of lotesTodos) {
+    if (lote.estado === 'cancelado') continue;
+    const key = lote.product_id.toString();
+    const previo = ultimoLotePorProducto.get(key);
+    const esOperativo = lote.fuente !== 'historico_prueba';
+    const previoOperativo = previo != null && previo.fuente !== 'historico_prueba';
+    if (!previo || (esOperativo && !previoOperativo)
+      || (esOperativo === previoOperativo && (lote.recibido_at > previo.recibido_at
+        || (lote.recibido_at.getTime() === previo.recibido_at.getTime() && lote.id > previo.id)))) {
+      ultimoLotePorProducto.set(key, lote);
+    }
+  }
+
   // No mezclar el libro histórico de pruebas con lotes operativos. Si un
   // producto ya tiene entradas reales, esas son la fuente de costo vigente.
   const lotesPorProducto = new Map<string, typeof lotes>();
@@ -355,6 +376,7 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const totalBase = Math.max(0, conteoFisicoBase + entradasPosterioresBase - consumosPosterioresBase);
     const unitCostPresentation = num(p.unit_cost);
     const unitCostBase = costoUnitarioBase(p);
+    const ultimoLote = ultimoLotePorProducto.get(p.id.toString());
     const lotesProducto = (lotesPorProducto.get(p.id.toString()) ?? []) as LoteValuacion[];
     // Conserva precisión hasta el total; redondear cada producto antes de
     // sumar puede desfasar el valor del snapshot oficial por algunos centavos.
@@ -414,6 +436,8 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       // usa explícitamente el costo por unidad base.
       unit_cost: unitCostPresentation,
       unit_cost_base: unitCostBase,
+      ultimo_costo_fifo_base: ultimoLote == null ? null : Math.round(num0(ultimoLote.costo_unitario) * 1_000_000) / 1_000_000,
+      ultimo_costo_fifo_fecha: ultimoLote?.recibido_at.toISOString().slice(0, 10) ?? null,
       unidad_base: p.unidad_base,
       contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra),
       unidad_compra: p.unidad_compra,
@@ -524,6 +548,13 @@ export async function listaCompras(negocioId: bigint) {
     const faltante = faltanteCompra(minimoBase, existenciaBaseActual);
     const faltanteOperativo = faltanteOperativoInventario(p.minimo_operativo, existenciaOperativaActual);
     const presentaciones = presentacionesNecesarias(faltante, p.contenido_compra);
+    // Para decidir cuánto presupuestar usamos el último precio recibido en
+    // FIFO. Si todavía no existe un lote, conservamos el costo del catálogo
+    // como respaldo explícito para no ocultar productos sin precio.
+    const costoBaseReferencia = p.ultimo_costo_fifo_base ?? p.unit_cost_base;
+    const costoPresentacionReferencia = p.ultimo_costo_fifo_base != null && p.contenido_compra != null
+      ? redondear(p.ultimo_costo_fifo_base * p.contenido_compra * (p.rendimiento_util || 1))
+      : p.unit_cost;
     return {
       product_id: p.product_id,
       nombre: p.nombre,
@@ -540,20 +571,23 @@ export async function listaCompras(negocioId: bigint) {
       existencia_actual_operativa: existenciaOperativaActual,
       fuente_existencia_actual: p.fuente_existencia_actual,
       faltante_operativo: faltanteOperativo,
-      unit_cost: p.unit_cost,
-      unit_cost_base: p.unit_cost_base,
+      unit_cost: costoPresentacionReferencia,
+      unit_cost_base: costoBaseReferencia,
       unidad_base: p.unidad_base,
       contenido_compra: p.contenido_compra,
       unidad_compra: p.unidad_compra,
       rendimiento_util: p.rendimiento_util,
       presentaciones_faltantes: presentaciones,
-      costo_configurado: p.unit_cost_base != null,
+      costo_configurado: costoBaseReferencia != null,
+      fuente_costo: p.ultimo_costo_fifo_base != null ? 'ultimo_fifo' : p.unit_cost_base != null ? 'catalogo' : 'sin_costo',
+      ultimo_costo_fifo_base: p.ultimo_costo_fifo_base,
+      ultimo_costo_fifo_fecha: p.ultimo_costo_fifo_fecha,
       // La lista propone compras completas. El valor interno sigue usando la
       // unidad base para validar, pero el importe visible corresponde a las
       // presentaciones que realmente se comprarían.
-      valor_faltante: presentaciones != null && p.unit_cost != null
-        ? Math.round(presentaciones * p.unit_cost * 100) / 100
-        : valorProducto(faltante, p.unit_cost_base),
+      valor_faltante: presentaciones != null && costoPresentacionReferencia != null
+        ? Math.round(presentaciones * costoPresentacionReferencia * 100) / 100
+        : valorProducto(faltante, costoBaseReferencia),
     };
   });
   return armarListaCompras(faltantes);

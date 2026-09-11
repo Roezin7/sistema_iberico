@@ -96,6 +96,9 @@ interface ItemCompra {
   rendimiento_util?: number | null;
   presentaciones_faltantes?: number | null;
   costo_configurado?: boolean;
+  fuente_costo?: 'ultimo_fifo' | 'catalogo' | 'sin_costo';
+  ultimo_costo_fifo_base?: number | null;
+  ultimo_costo_fifo_fecha?: string | null;
   valor_faltante: number;
 }
 interface GrupoCompra { store: string; items: ItemCompra[]; subtotal: number }
@@ -679,7 +682,7 @@ function ListaDeCompras() {
                     </small>
                     <small className="muted">
                       {it.costo_configurado && it.unit_cost != null
-                        ? `Costo estimado ${mxn(it.unit_cost)} por ${pluralUnidad(unidad, 2).replace(/s$/, '')}`
+                      ? `${it.fuente_costo === 'ultimo_fifo' ? 'Último precio FIFO' : 'Costo de catálogo'} ${mxn(it.unit_cost)} por ${pluralUnidad(unidad, 2).replace(/s$/, '')}${it.ultimo_costo_fifo_fecha ? ` · ${it.ultimo_costo_fifo_fecha}` : ''}`
                         : 'Costo pendiente de configurar'}
                     </small>
                   </div>
