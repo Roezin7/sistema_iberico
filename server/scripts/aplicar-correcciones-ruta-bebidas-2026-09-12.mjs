@@ -9,7 +9,7 @@ const out = (value) => JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v
 
 const recipes = {
   'Perla Negra': (ids) => [
-    ['Jagger', 2, 'oz'], ['Volt', 200, 'ml'],
+    ['Jagger', 2, 'oz'], ['Volt', 200, 'ml'], ['Sprite', 200, 'ml'],
   ],
   'Paloma Chica': (ids) => [
     ['Hacienda de Tepa', 2, 'oz'], ['Limón', 2, 'pieza'],
@@ -46,7 +46,7 @@ const recipes = {
 };
 
 const notes = {
-  'Perla Negra': 'Volt confirmado; se elimina Sprite.',
+  'Perla Negra': 'Volt y Sprite, 200 ml de cada uno.',
   'Paloma Chica': 'Squirt y Sprite en partes iguales; 200 ml totales.',
   'Paloma Grande': 'Squirt y Sprite en partes iguales; 400 ml totales.',
   'Paloma Grande Dobel': 'Squirt y Sprite en partes iguales; 400 ml totales.',

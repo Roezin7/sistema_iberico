@@ -10,7 +10,7 @@ wb = load_workbook(SRC)
 # Cantidades operativas definitivas. En las palomas se conserva el volumen total
 # de mezclador y se divide en partes iguales entre Squirt y Sprite.
 recipes = {
-    'Perla Negra': [('Jagger', 2, 'oz'), ('Volt', 200, 'ml')],
+    'Perla Negra': [('Jagger', 2, 'oz'), ('Volt', 200, 'ml'), ('Sprite', 200, 'ml')],
     'Paloma Chica': [('Hacienda de Tepa', 2, 'oz'), ('Limón', 2, 'pieza'), ('Squirt', 100, 'ml'), ('Sprite', 100, 'ml')],
     'Paloma Grande': [('Hacienda de Tepa', 4, 'oz'), ('Limón', 4, 'pieza'), ('Squirt', 200, 'ml'), ('Sprite', 200, 'ml')],
     'Paloma Grande Dobel': [('Tequila Dobel', 4, 'oz'), ('Limón', 4, 'pieza'), ('Squirt', 200, 'ml'), ('Sprite', 200, 'ml')],
@@ -22,7 +22,7 @@ recipes = {
 }
 
 notes = {
-    'Perla Negra': 'Volt confirmado; se elimina Sprite.',
+    'Perla Negra': 'Volt y Sprite, 200 ml de cada uno.',
     'Paloma Chica': 'Squirt y Sprite en partes iguales; 200 ml totales.',
     'Paloma Grande': 'Squirt y Sprite en partes iguales; 400 ml totales.',
     'Paloma Grande Dobel': 'Squirt y Sprite en partes iguales; 400 ml totales.',
