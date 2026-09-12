@@ -650,12 +650,22 @@ function ListaDeCompras() {
     </p>
   );
 
+  const items = data.grupos.flatMap((g) => g.items);
+  const sinExistencia = items.filter((it) => (it.existencia_actual_operativa ?? it.total_operativo ?? it.total_base) <= 0).length;
+
   return (
     <>
-      <div className="resumen-card">
-        <span className="muted">Total estimado de compra</span>
-        <strong className="big-number">{mxn(data.total)}</strong>
-        <small className="muted">Compara el mínimo físico contra lo que existe. Las conversiones internas sólo se usan para FIFO y costeo.</small>
+      <div className="resumen-card inventory-overview">
+        <div className="inventory-overview__head">
+          <div><span className="eyebrow">Lista de compras</span><strong className="big-number">{mxn(data.total)}</strong></div>
+          <span className="chip chip--ok">Fuente: físico actual</span>
+        </div>
+        <div className="inventory-overview__values">
+          <div><small>Productos</small><strong>{items.length}</strong></div>
+          <div className="inventory-overview__warn"><small>Por debajo del mínimo</small><strong>{items.length}</strong></div>
+          <div className={sinExistencia ? 'inventory-overview__danger' : ''}><small>Sin existencia</small><strong>{sinExistencia}</strong></div>
+        </div>
+        <small className="muted">Muestra la existencia física operativa, el mínimo y la compra sugerida. FIFO sólo audita.</small>
       </div>
       {data.grupos.map((g) => (
         <div key={g.store} className="grupo-tienda">
@@ -668,25 +678,26 @@ function ListaDeCompras() {
               const unidad = it.unidad_operativa ?? it.unidad_compra ?? 'unidad';
               const minimo = it.minimo_operativo ?? it.base_qty;
               const actual = it.existencia_actual_operativa ?? it.total_operativo ?? it.total_base;
-              const faltante = it.existencia_actual_operativa != null
-                ? Math.max(0, minimo - it.existencia_actual_operativa)
-                : (it.faltante_operativo ?? it.faltante);
+              const faltante = Math.max(0, minimo - actual);
+              const nivel = actual <= 0 ? 'empty' : 'low';
+              const avance = minimo > 0 ? Math.min(100, Math.max(0, (actual / minimo) * 100)) : 0;
               return (
-                <li key={it.product_id} className="conteo-row">
-                  <div className="conteo-info">
+                <li key={it.product_id} className={`stock-row stock-row--${nivel}`}>
+                  <div className="stock-row__identity">
                     <strong>{it.nombre}</strong>
-                    <small className="muted">
-                      Mínimo {formatoCantidad(minimo)} {pluralUnidad(unidad, minimo)}
-                      {' · '}actual {formatoCantidad(actual)} {pluralUnidad(unidad, actual)}
-                      {' · '}faltan {formatoCantidad(faltante)} {pluralUnidad(unidad, faltante)}
-                    </small>
-                    <small className="muted">
-                      {it.costo_configurado && it.unit_cost != null
-                      ? `${it.fuente_costo === 'ultimo_fifo' ? 'Último precio FIFO' : 'Costo de catálogo'} ${mxn(it.unit_cost)} por ${pluralUnidad(unidad, 2).replace(/s$/, '')}${it.ultimo_costo_fifo_fecha ? ` · ${it.ultimo_costo_fifo_fecha}` : ''}`
-                        : 'Costo pendiente de configurar'}
-                    </small>
+                    <small>{g.store}</small>
                   </div>
-                  <span>{it.costo_configurado ? mxn(it.valor_faltante) : '—'}</span>
+                  <div className="stock-row__quantity"><strong>{formatoCantidad(actual)}</strong><span>{pluralUnidad(unidad, actual)}</span></div>
+                  <div className="stock-row__health">
+                    <span className={`stock-state stock-state--${nivel}`}>{nivel === 'empty' ? 'Sin existencia' : 'Bajo mínimo'}</span>
+                    <div className="stock-row__bar" aria-hidden="true"><span style={{ width: `${avance}%` }} /></div>
+                    <small>mín. {formatoCantidad(minimo)} {pluralUnidad(unidad, minimo)}</small>
+                  </div>
+                  <div className="stock-row__value"><strong>{it.costo_configurado ? mxn(it.valor_faltante) : '—'}</strong><small>compra sugerida</small></div>
+                  <div className="stock-row__audit">
+                    <span>Faltan {formatoCantidad(faltante)} {pluralUnidad(unidad, faltante)}</span>
+                    {it.costo_configurado && it.unit_cost != null && <span>{it.fuente_costo === 'ultimo_fifo' ? 'Último FIFO' : 'Catálogo'}: {mxn(it.unit_cost)} por {pluralUnidad(unidad, 2).replace(/s$/, '')}{it.ultimo_costo_fifo_fecha ? ` · ${it.ultimo_costo_fifo_fecha}` : ''}</span>}
+                  </div>
                 </li>
               );
             })}
