@@ -200,7 +200,12 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const parametros = new URLSearchParams(window.location.search);
   const cierreGuiado = parametros.get('tipo') === 'cierre';
   const regresarFinanzas = parametros.get('return') === 'finanzas';
-  const semanaSolicitada = Number(parametros.get('semana'));
+  // Number(null) devuelve 0 (un valor finito), por lo que antes el formulario
+  // quedaba sin semana seleccionada cuando se abría sin `?semana=`. Conserva
+  // la ausencia del parámetro para poder elegir automáticamente la semana
+  // abierta más reciente.
+  const semanaParam = parametros.get('semana');
+  const semanaSolicitada = semanaParam ? Number(semanaParam) : null;
   const [zonas, setZonas] = useState<Zona[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
@@ -227,8 +232,11 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       setCategorias(c);
       setSemanas(ss);
       const abierta = ss.find((s) => s.estado === 'abierta');
-      if (!Number.isFinite(semanaSolicitada) && abierta) setSemanaId(abierta.id);
-      else if (Number.isFinite(semanaSolicitada) && semanaSolicitada > 0) setSemanaId(semanaSolicitada);
+      const semanaValida = semanaSolicitada != null && Number.isFinite(semanaSolicitada) && semanaSolicitada > 0
+        ? ss.find((s) => s.id === semanaSolicitada)
+        : null;
+      if (semanaValida) setSemanaId(semanaValida.id);
+      else if (abierta) setSemanaId(abierta.id);
       if (z[0]) setZonaActiva(z[0].id);
       // Pre-carga el último conteo de cada zona: así, para corregir una cantidad
       // basta editar ese campo y guardar, sin recapturar todo de nuevo.
