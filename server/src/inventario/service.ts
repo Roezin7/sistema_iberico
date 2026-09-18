@@ -679,7 +679,7 @@ export async function crearConteo(
     return { ...l, qty_captura: qtyCaptura };
   });
 
-  return prisma.$transaction(async (tx) => {
+  const resultado = await prisma.$transaction(async (tx) => {
     // Una semana sólo puede tener una apertura y un cierre oficiales. Si el
     // usuario necesita corregirlos, debe usar un ajuste documentado; de esa
     // forma nunca queda ambiguo qué conteo alimenta el FIFO de la semana.
@@ -717,4 +717,27 @@ export async function crearConteo(
       semana_id: metadata.semana_id ?? null,
     };
   });
+
+  // Vincula el snapshot oficial al ciclo semanal en el mismo flujo que lo
+  // capturó. Sin este paso la UI mostraba el conteo, pero el cierre seguía
+  // considerándolo pendiente y la apertura siguiente no podía heredarlo.
+  if (metadata.semana_id != null && (metadata.tipo === 'apertura' || metadata.tipo === 'cierre')) {
+    const snapshotId = BigInt(resultado.snapshot_id);
+    const valor = await valorSnapshot(negocioId, snapshotId);
+    const data = metadata.tipo === 'apertura'
+      ? { apertura_snapshot_id: snapshotId, apertura_valor: valor, apertura_origen: 'conteo_fisico_oficial' }
+      : { cierre_snapshot_id: snapshotId, cierre_valor: valor };
+    const actualizado = await prisma.inventario_semanal.updateMany({
+      where: {
+        negocio_id: negocioId,
+        semana_id: BigInt(metadata.semana_id),
+        ...(metadata.tipo === 'apertura' ? { apertura_snapshot_id: null } : { cierre_snapshot_id: null }),
+      },
+      data,
+    });
+    if (actualizado.count !== 1) {
+      throw new HttpError(409, `La semana no tiene un ciclo de inventario disponible para vincular el ${metadata.tipo} oficial`);
+    }
+  }
+  return resultado;
 }

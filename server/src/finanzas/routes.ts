@@ -59,8 +59,13 @@ finanzasRouter.get('/semanas/actual', asyncHandler(async (req, res) => {
 }));
 
 finanzasRouter.post('/semanas', asyncHandler(async (req, res) => {
-  const body = z.object({ fecha_inicio: z.string().optional() }).parse(req.body);
-  res.status(201).json(await svc.crearSemana(req.auth!.negocioId, body.fecha_inicio));
+  const body = z.object({
+    fecha_inicio: z.string().optional(),
+    excepcion_inventario_anterior: z.boolean().optional().default(false),
+  }).parse(req.body);
+  res.status(201).json(await svc.crearSemana(req.auth!.negocioId, body.fecha_inicio, {
+    excepcionInventarioAnterior: body.excepcion_inventario_anterior,
+  }));
 }));
 
 finanzasRouter.post('/semanas/:id/cerrar', asyncHandler(async (req, res) => {

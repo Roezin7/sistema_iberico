@@ -214,7 +214,10 @@ export const finanzas = {
     api('/finanzas/saldos-iniciales', { method: 'POST', body: { saldos } }),
   semanas: () => api<Semana[]>('/finanzas/semanas'),
   semanaActual: () => api<Semana | null>('/finanzas/semanas/actual'),
-  crearSemana: (fecha_inicio?: string) => api<Semana>('/finanzas/semanas', { method: 'POST', body: { fecha_inicio } }),
+  crearSemana: (fecha_inicio?: string, excepcion_inventario_anterior = false) => api<Semana>('/finanzas/semanas', {
+    method: 'POST',
+    body: { fecha_inicio, excepcion_inventario_anterior },
+  }),
   cuadre: (id: number) => api<{ ubicaciones: FilaCuadre[] }>(`/finanzas/semanas/${id}/cuadre`),
   resumen: (id: number) => api<Resumen>(`/finanzas/semanas/${id}/resumen`),
   conciliacionInventario: (id: number) => api<Resumen['conciliacion_inventario']>(`/finanzas/semanas/${id}/conciliacion-inventario`),

@@ -187,7 +187,11 @@ export async function semanaActual(negocioId: bigint) {
   return s ? serializarSemana(s) : null;
 }
 
-export async function crearSemana(negocioId: bigint, fechaInicioStr?: string) {
+export async function crearSemana(
+  negocioId: bigint,
+  fechaInicioStr?: string,
+  opciones: { excepcionInventarioAnterior?: boolean } = {},
+) {
   let inicio: Date;
   if (fechaInicioStr) {
     inicio = lunesDe(new Date(fechaInicioStr + 'T00:00:00Z'));
@@ -200,6 +204,19 @@ export async function crearSemana(negocioId: bigint, fechaInicioStr?: string) {
   const fin = masDias(inicio, 6);
   const existe = await prisma.semanas.findFirst({ where: { negocio_id: negocioId, fecha_inicio: inicio } });
   if (existe) throw new HttpError(409, 'Esa semana ya existe');
+  const anterior = await prisma.semanas.findFirst({
+    where: { negocio_id: negocioId, fecha_fin: { lt: inicio } },
+    orderBy: { fecha_inicio: 'desc' },
+    include: { inventario_semanal: true },
+  });
+  const hayCierreAnterior = anterior?.estado === 'cerrada' && anterior.inventario_semanal?.cierre_snapshot_id != null;
+  if (anterior && !hayCierreAnterior && !opciones.excepcionInventarioAnterior) {
+    throw new HttpError(409, 'La semana anterior sigue abierta y no tiene cierre físico. Para capturar la apertura de esta semana usa la opción "Apertura excepcional sin cierre previo"; la semana anterior quedará provisional hasta reconstruir su cierre.', {
+      tipo: 'apertura_excepcional_pendiente',
+      semana_anterior_id: Number(anterior.id),
+      instruccion: 'Captura la apertura de la nueva semana y después reconstruye el cierre anterior restando sus compras.',
+    });
+  }
   const s = await prisma.semanas.create({
     data: {
       negocio_id: negocioId,
@@ -218,7 +235,21 @@ export async function crearSemana(negocioId: bigint, fechaInicioStr?: string) {
     where: { id: s.id, negocio_id: negocioId },
   });
   if (!actualizado) throw new HttpError(404, 'Semana no encontrada');
-  await asegurarInventarioSemanal(negocioId, actualizado.id);
+  if (anterior && !hayCierreAnterior && opciones.excepcionInventarioAnterior) {
+    // No heredamos el último snapshot histórico: la apertura se capturará
+    // físicamente después y puede incluir compras ya recibidas de esta semana.
+    // La cadena queda explícitamente pendiente para que nadie la interprete
+    // como un saldo de cierre de la semana anterior.
+    await prisma.inventario_semanal.create({
+      data: {
+        negocio_id: negocioId,
+        semana_id: actualizado.id,
+        apertura_origen: `apertura_excepcional_pendiente_cierre_semana_${Number(anterior.id)}`,
+      },
+    });
+  } else {
+    await asegurarInventarioSemanal(negocioId, actualizado.id);
+  }
   return serializarSemana(actualizado);
 }
 

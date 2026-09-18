@@ -88,6 +88,7 @@ export default function Finanzas() {
   // se haya quedado sin abrir, y así no perder ni saltar ninguna.
   const ultima = semanas[0]; // semanas viene ordenado por fecha_inicio desc
   const siguiente = ultima ? sumarDias(ultima.fecha_fin, 1) : undefined;
+  const requiereAperturaExcepcional = ultima?.estado === 'abierta';
   useEffect(() => { if (siguiente) setFechaNueva(siguiente); }, [siguiente]);
 
   if (!ref || saldosFijados == null) return <Marco><Cargando /></Marco>;
@@ -109,10 +110,11 @@ export default function Finanzas() {
             <span>Nuevo inicio</span>
             <input aria-label="Fecha de inicio de la nueva semana" type="date" value={fechaNueva} onChange={(e) => setFechaNueva(e.target.value)} title="Lunes de la semana a abrir" />
           </label>
-          <button className="pill" aria-label="Crear semana" onClick={async () => {
-            try { const s = await finanzas.crearSemana(fechaNueva || undefined); setSemanaId(s.id); recargar(); }
+          <button className="pill" aria-label={requiereAperturaExcepcional ? 'Abrir semana sin cierre físico previo' : 'Crear semana'} title={requiereAperturaExcepcional ? 'La semana anterior quedará provisional hasta reconstruir su cierre con la apertura y las compras de esta semana.' : undefined} onClick={async () => {
+            try { const s = await finanzas.crearSemana(fechaNueva || undefined, requiereAperturaExcepcional); setSemanaId(s.id); recargar(); }
             catch (e) { error(e instanceof Error ? e.message : 'No se pudo crear la semana'); }
-          }}>+ Semana</button>
+          }}>{requiereAperturaExcepcional ? '+ Abrir semana (excepción)' : '+ Semana'}</button>
+          {requiereAperturaExcepcional && <small className="muted">La apertura queda pendiente de captura; no hereda un conteo provisional.</small>}
         </>}
       />
       {!semana ? (
