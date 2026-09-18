@@ -286,7 +286,11 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
     setGuardando(true);
     setMsg('');
     try {
-      if ((tipo === 'apertura' || tipo === 'cierre') && semanaId == null) {
+      // Si el navegador conservó la selección visual pero React aún no recibió
+      // el evento (por ejemplo, justo después de una actualización), usa la
+      // semana abierta más reciente como respaldo seguro.
+      const semanaGuardar = semanaId ?? semanas.find((s) => s.estado === 'abierta')?.id ?? null;
+      if ((tipo === 'apertura' || tipo === 'cierre') && semanaGuardar == null) {
         setMsg('Selecciona la semana que estás abriendo o cerrando.');
         return;
       }
@@ -296,10 +300,10 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       }
       await api('/inventario/snapshots', {
         method: 'POST',
-        body: { lineas, tipo, semana_id: semanaId, motivo: motivo.trim() || null, unidad_conteo: 'operativa' },
+        body: { lineas, tipo, semana_id: semanaGuardar, motivo: motivo.trim() || null, unidad_conteo: 'operativa' },
       });
       setValores({});
-      if (cierreGuiado && regresarFinanzas && semanaId != null) navigate(`/finanzas?semana=${semanaId}&tab=cuadre`);
+      if (cierreGuiado && regresarFinanzas && semanaGuardar != null) navigate(`/finanzas?semana=${semanaGuardar}&tab=cuadre`);
       else onGuardado();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Error al guardar');
@@ -329,7 +333,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
             compact
             semanas={semanas}
             value={semanaId}
-            onChange={setSemanaId}
+            onChange={(id) => { setSemanaId(id); setMsg(''); }}
             label="Semana del conteo"
             description="Apertura o cierre que vas a registrar."
             ariaLabel="Semana del conteo"
