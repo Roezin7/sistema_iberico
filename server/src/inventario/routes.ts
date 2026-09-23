@@ -42,7 +42,7 @@ inventarioRouter.get(
 );
 
 const conteoSchema = z.object({
-  tipo: z.enum(['apertura', 'cierre', 'ajuste', 'conteo_operativo']).default('conteo_operativo'),
+  tipo: z.enum(['apertura', 'cierre', 'ajuste']),
   unidad_conteo: z.enum(['captura', 'operativa']).default('captura'),
   semana_id: z.coerce.number().int().positive().nullable().optional(),
   motivo: z.string().trim().max(500).nullable().optional(),
@@ -62,8 +62,11 @@ const conteoSchema = z.object({
 inventarioRouter.post(
   '/snapshots',
   asyncHandler(async (req, res) => {
+    if (req.body?.tipo === 'conteo_operativo') {
+      throw new HttpError(400, 'El conteo operativo ya no está disponible. Usa apertura, cierre o ajuste documentado.');
+    }
     const body = conteoSchema.parse(req.body);
-    if (body.tipo !== 'conteo_operativo' && req.auth!.rol !== 'admin') {
+    if (req.auth!.rol !== 'admin') {
       throw new HttpError(403, 'Sólo un administrador puede registrar aperturas, cierres o ajustes');
     }
     const r = await crearConteo(req.auth!.negocioId, body.lineas, {

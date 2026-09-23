@@ -623,6 +623,9 @@ export async function crearConteo(
   if (lineasInput.length === 0) {
     throw new HttpError(400, 'El conteo no tiene líneas');
   }
+  if (metadata.tipo === 'conteo_operativo') {
+    throw new HttpError(400, 'El conteo operativo ya no está disponible. Usa apertura, cierre o ajuste documentado.');
+  }
   if ((metadata.tipo === 'apertura' || metadata.tipo === 'cierre') && metadata.semana_id == null) {
     throw new HttpError(400, 'La apertura o cierre debe estar ligada a una semana');
   }

@@ -154,6 +154,7 @@ function capturaAOperativa(qtyCaptura: number, p: Producto | undefined, u: Unida
 }
 
 type Tab = 'conteo' | 'actual' | 'compras';
+type TipoCaptura = 'apertura' | 'cierre' | 'ajuste';
 
 /** Recorre la columna de captura sin alterar el valor del input numérico. */
 function moverConteoConFlecha(event: KeyboardEvent<HTMLInputElement>) {
@@ -214,7 +215,9 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [filtro, setFiltro] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState('');
-  const [tipo, setTipo] = useState<'conteo_operativo' | 'apertura' | 'cierre' | 'ajuste'>(cierreGuiado ? 'cierre' : 'conteo_operativo');
+  // Durante la operación no se capturan conteos. El flujo válido es abrir,
+  // cerrar o documentar un ajuste puntual.
+  const [tipo, setTipo] = useState<TipoCaptura>(cierreGuiado ? 'cierre' : 'apertura');
   const [semanas, setSemanas] = useState<SemanaRef[]>([]);
   const [semanaId, setSemanaId] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
@@ -320,7 +323,6 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         <div className="section-heading"><div><strong>¿Qué estás contando?</strong><p className="muted">Elige el tipo de conteo.</p></div></div>
         {cierreGuiado ? <div className="info-box info-box--compact"><strong>Cierre físico de {semanaId ? `la semana ${semanaId}` : 'la semana actual'}</strong><span>Captura Local y Bodega. Al guardar volverás automáticamente al cierre de la semana.</span></div> : <div className="pill-row">
           {([
-            ['conteo_operativo', 'Conteo operativo'],
             ['apertura', 'Apertura de semana'],
             ['cierre', 'Cierre de semana'],
             ['ajuste', 'Ajuste documentado'],
@@ -328,7 +330,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
             <button key={value} type="button" className={tipo === value ? 'pill pill--on' : 'pill'} onClick={() => setTipo(value)}>{label}</button>
           ))}
         </div>}
-        {tipo !== 'conteo_operativo' && <div className="form-grid form-grid--two">
+        <div className="form-grid form-grid--two">
           {(tipo === 'apertura' || tipo === 'cierre') && <WeekSelector
             compact
             semanas={semanas}
@@ -339,7 +341,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
             ariaLabel="Semana del conteo"
           />}
           {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}
-        </div>}
+        </div>
         <p className="muted inventory-unit-help">Captura botellas, cajas, paquetes o piezas.</p>
       </section>
       <div className="zona-tabs">
@@ -475,7 +477,11 @@ export function BorradorIA({ onGuardado }: { onGuardado: () => void }) {
     try {
       await api('/inventario/snapshots', {
         method: 'POST',
-        body: { lineas: validas.map((l) => ({ product_id: l.product_id, zona_id: zonaId, qty_captura: l.qty_captura })) },
+        body: {
+          lineas: validas.map((l) => ({ product_id: l.product_id, zona_id: zonaId, qty_captura: l.qty_captura })),
+          tipo: 'ajuste',
+          motivo: 'Borrador de conteo confirmado',
+        },
       });
       onGuardado();
     } catch (e) {
@@ -635,7 +641,7 @@ function InventarioActual() {
         {historial.length === 0 ? <p className="muted">Sin conteos registrados.</p> : (
           <ul className="conteo-list">
             {historial.slice(0, 12).map((s) => {
-              const label = s.tipo === 'cierre' ? 'Cierre de semana' : s.tipo === 'apertura' ? 'Apertura de semana' : s.tipo === 'ajuste' ? 'Ajuste documentado' : 'Conteo operativo';
+              const label = s.tipo === 'cierre' ? 'Cierre de semana' : s.tipo === 'apertura' ? 'Apertura de semana' : s.tipo === 'ajuste' ? 'Ajuste documentado' : 'Conteo operativo (histórico)';
               return <li key={s.id} className="conteo-row">
                 <div className="conteo-info"><strong>{label}{s.semana_id ? ` · Semana ${s.semana_id}` : ''}</strong><small className="muted">{new Date(s.creado_at).toLocaleString('es-MX')} · {s.lineas} líneas{s.motivo ? ` · ${s.motivo}` : ''}</small></div>
                 <span className="chip">#{s.id}</span>
