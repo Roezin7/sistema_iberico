@@ -1586,7 +1586,7 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
     orderBy: { fecha: 'asc' },
     take: 100,
   });
-  if (excepcionesCosteo.length) {
+  if (excepcionesCosteo.length && !_confirmarExcepciones) {
     throw new HttpError(409, `Hay ${excepcionesCosteo.length} excepciones de costeo pendientes antes de cerrar la semana`, {
       tipo: 'excepciones_costeo',
       total: excepcionesCosteo.length,
