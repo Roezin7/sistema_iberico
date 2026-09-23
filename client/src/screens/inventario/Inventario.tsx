@@ -588,7 +588,7 @@ function InventarioActual() {
           <div><small>Brecha FIFO</small><strong className={diferenciaFisicoFifo === 0 ? '' : 'inventory-overview__warn'}>{mxn(diferenciaFisicoFifo)}</strong></div>
         </div>
         <small className="muted">
-          {data.fecha ? `Último conteo: ${new Date(data.fecha).toLocaleString('es-MX')} · ${data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'operativo'}${data.semana_id ? ` · semana ${data.semana_id}` : ''}` : 'Sin conteos aún'}
+          {data.fecha ? `Último registro: ${new Date(data.fecha).toLocaleString('es-MX')} · ${data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'histórico'}${data.semana_id ? ` · semana ${data.semana_id}` : ''}` : 'Sin registros aún'}
         </small>
         <small className="muted">Parte del último conteo y aplica entradas confirmadas y consumos registrados. FIFO queda como auditoría.</small>
       </div>
@@ -636,8 +636,8 @@ function InventarioActual() {
         </SeccionCategoria>
       ))}
       <details className="resumen-card inventory-history">
-        <summary><span><strong>Historial de conteos</strong><small>Cierres, aperturas, ajustes y conteos operativos</small></span><span className="muted">Auditoría</span></summary>
-        <div className="inventory-history__body"><p className="muted">Aperturas, cierres, ajustes y conteos.</p>
+        <summary><span><strong>Historial de inventario</strong><small>Cierres, aperturas y ajustes</small></span><span className="muted">Auditoría</span></summary>
+        <div className="inventory-history__body"><p className="muted">Aperturas, cierres y ajustes documentados.</p>
         {historial.length === 0 ? <p className="muted">Sin conteos registrados.</p> : (
           <ul className="conteo-list">
             {historial.slice(0, 12).map((s) => {
