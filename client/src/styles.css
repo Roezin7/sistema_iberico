@@ -2415,6 +2415,29 @@ select:disabled {
 .file-button { position: relative; display: inline-flex; align-items: center; cursor: pointer; }
 .file-button input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .ticket-preview { display: block; max-width: min(100%, 360px); max-height: 420px; object-fit: contain; border-radius: var(--r-input); border: 1px solid var(--border); margin: .65rem 0; }
+
+/* Facturación: archivo mensual de compras pagadas desde Banco. */
+.facturacion-overview { display: grid; gap: 1rem; }
+.facturacion-overview__head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.facturacion-overview__head > div:first-child { display: flex; align-items: baseline; gap: .45rem; }
+.facturacion-overview__status { display: flex; gap: .8rem; flex-wrap: wrap; color: var(--ink-2); font-size: .84rem; }
+.facturacion-overview__status b { color: var(--ink); font-size: 1.1rem; }
+.facturacion-months { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .55rem; }
+.facturacion-month { display: grid; gap: .2rem; text-align: left; padding: .7rem .8rem; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input); cursor: pointer; }
+.facturacion-month:hover, .facturacion-month--on { color: var(--ink); border-color: color-mix(in srgb, var(--brand) 65%, var(--border)); background: color-mix(in srgb, var(--brand-tint) 38%, var(--surface-2)); }
+.facturacion-month small { color: var(--ink-3); }
+.facturacion-section-heading { align-items: baseline; }
+.facturacion-section-heading h2 { text-transform: capitalize; }
+.facturacion-list { display: grid; gap: .7rem; }
+.factura-card { display: grid; gap: .85rem; }
+.factura-card--facturado { border-color: color-mix(in srgb, #65c18c 42%, var(--border)); }
+.factura-card__main { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.factura-card__title { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.factura-card__main p { margin: .25rem 0 0; }
+.factura-card__total { white-space: nowrap; font-size: 1.15rem; }
+.factura-card__actions { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: .75rem; }
+.factura-card__actions select { min-width: 145px; }
+
 .quick-lines { display: grid; gap: .7rem; margin-top: .8rem; }
 /* Cada ticket conserva sus acciones dentro de la tarjeta. Varias barras
    fijas en la misma página se superponían y ocultaban Agregar línea. */

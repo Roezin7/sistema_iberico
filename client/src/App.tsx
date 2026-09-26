@@ -9,6 +9,7 @@ import Configuracion from './screens/config/Configuracion';
 import Marketing from './screens/marketing/Marketing';
 import Compras from './screens/compras/Compras';
 import CostosMenu from './screens/costos-menu/CostosMenu';
+import Facturacion from './screens/facturacion/Facturacion';
 import Tareas from './screens/tareas/Tareas';
 import Decisiones from './screens/decisiones/Decisiones';
 import OfflineBanner from './OfflineBanner';
@@ -55,10 +56,11 @@ function AppBody() {
         <Route path="/tareas" element={<Tareas />} />
         <Route path="/decisiones" element={<SoloAdmin rol="admin"><Decisiones /></SoloAdmin>} />
         <Route path="/costos-menu" element={<SoloAdmin rol="admin"><CostosMenu /></SoloAdmin>} />
+        <Route path="/facturacion" element={<SoloAdmin rol="admin"><Facturacion /></SoloAdmin>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       {/* La captura operativa debe quedar libre de un asistente flotante. */}
-      {!['/finanzas', '/inventario', '/compras', '/tareas'].includes(location.pathname) && <SilviaBubble />}
+      {!['/finanzas', '/inventario', '/compras', '/facturacion', '/tareas'].includes(location.pathname) && <SilviaBubble />}
     </Shell>
   );
 }

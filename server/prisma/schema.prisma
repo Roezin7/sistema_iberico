@@ -48,6 +48,7 @@ model negocios {
   silvia_memoria         silvia_memoria[]
   productos_menu         productos_menu[]
   inventory_lots         inventory_lots[]
+  facturas               facturas[]
   inventory_consumptions inventory_consumptions[]
   inventory_fifo_reconciliations inventory_fifo_reconciliations[]
   inventory_adjustments  inventory_adjustments[]
@@ -275,6 +276,7 @@ model purchases {
   capture_lines          purchase_capture_lines[]
   movimientos            movimientos[]
   inventory_lots         inventory_lots[]
+  facturas               facturas[]
   negocios               negocios                 @relation(fields: [negocio_id], references: [id])
   origen_pago            ubicaciones_fondos?      @relation(fields: [origen_pago_id], references: [id], onDelete: SetNull)
   capturada_por_usuario  usuarios?                @relation("CompraCapturadaPor", fields: [capturada_por], references: [id], onDelete: SetNull)
@@ -285,6 +287,29 @@ model purchases {
   @@index([negocio_id])
   @@index([negocio_id, estado, fecha_recepcion])
   @@index([origen_pago_id])
+}
+
+/// Control mensual de facturas asociadas a compras pagadas desde Banco.
+/// La compra sigue siendo la fuente contable; esta tabla sólo organiza el
+/// seguimiento fiscal y conserva el comprobante recibido.
+model facturas {
+  id                  BigInt   @id @default(autoincrement())
+  negocio_id          BigInt
+  compra_id           BigInt
+  mes                 DateTime @db.Date
+  estado              String   @default("no_facturado")
+  comprobante_data    String?  @db.Text
+  comprobante_mime    String?
+  comprobante_nombre  String?
+  comprobante_hash    String?
+  notas               String?
+  creado_at           DateTime @default(now()) @db.Timestamptz(6)
+  actualizado_at      DateTime @updatedAt @db.Timestamptz(6)
+  negocios            negocios @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
+  purchases           purchases @relation(fields: [compra_id], references: [id], onDelete: Cascade)
+
+  @@unique([negocio_id, compra_id])
+  @@index([negocio_id, mes, estado])
 }
 
 /// Líneas capturadas desde un ticket. Se revisan antes de convertirse en

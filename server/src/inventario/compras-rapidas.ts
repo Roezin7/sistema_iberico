@@ -6,6 +6,7 @@ import { cantidadBaseDesdePresentacion, notasDeValidacion, resumirCompra, valida
 import { costearVentasPendientesEnVivo } from './consumo-epos.js';
 import { inventarioActual } from './service.js';
 import { redondear } from './logic.js';
+import { asegurarFacturasBanco, mesDeFecha } from '../facturacion/service.js';
 
 export type CapturaCompraLinea = {
   product_id?: bigint | null;
@@ -273,6 +274,10 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     }
     const dataCompra = { fecha_recepcion: fecha, proveedor: input.proveedor === undefined ? actual.proveedor : input.proveedor?.trim() || null, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref?.trim() || null, total, origen_pago_id: origen.id };
     await tx.purchases.update({ where: { id: purchaseId }, data: dataCompra });
+    if (origen.tipo === 'banco') {
+      await tx.facturas.updateMany({ where: { negocio_id: negocioId, compra_id: purchaseId }, data: { mes: mesDeFecha(fecha) } });
+      await asegurarFacturasBanco(negocioId, tx);
+    }
     const invTotal = resumen.inventario; const gastoTotal = resumen.gasto; const descripcionBase = `Compra ticket ${dataCompra.ticket_ref ?? purchaseId}`;
     const invMov = await tx.movimientos.findFirst({ where: { negocio_id: negocioId, compra_id: purchaseId, tipo: 'compra_inventario' } });
     if (invTotal > 0) {
@@ -312,6 +317,7 @@ export async function cambiarOrigenPagoCompra(negocioId: bigint, purchaseId: big
     if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana de la compra está cerrada; reábrela antes de corregir el pago');
 
     await tx.purchases.update({ where: { id: compra.id }, data: { origen_pago_id: origen.id } });
+    if (origen.tipo === 'banco') await asegurarFacturasBanco(negocioId, tx);
     await tx.movimientos.updateMany({
       where: { compra_id: compra.id, tipo: { in: ['compra_inventario', 'gasto'] } },
       data: { ubicacion_origen_id: origen.id, facturado: origen.tipo === 'banco' },
@@ -449,6 +455,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       await tx.movimientos.create({ data: { negocio_id: negocioId, semana_id: semana.id, fecha: compra.fecha_recepcion, tipo: 'gasto', monto: gastoTotal, ubicacion_origen_id: origen.id, categoria_id: categoria?.id ?? null, facturado, descripcion: `Compra ticket ${compra.ticket_ref ?? compra.id}${gastos.length ? ' · gasto operativo' : ' · diferencia no itemizada'}`, usuario_id: usuarioId, compra_id: compra.id } });
     }
     await tx.purchases.update({ where: { id: compra.id }, data: { total, estado: 'confirmada', notas: notasCompra, confirmada_por: usuarioId, confirmada_at: new Date() } });
+    if (origen.tipo === 'banco') await asegurarFacturasBanco(negocioId, tx);
     return { purchase_id: Number(compra.id), estado: 'confirmada', inventario: inventarioTotal, gasto: gastoTotal, movimientos: (inventarioTotal > 0 ? 1 : 0) + (gastoTotal > 0 ? 1 : 0), discrepancias: validacion.advertencias };
   });
   const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
