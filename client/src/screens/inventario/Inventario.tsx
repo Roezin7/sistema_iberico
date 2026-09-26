@@ -670,18 +670,24 @@ function ListaDeCompras() {
 
   const items = data.grupos.flatMap((g) => g.items);
   const sinExistencia = items.filter((it) => (it.existencia_actual_operativa ?? it.total_operativo ?? it.total_base) <= 0).length;
+  const unidadesFaltantes = items.reduce((total, it) => {
+    const presentaciones = it.presentaciones_faltantes;
+    if (presentaciones != null) return total + Math.max(0, presentaciones);
+    return total + Math.max(0, it.faltante_operativo ?? it.faltante ?? 0);
+  }, 0);
 
   return (
     <>
       <div className="resumen-card inventory-overview">
         <div className="inventory-overview__head">
-          <div><span className="eyebrow">Lista de compras</span><strong className="big-number">{mxn(data.total)}</strong></div>
+          <div><span className="eyebrow">Unidades faltantes</span><strong className="big-number">{formatoCantidad(unidadesFaltantes)}</strong></div>
           <span className="chip chip--ok">Fuente: físico actual</span>
         </div>
         <div className="inventory-overview__values">
           <div><small>Productos</small><strong>{items.length}</strong></div>
-          <div className="inventory-overview__warn"><small>Por debajo del mínimo</small><strong>{items.length}</strong></div>
+          <div className="inventory-overview__warn"><small>Compras sugeridas</small><strong>{formatoCantidad(unidadesFaltantes)}</strong></div>
           <div className={sinExistencia ? 'inventory-overview__danger' : ''}><small>Sin existencia</small><strong>{sinExistencia}</strong></div>
+          <div><small>Costo estimado</small><strong>{mxn(data.total)}</strong></div>
         </div>
         <small className="muted">Muestra la existencia física operativa, el mínimo y la compra sugerida. FIFO sólo audita.</small>
       </div>

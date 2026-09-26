@@ -12,6 +12,7 @@ import {
   cantidadOperativaInventario,
   faltanteOperativoInventario,
   seleccionarExistenciaOperativa,
+  distribuirConsumoPorZona,
   type ProductoFaltante,
 } from './logic.js';
 import { costoUnitarioBaseDesdeCatalogo, conversionAperturaDesdeCatalogo, cantidadBaseDesdeLineaSnapshot } from './apertura-fifo.js';
@@ -71,6 +72,26 @@ describe('existencia operativa FIFO', () => {
   it('usa el conteo físico cuando todavía no hay lotes FIFO', () => {
     expect(seleccionarExistenciaOperativa({ fisicoBase: 12, fifoBase: null, tieneLotes: false }))
       .toEqual({ base: 12, fuente: 'fisico' });
+  });
+});
+
+describe('consumo físico por zona', () => {
+  it('vacía Local antes que Bodega y nunca deja saldos negativos', () => {
+    const resultado = distribuirConsumoPorZona([
+      { zona_id: 2, zona: 'Bodega', qty_base: 10 },
+      { zona_id: 1, zona: 'Local', qty_base: 3 },
+    ], 8);
+    expect([...resultado.saldos.entries()]).toEqual([[1, 0], [2, 5]]);
+    expect(resultado.noAplicado).toBe(0);
+  });
+
+  it('reporta la parte no aplicada sin volver negativa ninguna zona', () => {
+    const resultado = distribuirConsumoPorZona([
+      { zona_id: 1, zona: 'Local', qty_base: 2 },
+      { zona_id: 2, zona: 'Bodega', qty_base: 1 },
+    ], 5);
+    expect([...resultado.saldos.values()]).toEqual([0, 0]);
+    expect(resultado.noAplicado).toBe(2);
   });
 });
 

@@ -210,6 +210,40 @@ export interface GrupoTienda {
   subtotal: number;
 }
 
+export interface ZonaExistencia {
+  zona_id: number;
+  zona: string;
+  qty_base: number;
+  orden?: number;
+}
+
+/**
+ * Reparte un consumo físico de forma determinista. El local es la primera
+ * zona que se vacía; después se usa la bodega y, por último, cualquier otra
+ * zona configurada. Nunca devuelve cantidades negativas ni consume más de lo
+ * que existe físicamente.
+ */
+export function distribuirConsumoPorZona(zonas: ZonaExistencia[], consumoBase: number) {
+  let restante = Math.max(0, consumoBase);
+  const ordenadas = [...zonas].sort((a, b) => {
+    const prioridad = (zona: ZonaExistencia) => {
+      const nombre = zona.zona.trim().toLowerCase();
+      if (nombre === 'local') return 0;
+      if (nombre === 'bodega') return 1;
+      return 2;
+    };
+    return prioridad(a) - prioridad(b) || (a.orden ?? 0) - (b.orden ?? 0) || a.zona_id - b.zona_id;
+  });
+  const saldos = new Map<number, number>();
+  for (const zona of ordenadas) {
+    const disponible = Math.max(0, zona.qty_base);
+    const descuento = Math.min(disponible, restante);
+    saldos.set(zona.zona_id, disponible - descuento);
+    restante -= descuento;
+  }
+  return { saldos, noAplicado: restante };
+}
+
 export interface ListaCompras {
   grupos: GrupoTienda[];
   total: number;

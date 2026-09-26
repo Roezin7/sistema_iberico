@@ -15,9 +15,12 @@ import {
   normalizarUnidadBase,
   unidadOperativaInventario,
   redondear,
+  distribuirConsumoPorZona,
   type ProductoFaltante,
 } from './logic.js';
 import { filtroConsumoFifoActivo } from './fuentes.js';
+import { convertirCantidad } from '../recetas/costeo.js';
+import { normalizarNombreEpos } from '../epos/mapeo-menu.js';
 
 export interface ProductoActual {
   product_id: number;
@@ -121,6 +124,42 @@ type LoteValuacion = {
   id: bigint;
   fuente: string;
 };
+
+const ZONA_OPERATIVA = 'America/Mexico_City';
+
+function fechaCivil(value: Date) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: ZONA_OPERATIVA,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (!year || !month || !day) throw new Error('No se pudo obtener la fecha operativa');
+  return `${year}-${month}-${day}`;
+}
+
+/** Las ventas del mismo día que se capturaron después del conteo también
+ * deben bajar el físico; el instante de alta evita repetir ventas históricas
+ * que sólo se importaron después. */
+function movimientoPosteriorAlSnapshot(fechaEvento: Date, creadoAt: Date, snapshot: Date | null) {
+  if (!snapshot) return true;
+  const evento = fechaCivil(fechaEvento);
+  const corte = fechaCivil(snapshot);
+  return evento > corte || (evento === corte && creadoAt > snapshot);
+}
+
+/** Variante para columnas PostgreSQL `date`: Prisma las materializa a
+ * medianoche UTC, así que aquí se conserva el día civil almacenado sin
+ * convertirlo a la zona de México. */
+function fechaDbPosteriorAlSnapshot(fechaDb: Date, creadoAt: Date, snapshot: Date | null) {
+  if (!snapshot) return true;
+  const evento = fechaDb.toISOString().slice(0, 10);
+  const corte = fechaCivil(snapshot);
+  return evento > corte || (evento === corte && creadoAt > snapshot);
+}
 
 /** Valora una existencia física usando lotes abiertos en orden FIFO.
  * Si el conteo físico excede el libro de lotes, el remanente se valora al
@@ -227,7 +266,7 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       },
       // `fecha` es el día operativo en que ocurrió el consumo. `creado_at`
       // sólo indica cuándo se importó/costeó y puede ser posterior al conteo.
-      select: { product_id: true, cantidad: true, fecha: true, creado_at: true, fuente: true },
+      select: { product_id: true, cantidad: true, fecha: true, creado_at: true, fuente: true, epos_venta_id: true },
     }),
     prisma.inventory_adjustments.findMany({
       where: { negocio_id: negocioId },
@@ -341,6 +380,71 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     }
   }
 
+  // El físico no puede depender de que FIFO haya alcanzado a costear la
+  // venta. Construimos el consumo de las recetas validadas directamente desde
+  // Epos; si una venta está en excepción por falta de lote, aun así ya salió
+  // físicamente del Local y después de la Bodega. El libro FIFO se conserva
+  // como auditoría y sólo se usa como respaldo cuando no hay receta utilizable.
+  const consumoVentaPorClave = new Map<string, number>();
+  const consumoVentaPorProducto = new Map<string, number>();
+  if (fechaActual != null) {
+    const [ventasPosteriores, menusFisicos] = await Promise.all([
+      prisma.epos_ventas.findMany({
+        where: {
+          negocio_id: negocioId,
+          ...(options.hasta ? { fecha: { lte: options.hasta } } : {}),
+        },
+        select: { id: true, fecha: true, creado_at: true, epos_product_id: true, producto_nombre: true, cantidad: true },
+      }),
+      prisma.productos_menu.findMany({
+        where: { negocio_id: negocioId, activo: true },
+        select: {
+          id: true, nombre: true, epos_product_id: true,
+          recetas: {
+            where: { estado: 'validada' },
+            orderBy: { version: 'desc' },
+            select: {
+              version: true, vigente_desde: true,
+              lineas: { select: { product_id: true, cantidad: true, unidad: true, products: { select: { unidad_base: true } } } },
+            },
+          },
+        },
+      }),
+    ]);
+    const menuPorId = new Map(menusFisicos.filter((m) => m.epos_product_id != null).map((m) => [m.epos_product_id!, m]));
+    const menuPorNombre = new Map(menusFisicos.map((m) => [normalizarNombreEpos(m.nombre), m]));
+    for (const venta of ventasPosteriores) {
+      if (!movimientoPosteriorAlSnapshot(venta.fecha, venta.creado_at, fechaActual)) continue;
+      const menu = (venta.epos_product_id == null ? null : menuPorId.get(venta.epos_product_id))
+        ?? menuPorNombre.get(normalizarNombreEpos(venta.producto_nombre));
+      const receta = menu?.recetas.find((candidate) => candidate.vigente_desde == null || candidate.vigente_desde <= venta.fecha);
+      if (!receta) continue;
+      const cantidadVendida = Number(venta.cantidad);
+      if (!Number.isFinite(cantidadVendida) || cantidadVendida <= 0) continue;
+      for (const linea of receta.lineas) {
+        const cantidadBase = linea.products.unidad_base == null
+          ? null
+          : convertirCantidad(Number(linea.cantidad) * cantidadVendida, linea.unidad, linea.products.unidad_base);
+        if (cantidadBase == null || cantidadBase <= 0) continue;
+        const clave = `${venta.id}:${linea.product_id}`;
+        consumoVentaPorClave.set(clave, (consumoVentaPorClave.get(clave) ?? 0) + cantidadBase);
+        const producto = linea.product_id.toString();
+        consumoVentaPorProducto.set(producto, (consumoVentaPorProducto.get(producto) ?? 0) + cantidadBase);
+      }
+    }
+  }
+
+  const consumoFifoSinRecetaPorProducto = new Map<string, number>();
+  for (const consumo of consumosPosteriores) {
+    if (consumo.epos_venta_id == null || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual)) continue;
+    const clave = `${consumo.epos_venta_id}:${consumo.product_id}`;
+    // Una receta encontrada ya representa la salida física completa; no la
+    // volvemos a sumar con su(s) lote(s) FIFO.
+    if (consumoVentaPorClave.has(clave)) continue;
+    const producto = consumo.product_id.toString();
+    consumoFifoSinRecetaPorProducto.set(producto, (consumoFifoSinRecetaPorProducto.get(producto) ?? 0) + num0(consumo.cantidad));
+  }
+
   // Agrupar líneas por producto.
   const lineasPorProducto = new Map<string, typeof lineas>();
   for (const l of lineas) {
@@ -364,16 +468,30 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
         // evento físico; creado_at sólo es el momento de alta en el sistema.
         && (fechaActual == null || l.recibido_at > fechaActual))
       .reduce((total, l) => total + num0(l.cantidad_inicial), 0);
-    const consumosPosterioresBase = consumosPosteriores
-      .filter((c) => c.product_id === p.id
+    const consumosAjustesBase = consumosPosteriores
+      .filter((c) => c.epos_venta_id == null
         && !esAjusteDelConteoVigente({ product_id: c.product_id, cantidad: c.cantidad, creado_at: c.creado_at, fuente: c.fuente })
-        // Igual que con las entradas, el conteo ya refleja consumos ocurridos
-        // antes de esa fecha aunque se hayan importado después.
-        && (fechaActual == null || c.fecha > fechaActual))
+        && fechaDbPosteriorAlSnapshot(c.fecha, c.creado_at, fechaActual))
+      .filter((c) => c.product_id === p.id)
       .reduce((total, c) => total + num0(c.cantidad), 0);
+    const consumosPosterioresBase = (consumoVentaPorProducto.get(p.id.toString()) ?? 0)
+      + (consumoFifoSinRecetaPorProducto.get(p.id.toString()) ?? 0)
+      + consumosAjustesBase;
     // No permitir existencia negativa: si los consumos superan el saldo
     // esperado, la diferencia se conserva en el contraste contra FIFO.
     const totalBase = Math.max(0, conteoFisicoBase + entradasPosterioresBase - consumosPosterioresBase);
+    const zonasConEntradas = ls.map((l) => ({
+      zona_id: Number(l.zona_id),
+      zona: l.zonas_inventario.nombre,
+      orden: l.zonas_inventario.orden,
+      qty_base: num0(l.qty_captura) * num0(l.factor),
+    }));
+    // Las compras recibidas después del conteo entran físicamente a Bodega.
+    // Si esa zona todavía no tiene línea, se conserva el total agregado y no
+    // se inventa una línea histórica que el operador nunca contó.
+    const bodega = zonasConEntradas.find((zona) => zona.zona.trim().toLowerCase() === 'bodega');
+    if (bodega) bodega.qty_base += entradasPosterioresBase;
+    const repartoFisico = distribuirConsumoPorZona(zonasConEntradas, consumosPosterioresBase);
     const unitCostPresentation = num(p.unit_cost);
     const unitCostBase = costoUnitarioBase(p);
     const ultimoLote = ultimoLotePorProducto.get(p.id.toString());
@@ -482,7 +600,7 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
       por_zona: ls.map((l) => ({
         zona_id: Number(l.zona_id),
         zona: l.zonas_inventario.nombre,
-        qty_captura: num0(l.qty_captura),
+        qty_captura: Math.max(0, (repartoFisico.saldos.get(Number(l.zona_id)) ?? num0(l.qty_captura) * num0(l.factor)) / Math.max(num0(l.factor), 0.0000001)),
         factor: num0(l.factor),
         unidad_captura: unidadCapturaPorPar.get(`${l.product_id}:${l.zona_id}`) ?? 'unidad base',
       })),
