@@ -60,6 +60,13 @@ function seleccionarLotesOperativos<T extends { fuente: string }>(lotes: T[], mo
 
 const ZONA_OPERATIVA = 'America/Mexico_City';
 
+// Las cantidades FIFO se guardan con cuatro decimales. Mantener la misma
+// precisión al acumular y descontar planes evita que el ruido binario de
+// JavaScript convierta un lote exacto en una falsa discrepancia.
+function redondearCantidad(value: number) {
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
+}
+
 /**
  * Devuelve la fecha civil de operación, no la fecha UTC del instante.
  * PostgreSQL `date` no tiene zona horaria; guardar directamente un `Date`
@@ -212,7 +219,7 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
 function aplicarPlanEnMemoria(context: PlanContext, plan: PlanConsumo) {
   for (const consumo of plan.consumos) {
     const lote = context.lotsByProduct.get(consumo.productId.toString())?.find((candidate) => candidate.id === consumo.loteId);
-    if (lote) lote.cantidad_restante = new Prisma.Decimal(Number(lote.cantidad_restante) - consumo.cantidad);
+    if (lote) lote.cantidad_restante = new Prisma.Decimal(redondearCantidad(Number(lote.cantidad_restante) - consumo.cantidad));
   }
 }
 
@@ -275,7 +282,10 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
         }
       }
       for (const { plan } of costeablesNuevas) {
-        for (const consumo of plan.consumos) lotes.set(consumo.loteId.toString(), (lotes.get(consumo.loteId.toString()) ?? 0) + consumo.cantidad);
+        for (const consumo of plan.consumos) {
+          const acumulado = (lotes.get(consumo.loteId.toString()) ?? 0) + consumo.cantidad;
+          lotes.set(consumo.loteId.toString(), redondearCantidad(acumulado));
+        }
       }
       consumos = costeablesNuevas.flatMap(({ venta, plan }) => plan.consumos.map((consumo) => ({
         negocio_id: input.negocioId,
