@@ -1,5 +1,5 @@
 import { prisma } from '../db.js';
-import type { Prisma } from '@prisma/client';
+import { Prisma, type Prisma as PrismaTypes } from '@prisma/client';
 import { num, num0 } from '../lib/num.js';
 import { HttpError } from '../middleware/error.js';
 import {
@@ -118,8 +118,8 @@ function costoUnitarioBase(producto: {
 
 type LoteValuacion = {
   product_id: bigint;
-  cantidad_restante: Prisma.Decimal | number;
-  costo_unitario: Prisma.Decimal | number;
+  cantidad_restante: PrismaTypes.Decimal | number;
+  costo_unitario: PrismaTypes.Decimal | number;
   recibido_at: Date;
   id: bigint;
   fuente: string;
@@ -206,7 +206,7 @@ export async function valorSnapshot(negocioId: bigint, snapshotId: bigint | null
  * el cierre semanal debe congelar el estado agregado de todas las zonas.
  */
 export async function crearSnapshotConsolidado(
-  tx: Prisma.TransactionClient,
+  tx: PrismaTypes.TransactionClient,
   negocioId: bigint,
   actual: InventarioActual,
   metadata: { tipo?: string; semana_id?: bigint | null; motivo?: string | null; nota?: string | null } = {},
@@ -235,11 +235,39 @@ export async function crearSnapshotConsolidado(
  * conteo, menos los consumos físicos posteriores. El conteo sigue siendo el
  * punto de partida; las compras confirmadas no se quedan sólo en FIFO.
  */
-export async function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
+// Deduplica lecturas simultáneas. Varias pantallas montadas a la vez (o la
+// existencia actual y la lista de compras abiertas juntas) deben compartir la
+// misma consulta pesada; se elimina al terminar, así que nunca sirve datos
+// obsoletos después de una mutación.
+const inventarioEnVuelo = new Map<string, Promise<InventarioActual>>();
+
+export function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
+  // `vista` se conserva por compatibilidad de API, pero ambas vistas parten
+  // del mismo inventario físico y sólo exponen campos distintos.
+  const key = `${negocioId}:${options.semanaId?.toString() ?? ''}:${options.hasta?.toISOString() ?? ''}`;
+  const pendiente = inventarioEnVuelo.get(key);
+  if (pendiente) return pendiente;
+  const consulta = inventarioActualCalculado(negocioId, options);
+  inventarioEnVuelo.set(key, consulta);
+  void consulta.then(() => {
+    if (inventarioEnVuelo.get(key) === consulta) inventarioEnVuelo.delete(key);
+  }, () => {
+    if (inventarioEnVuelo.get(key) === consulta) inventarioEnVuelo.delete(key);
+  });
+  return consulta;
+}
+
+async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
   const [productos, snaps, lotesTodos, consumosPosteriores, ajustesInventario] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
-      include: { stores: true, categorias_inventario: true },
+      select: {
+        id: true, name: true, store_id: true, base_qty: true, active: true,
+        unit_cost: true, unidad_base: true, contenido_compra: true,
+        unidad_compra: true, rendimiento_util: true, categoria_id: true,
+        stores: { select: { id: true, name: true } },
+        categorias_inventario: { select: { id: true, nombre: true } },
+      },
       orderBy: { name: 'asc' },
     }),
     prisma.inventory_snapshot.findMany({
@@ -316,26 +344,49 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
   // garantizan orden cronológico cuando se importan/restauran datos o se
   // corrige un conteo histórico. Así un snapshot vacío posterior no puede
   // ocultar el conteo válido más reciente de una zona.
+  // Sólo necesitamos las líneas del snapshot más reciente de cada zona. La
+  // consulta anterior descargaba todas las líneas históricas y después las
+  // descartaba en memoria; con cierres semanales eso crecía sin límite.
   const todasLasLineas = snapIds.length
-    ? await prisma.inventory_lines.findMany({
-        where: { snapshot_id: { in: snapIds } },
-        include: {
-          zonas_inventario: true,
-          inventory_snapshot: { select: { created_at: true } },
-        },
-      })
+    ? await prisma.$queryRaw<Array<{
+        snapshot_id: bigint;
+        product_id: bigint;
+        zona_id: bigint;
+        qty_captura: PrismaTypes.Decimal | number;
+        factor: PrismaTypes.Decimal | number;
+        zona_nombre: string;
+        zona_orden: number;
+        snapshot_created_at: Date;
+      }>>(Prisma.sql`
+        WITH ultimos AS (
+          SELECT DISTINCT ON (il.zona_id)
+            il.zona_id, il.snapshot_id, s.created_at
+          FROM inventory_lines il
+          JOIN inventory_snapshot s ON s.id = il.snapshot_id
+          WHERE s.negocio_id = ${negocioId}
+            ${options.semanaId != null ? Prisma.sql`AND s.semana_id = ${options.semanaId}` : Prisma.empty}
+            ${options.hasta ? Prisma.sql`AND s.created_at <= ${options.hasta}` : Prisma.empty}
+          ORDER BY il.zona_id, s.created_at DESC, il.snapshot_id DESC
+        )
+        SELECT il.snapshot_id, il.product_id, il.zona_id, il.qty_captura, il.factor,
+               z.nombre AS zona_nombre, z.orden AS zona_orden,
+               u.created_at AS snapshot_created_at
+        FROM inventory_lines il
+        JOIN ultimos u ON u.snapshot_id = il.snapshot_id AND u.zona_id = il.zona_id
+        JOIN zonas_inventario z ON z.id = il.zona_id
+      `)
     : [];
   const ultimoPorZona = new Map<string, { zona_id: bigint; snapshot_id: bigint; created_at: Date }>();
   for (const linea of todasLasLineas) {
     const key = linea.zona_id.toString();
     const anterior = ultimoPorZona.get(key);
-    if (!anterior || linea.inventory_snapshot.created_at > anterior.created_at
-      || (linea.inventory_snapshot.created_at.getTime() === anterior.created_at.getTime()
+    if (!anterior || linea.snapshot_created_at > anterior.created_at
+      || (linea.snapshot_created_at.getTime() === anterior.created_at.getTime()
         && linea.snapshot_id > anterior.snapshot_id)) {
       ultimoPorZona.set(key, {
         zona_id: linea.zona_id,
         snapshot_id: linea.snapshot_id,
-        created_at: linea.inventory_snapshot.created_at,
+        created_at: linea.snapshot_created_at,
       });
     }
   }
@@ -350,13 +401,19 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
   const ajustesConteoVigente = ajustesInventario.filter((ajuste) =>
     snapshotIdsVigentes.has(ajuste.snapshot_nuevo_id?.toString() ?? ''),
   );
-  const esAjusteDelConteoVigente = (input: { product_id: bigint; cantidad: Prisma.Decimal | number | null; creado_at: Date; fuente?: string | null }) => {
+  const esAjusteDelConteoVigente = (input: { product_id: bigint; cantidad: PrismaTypes.Decimal | number | null; creado_at: Date; fuente?: string | null }) => {
     if (input.fuente !== 'ajuste_inventario') return false;
     return ajustesConteoVigente.some((ajuste) =>
       ajuste.product_id === input.product_id
       && Math.abs(ajuste.creado_at.getTime() - input.creado_at.getTime()) <= 10_000);
   };
-  const lineas = todasLasLineas.filter((linea) => snapshotVigente.has(`${linea.snapshot_id}:${linea.zona_id}`));
+  const lineas = todasLasLineas
+    .filter((linea) => snapshotVigente.has(`${linea.snapshot_id}:${linea.zona_id}`))
+    .map((linea) => ({
+      ...linea,
+      zonas_inventario: { nombre: linea.zona_nombre, orden: linea.zona_orden },
+      inventory_snapshot: { created_at: linea.snapshot_created_at },
+    }));
 
   const unidadesCaptura = lineas.length
     ? await prisma.product_zone_units.findMany({
@@ -388,29 +445,64 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
   const consumoVentaPorClave = new Map<string, number>();
   const consumoVentaPorProducto = new Map<string, number>();
   if (fechaActual != null) {
-    const [ventasPosteriores, menusFisicos] = await Promise.all([
-      prisma.epos_ventas.findMany({
-        where: {
-          negocio_id: negocioId,
-          ...(options.hasta ? { fecha: { lte: options.hasta } } : {}),
-        },
-        select: { id: true, fecha: true, creado_at: true, epos_product_id: true, producto_nombre: true, cantidad: true },
-      }),
-      prisma.productos_menu.findMany({
-        where: { negocio_id: negocioId, activo: true },
-        select: {
-          id: true, nombre: true, epos_product_id: true,
-          recetas: {
-            where: { estado: 'validada' },
-            orderBy: { version: 'desc' },
-            select: {
-              version: true, vigente_desde: true,
-              lineas: { select: { product_id: true, cantidad: true, unidad: true, products: { select: { unidad_base: true } } } },
-            },
-          },
-        },
-      }),
-    ]);
+    // Las ventas anteriores al último conteo no pueden afectar la existencia
+    // actual. Evitar traerlas también reduce el payload y el trabajo de
+    // resolución de recetas conforme crece el histórico.
+    const inicioVentas = new Date(`${fechaCivil(fechaActual)}T00:00:00Z`);
+    const ventasPosteriores = await prisma.epos_ventas.findMany({
+      where: {
+        negocio_id: negocioId,
+        fecha: { gte: inicioVentas, ...(options.hasta ? { lte: options.hasta } : {}) },
+      },
+      select: { id: true, fecha: true, creado_at: true, epos_product_id: true, producto_nombre: true, cantidad: true },
+    });
+    // La relación anidada de recetas es costosa en Prisma. Primero resolvemos
+    // sólo el catálogo ligero y luego pedimos recetas para los menús que
+    // realmente aparecen en las ventas desde el último snapshot.
+    const menusBase = await prisma.productos_menu.findMany({
+      where: { negocio_id: negocioId, activo: true },
+      select: { id: true, nombre: true, epos_product_id: true },
+    });
+    const idsEpos = new Set(ventasPosteriores.map((venta) => venta.epos_product_id).filter((id): id is number => id != null));
+    const nombresEpos = new Set(ventasPosteriores.map((venta) => normalizarNombreEpos(venta.producto_nombre)));
+    const menusRelevantes = menusBase.filter((menu) => (menu.epos_product_id != null && idsEpos.has(menu.epos_product_id)) || nombresEpos.has(normalizarNombreEpos(menu.nombre)));
+    const recetaLineas = menusRelevantes.length
+      ? await prisma.$queryRaw<Array<{
+          producto_menu_id: bigint;
+          version: number;
+          vigente_desde: Date | null;
+          product_id: bigint;
+          cantidad: PrismaTypes.Decimal | number;
+          unidad: string;
+          unidad_base: string | null;
+        }>>(Prisma.sql`
+          SELECT r.producto_menu_id, r.version, r.vigente_desde,
+                 rl.product_id, rl.cantidad, rl.unidad, p.unidad_base
+          FROM recetas r
+          JOIN receta_lineas rl ON rl.receta_id = r.id
+          JOIN products p ON p.id = rl.product_id
+          WHERE r.estado = 'validada'
+            AND r.producto_menu_id IN (${Prisma.join(menusRelevantes.map((menu) => menu.id))})
+          ORDER BY r.producto_menu_id, r.version DESC
+        `)
+      : [];
+    const recetasPorMenu = new Map<string, Array<{
+      version: number;
+      vigente_desde: Date | null;
+      lineas: Array<{ product_id: bigint; cantidad: PrismaTypes.Decimal | number; unidad: string; products: { unidad_base: string | null } }>;
+    }>>();
+    for (const linea of recetaLineas) {
+      const key = linea.producto_menu_id.toString();
+      const recetas = recetasPorMenu.get(key) ?? [];
+      let receta = recetas.find((item) => item.version === linea.version);
+      if (!receta) {
+        receta = { version: linea.version, vigente_desde: linea.vigente_desde, lineas: [] };
+        recetas.push(receta);
+      }
+      receta.lineas.push({ product_id: linea.product_id, cantidad: linea.cantidad, unidad: linea.unidad, products: { unidad_base: linea.unidad_base } });
+      recetasPorMenu.set(key, recetas);
+    }
+    const menusFisicos = menusRelevantes.map((menu) => ({ ...menu, recetas: recetasPorMenu.get(menu.id.toString()) ?? [] }));
     const menuPorId = new Map(menusFisicos.filter((m) => m.epos_product_id != null).map((m) => [m.epos_product_id!, m]));
     const menuPorNombre = new Map(menusFisicos.map((m) => [normalizarNombreEpos(m.nombre), m]));
     for (const venta of ventasPosteriores) {
@@ -445,6 +537,27 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     consumoFifoSinRecetaPorProducto.set(producto, (consumoFifoSinRecetaPorProducto.get(producto) ?? 0) + num0(consumo.cantidad));
   }
 
+  // Agrupar una sola vez. Antes cada producto recorría todos los lotes y todos
+  // los consumos para calcular sus entradas/salidas; con el histórico en
+  // crecimiento eso convertía la lectura en O(productos × movimientos).
+  const entradasPosterioresPorProducto = new Map<string, number>();
+  for (const lote of lotesTodos) {
+    if (lote.estado === 'cancelado'
+      || lote.purchase_id == null && lote.fuente !== 'ajuste_inventario'
+      || (fechaActual != null && lote.recibido_at <= fechaActual)
+      || esAjusteDelConteoVigente({ product_id: lote.product_id, cantidad: lote.cantidad_inicial, creado_at: lote.creado_at, fuente: lote.fuente })) continue;
+    const key = lote.product_id.toString();
+    entradasPosterioresPorProducto.set(key, (entradasPosterioresPorProducto.get(key) ?? 0) + num0(lote.cantidad_inicial));
+  }
+  const consumosAjustesPorProducto = new Map<string, number>();
+  for (const consumo of consumosPosteriores) {
+    if (consumo.epos_venta_id != null
+      || esAjusteDelConteoVigente({ product_id: consumo.product_id, cantidad: consumo.cantidad, creado_at: consumo.creado_at, fuente: consumo.fuente })
+      || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual)) continue;
+    const key = consumo.product_id.toString();
+    consumosAjustesPorProducto.set(key, (consumosAjustesPorProducto.get(key) ?? 0) + num0(consumo.cantidad));
+  }
+
   // Agrupar líneas por producto.
   const lineasPorProducto = new Map<string, typeof lineas>();
   for (const l of lineas) {
@@ -458,22 +571,8 @@ export async function inventarioActual(negocioId: bigint, options: { semanaId?: 
     const conteoFisicoBase = totalBaseProducto(
       ls.map((l) => ({ qty_captura: num0(l.qty_captura), factor: num0(l.factor) })),
     );
-    const entradasPosterioresBase = lotesTodos
-      .filter((l) => l.product_id === p.id
-        && l.estado !== 'cancelado'
-        && (l.purchase_id != null || l.fuente === 'ajuste_inventario')
-        && !esAjusteDelConteoVigente({ product_id: l.product_id, cantidad: l.cantidad_inicial, creado_at: l.creado_at, fuente: l.fuente })
-        // Una compra capturada tarde no debe volver a sumarse si su recepción
-        // ya estaba incluida en el conteo físico. La fecha de recepción es el
-        // evento físico; creado_at sólo es el momento de alta en el sistema.
-        && (fechaActual == null || l.recibido_at > fechaActual))
-      .reduce((total, l) => total + num0(l.cantidad_inicial), 0);
-    const consumosAjustesBase = consumosPosteriores
-      .filter((c) => c.epos_venta_id == null
-        && !esAjusteDelConteoVigente({ product_id: c.product_id, cantidad: c.cantidad, creado_at: c.creado_at, fuente: c.fuente })
-        && fechaDbPosteriorAlSnapshot(c.fecha, c.creado_at, fechaActual))
-      .filter((c) => c.product_id === p.id)
-      .reduce((total, c) => total + num0(c.cantidad), 0);
+    const entradasPosterioresBase = entradasPosterioresPorProducto.get(p.id.toString()) ?? 0;
+    const consumosAjustesBase = consumosAjustesPorProducto.get(p.id.toString()) ?? 0;
     const consumosPosterioresBase = (consumoVentaPorProducto.get(p.id.toString()) ?? 0)
       + (consumoFifoSinRecetaPorProducto.get(p.id.toString()) ?? 0)
       + consumosAjustesBase;

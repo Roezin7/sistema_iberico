@@ -178,6 +178,7 @@ model inventory_snapshot {
   ajustes_nuevo       inventory_adjustments[] @relation("AjusteSnapshotNuevo")
 
   @@index([negocio_id])
+  @@index([negocio_id, created_at])
   @@index([negocio_id, tipo, semana_id])
 }
 
@@ -223,6 +224,7 @@ model products {
 
   @@unique([negocio_id, name])
   @@index([negocio_id])
+  @@index([negocio_id, active, name])
 }
 
 model categorias_inventario {
@@ -366,6 +368,8 @@ model inventory_lots {
   consumptions      inventory_consumptions[]
 
   @@index([negocio_id, product_id, recibido_at, id])
+  @@index([negocio_id, recibido_at])
+  @@index([negocio_id, estado, recibido_at])
   @@index([purchase_id])
 }
 
@@ -392,6 +396,7 @@ model inventory_consumptions {
   // La unicidad debe conservar la trazabilidad por lote, no impedir el split.
   @@unique([epos_venta_id, product_id, lote_id])
   @@index([negocio_id, fecha])
+  @@index([negocio_id, fecha, epos_venta_id])
   @@index([lote_id])
   @@index([epos_venta_id])
 }
@@ -458,6 +463,7 @@ model inventory_adjustments {
   @@unique([negocio_id, solicitud_id])
   @@index([negocio_id, semana_id])
   @@index([negocio_id, product_id])
+  @@index([negocio_id, snapshot_nuevo_id, product_id])
 }
 
 model stores {
@@ -719,6 +725,7 @@ model epos_ventas {
 
   @@unique([negocio_id, clave])
   @@index([negocio_id, fecha])
+  @@index([negocio_id, fecha, costeo_estado])
   @@index([importacion_id])
   @@index([negocio_id, epos_product_id])
 }
@@ -750,6 +757,7 @@ model movimientos {
 
   @@index([negocio_id])
   @@index([semana_id])
+  @@index([negocio_id, semana_id, tipo])
   @@index([compra_id])
 }
 
@@ -768,6 +776,7 @@ model arqueos {
   usuarios     usuarios           @relation(fields: [usuario_id], references: [id])
 
   @@index([semana_id])
+  @@index([negocio_id, semana_id, id])
   @@index([negocio_id])
 }
 

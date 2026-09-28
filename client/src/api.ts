@@ -31,7 +31,7 @@ function puedeGuardarOffline(path: string, _body: unknown) {
   return path === '/tareas/resultados' || path === '/inventario/compras/rapidas';
 }
 
-export async function api<T = unknown>(
+async function requestApi<T = unknown>(
   path: string,
   opts: { method?: string; body?: unknown; auth?: boolean } = {},
 ): Promise<T> {
@@ -68,4 +68,25 @@ export async function api<T = unknown>(
     throw new ApiError(res.status, (data as { error?: string }).error ?? 'Error de red');
   }
   return data as T;
+}
+
+// React monta algunas vistas en paralelo (por ejemplo, la pantalla de
+// finanzas consulta el resumen y sus conciliaciones mientras el layout pide
+// referencias). Comparte sólo GETs que están en vuelo para no duplicar la
+// misma petición; se elimina al resolver y no introduce datos cacheados.
+const getEnVuelo = new Map<string, Promise<unknown>>();
+
+export function api<T = unknown>(
+  path: string,
+  opts: { method?: string; body?: unknown; auth?: boolean } = {},
+): Promise<T> {
+  const method = opts.method ?? 'GET';
+  if (method !== 'GET' && method !== 'HEAD') return requestApi<T>(path, opts);
+  const key = `${opts.auth === false ? 'public' : getToken() ?? 'anon'}:${method}:${path}`;
+  const existente = getEnVuelo.get(key);
+  if (existente) return existente as Promise<T>;
+  const pendiente = requestApi<T>(path, opts);
+  getEnVuelo.set(key, pendiente);
+  void pendiente.then(() => getEnVuelo.delete(key), () => getEnVuelo.delete(key));
+  return pendiente;
 }

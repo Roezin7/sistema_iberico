@@ -2,16 +2,16 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { AuthProvider, useAuth, type Rol } from './auth';
 import Login from './screens/Login';
 import Home from './screens/Home';
-import Inventario from './screens/inventario/Inventario';
-import Finanzas from './screens/finanzas/Finanzas';
-import Patrimonio from './screens/patrimonio/Patrimonio';
-import Configuracion from './screens/config/Configuracion';
-import Marketing from './screens/marketing/Marketing';
-import Compras from './screens/compras/Compras';
-import CostosMenu from './screens/costos-menu/CostosMenu';
-import Facturacion from './screens/facturacion/Facturacion';
-import Tareas from './screens/tareas/Tareas';
-import Decisiones from './screens/decisiones/Decisiones';
+const Inventario = lazy(() => import('./screens/inventario/Inventario'));
+const Finanzas = lazy(() => import('./screens/finanzas/Finanzas'));
+const Patrimonio = lazy(() => import('./screens/patrimonio/Patrimonio'));
+const Configuracion = lazy(() => import('./screens/config/Configuracion'));
+const Marketing = lazy(() => import('./screens/marketing/Marketing'));
+const Compras = lazy(() => import('./screens/compras/Compras'));
+const CostosMenu = lazy(() => import('./screens/costos-menu/CostosMenu'));
+const Facturacion = lazy(() => import('./screens/facturacion/Facturacion'));
+const Tareas = lazy(() => import('./screens/tareas/Tareas'));
+const Decisiones = lazy(() => import('./screens/decisiones/Decisiones'));
 import OfflineBanner from './OfflineBanner';
 import SilviaBubble from './silvia/SilviaBubble';
 import Shell from './Shell';
@@ -19,7 +19,7 @@ import SplashIntro from './brand/SplashIntro';
 import { ConfirmProvider } from './ui/ConfirmProvider';
 import { ToastProvider } from './ui/ToastProvider';
 import { Cargando } from './ui/Cargando';
-import { useState, type JSX } from 'react';
+import { lazy, Suspense, useState, type JSX } from 'react';
 
 function SoloAdmin({ children, rol }: { children: JSX.Element; rol: Rol }) {
   const { usuario } = useAuth();
@@ -43,6 +43,7 @@ function AppBody() {
   return (
     <Shell>
       <OfflineBanner />
+      <Suspense fallback={<div className="page"><Cargando etiqueta="Cargando vista…" /></div>}>
       <Routes>
         <Route path="/" element={<Home />} />
         {/* Acceso legado: la operación diaria y el cierre viven ahora en un solo flujo. */}
@@ -59,6 +60,7 @@ function AppBody() {
         <Route path="/facturacion" element={<SoloAdmin rol="admin"><Facturacion /></SoloAdmin>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
       {/* La captura operativa debe quedar libre de un asistente flotante. */}
       {!['/finanzas', '/inventario', '/compras', '/facturacion', '/tareas'].includes(location.pathname) && <SilviaBubble />}
     </Shell>

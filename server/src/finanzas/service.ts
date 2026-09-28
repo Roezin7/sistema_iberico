@@ -492,7 +492,19 @@ interface FilaConciliacionInventario {
  * consumo de recetas. La causa de una diferencia es una hipótesis operativa,
  * no una conclusión automática: el usuario debe revisar la evidencia.
  */
-export async function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint) {
+const conciliacionesEnVuelo = new Map<string, Promise<Awaited<ReturnType<typeof conciliacionInventarioSemanaCalculada>>>>();
+
+export function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint) {
+  const key = `${negocioId}:${semanaId}`;
+  const pendiente = conciliacionesEnVuelo.get(key);
+  if (pendiente) return pendiente;
+  const consulta = conciliacionInventarioSemanaCalculada(negocioId, semanaId);
+  conciliacionesEnVuelo.set(key, consulta);
+  void consulta.then(() => conciliacionesEnVuelo.delete(key), () => conciliacionesEnVuelo.delete(key));
+  return consulta;
+}
+
+async function conciliacionInventarioSemanaCalculada(negocioId: bigint, semanaId: bigint) {
   const semanal = await asegurarInventarioSemanal(negocioId, semanaId);
   const filasPersistidas = semanal.cierre_snapshot_id == null
     ? 0
@@ -1300,7 +1312,19 @@ export async function listarExcepcionesCosteoSemana(negocioId: bigint, semanaId:
   return [...grupos.values()].sort((a, b) => b.venta - a.venta || b.lineas - a.lineas || a.producto.localeCompare(b.producto));
 }
 
-export async function resumen(negocioId: bigint, semanaId: bigint) {
+const resumenesEnVuelo = new Map<string, Promise<Awaited<ReturnType<typeof resumenCalculado>>>>();
+
+export function resumen(negocioId: bigint, semanaId: bigint) {
+  const key = `${negocioId}:${semanaId}`;
+  const pendiente = resumenesEnVuelo.get(key);
+  if (pendiente) return pendiente;
+  const consulta = resumenCalculado(negocioId, semanaId);
+  resumenesEnVuelo.set(key, consulta);
+  void consulta.then(() => resumenesEnVuelo.delete(key), () => resumenesEnVuelo.delete(key));
+  return consulta;
+}
+
+async function resumenCalculado(negocioId: bigint, semanaId: bigint) {
   const semana = await getSemanaAbierta(negocioId, semanaId);
   const rangoEpos = rangoEposSemana(semana.fecha_inicio, semana.fecha_fin);
   const [ubicaciones, movs, inicialMap, socios, eposSemana, eposPendientes] = await Promise.all([
