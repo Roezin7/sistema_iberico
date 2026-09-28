@@ -1450,32 +1450,128 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
     }),
   ]);
   const ordenadas = [...semanas].reverse();
-  const filas = await Promise.all(ordenadas.map(async (semana) => {
-    const r = await resumen(negocioId, semana.id);
-    const ventas = r.ventas_operativas ?? r.ventas.total;
-    const costo = r.costo_ventas_fifo_activo;
+  // El tablero sólo necesita agregados semanales. Antes ejecutaba `resumen()`
+  // completo por cada semana; eso volvía a leer snapshots, recetas, lotes y
+  // consumos FIFO hasta ocho veces en paralelo. Aquí se trae cada fuente una
+  // sola vez y se agrupa en memoria. El cálculo contable de `resumen()` sigue
+  // siendo la autoridad para el detalle de una semana.
+  const ids = ordenadas.map((semana) => semana.id);
+  const rangos = ordenadas.map((semana) => ({ semana, rango: rangoEposSemana(semana.fecha_inicio, semana.fecha_fin) }));
+  const rangoInicio = rangos[0]?.rango.inicio;
+  const rangoFin = rangos[rangos.length - 1]?.rango.fin;
+  const fechaInicio = ordenadas[0]?.fecha_inicio;
+  const fechaFin = ordenadas[ordenadas.length - 1]?.fecha_fin;
+  const [movimientos, ventasEpos, consumosFifo, inventarios, conciliaciones] = await Promise.all([
+    prisma.movimientos.findMany({
+      where: { negocio_id: negocioId, semana_id: { in: ids } },
+      select: { semana_id: true, tipo: true, monto: true },
+    }),
+    rangoInicio && rangoFin ? prisma.epos_ventas.findMany({
+      where: { negocio_id: negocioId, fecha: { gte: rangoInicio, lt: rangoFin } },
+      select: { fecha: true, venta_neta: true, venta_bruta: true, costo_fifo: true, costeo_estado: true, producto_nombre: true },
+    }) : Promise.resolve([]),
+    fechaInicio && fechaFin ? prisma.inventory_consumptions.findMany({
+      where: { negocio_id: negocioId, fecha: { gte: fechaInicio, lte: fechaFin }, epos_venta_id: { not: null }, ...filtroConsumoFifoActivo() },
+      select: { fecha: true, costo_total: true },
+    }) : Promise.resolve([]),
+    prisma.inventario_semanal.findMany({
+      where: { negocio_id: negocioId, semana_id: { in: ids } },
+      select: { semana_id: true, apertura_valor: true, cierre_valor: true },
+    }),
+    prisma.inventory_fifo_reconciliations.findMany({
+      where: { negocio_id: negocioId, semana_id: { in: ids } },
+      select: { semana_id: true, tipo_incidencia: true, notas: true, products: { select: { name: true } } },
+    }),
+  ]);
+
+  type Agregado = {
+    ventasEpos: number;
+    tieneEpos: boolean;
+    costoEpos: number;
+    ventasPendientes: number;
+    excepciones: Set<string>;
+    compras: number;
+    gastos: number;
+    ventasTarjeta: number;
+    propinasTarjeta: number;
+    ventasMovimiento: number;
+    costoFifo: number;
+    filasConsumo: number;
+  };
+  const nuevoAgregado = (): Agregado => ({ ventasEpos: 0, tieneEpos: false, costoEpos: 0, ventasPendientes: 0, excepciones: new Set(), compras: 0, gastos: 0, ventasTarjeta: 0, propinasTarjeta: 0, ventasMovimiento: 0, costoFifo: 0, filasConsumo: 0 });
+  const agregados = new Map<string, Agregado>(ids.map((id) => [id.toString(), nuevoAgregado()]));
+  const semanaPorEpos = (fecha: Date) => rangos.find(({ rango }) => fecha >= rango.inicio && fecha < rango.fin)?.semana.id.toString();
+  const semanaPorFecha = (fecha: Date) => rangos.find(({ semana }) => fecha >= semana.fecha_inicio && fecha <= semana.fecha_fin)?.semana.id.toString();
+
+  for (const movimiento of movimientos) {
+    const agregado = agregados.get(movimiento.semana_id.toString());
+    if (!agregado) continue;
+    const monto = num0(movimiento.monto);
+    if (movimiento.tipo === 'compra_inventario') agregado.compras += monto;
+    if (movimiento.tipo === 'gasto' || movimiento.tipo === 'sueldo' || movimiento.tipo === 'propina_pagada') agregado.gastos += monto;
+    if (movimiento.tipo === 'venta_tarjeta') agregado.ventasTarjeta += monto;
+    if (movimiento.tipo === 'propina_tarjeta') agregado.propinasTarjeta += monto;
+    if (movimiento.tipo === 'venta_efectivo' || movimiento.tipo === 'venta_tarjeta') agregado.ventasMovimiento += monto;
+  }
+  for (const venta of ventasEpos) {
+    const semanaId = semanaPorEpos(venta.fecha);
+    const agregado = semanaId ? agregados.get(semanaId) : undefined;
+    if (!agregado) continue;
+    agregado.tieneEpos = true;
+    agregado.ventasEpos += num0(venta.venta_neta ?? venta.venta_bruta);
+    if (venta.costo_fifo != null) agregado.costoEpos += num0(venta.costo_fifo);
+    if (venta.costeo_estado === 'pendiente' || venta.costeo_estado === 'excepcion') {
+      agregado.ventasPendientes += 1;
+      agregado.excepciones.add(`${venta.producto_nombre}|${venta.costeo_estado}`);
+    }
+  }
+  for (const consumo of consumosFifo) {
+    const semanaId = semanaPorFecha(consumo.fecha);
+    const agregado = semanaId ? agregados.get(semanaId) : undefined;
+    if (!agregado) continue;
+    agregado.costoFifo += num0(consumo.costo_total);
+    agregado.filasConsumo += 1;
+  }
+  const inventarioPorSemana = new Map(inventarios.map((fila) => [fila.semana_id.toString(), fila]));
+  const incidenciasPorSemana = new Map<string, { producto: string; incidencia: string; tipo: string }[]>();
+  for (const fila of conciliaciones) {
+    if (fila.tipo_incidencia === 'sin_diferencia') continue;
+    const key = fila.semana_id.toString();
+    const lista = incidenciasPorSemana.get(key) ?? [];
+    lista.push({ producto: fila.products.name, incidencia: fila.notas ?? fila.tipo_incidencia, tipo: fila.tipo_incidencia });
+    incidenciasPorSemana.set(key, lista);
+  }
+  const filas = ordenadas.map((semana) => {
+    const key = semana.id.toString();
+    const agregado = agregados.get(key) ?? nuevoAgregado();
+    const inventario = inventarioPorSemana.get(key);
+    const ventas = agregado.tieneEpos ? redondear(agregado.ventasEpos) : redondear(agregado.ventasMovimiento);
+    const costo = agregado.filasConsumo > 0 ? redondear(agregado.costoFifo) : null;
     const foodCost = ventas > 0 && costo != null ? redondear((costo / ventas) * 100) : null;
-    const margen = ventas > 0 && r.resultado_operativo != null ? redondear((r.resultado_operativo / ventas) * 100) : null;
-    const inventarioInicial = r.inventario.apertura_valor;
-    const inventarioFinal = r.inventario.cierre_valor ?? r.inventario.valor_fisico_actual;
-    const inventarioPromedio = inventarioInicial != null && inventarioFinal != null
-      ? (inventarioInicial + inventarioFinal) / 2
-      : inventarioFinal;
+    const resultado = agregado.tieneEpos && costo != null
+      ? redondear(ventas - costo - comisionTerminal(agregado.ventasTarjeta, agregado.propinasTarjeta) - agregado.gastos)
+      : null;
+    const margen = ventas > 0 && resultado != null ? redondear((resultado / ventas) * 100) : null;
+    const inventarioInicial = inventario?.apertura_valor == null ? null : num0(inventario.apertura_valor);
+    // Un periodo abierto no tiene cierre físico confiable. No se fuerza aquí
+    // otra lectura pesada de inventario: el resumen actual ya muestra ese dato.
+    const inventarioFinal = inventario?.cierre_valor == null ? null : num0(inventario.cierre_valor);
+    const inventarioPromedio = inventarioInicial != null && inventarioFinal != null ? (inventarioInicial + inventarioFinal) / 2 : inventarioFinal;
     const rotacion = costo != null && inventarioPromedio != null && inventarioPromedio > 0 ? redondear(costo / inventarioPromedio) : null;
     const cobertura = costo != null && costo > 0 && inventarioFinal != null ? redondear(inventarioFinal / costo) : null;
-    const incidenciasInventario = r.conciliacion_inventario.filas
-      .filter((f) => f.incidencia_tipo !== 'sin_diferencia')
-      .map((f) => ({ producto: f.producto, incidencia: f.incidencia, tipo: f.incidencia_tipo }));
+    const incidenciasInventario = incidenciasPorSemana.get(key) ?? [];
+    const costoEpos = redondear(agregado.costoEpos);
+    const resultadoIndependiente = Boolean(agregado.ventasPendientes === 0 && agregado.filasConsumo > 0 && Math.abs(costoEpos - (costo ?? 0)) <= 0.01 && conciliaciones.some((fila) => fila.semana_id.toString() === key));
     return {
       semana_id: Number(semana.id), etiqueta: etiquetaCanonica(semana.fecha_inicio, semana.fecha_fin),
       fecha_inicio: iso(semana.fecha_inicio), fecha_fin: iso(semana.fecha_fin), estado: semana.estado,
-      ventas, costo_ventas: costo, food_cost_pct: foodCost, utilidad_operativa: r.resultado_operativo,
-      margen_operativo_pct: margen, compras_inventario: r.compras_inventario,
+      ventas, costo_ventas: costo, food_cost_pct: foodCost, utilidad_operativa: resultado,
+      margen_operativo_pct: margen, compras_inventario: redondear(agregado.compras),
       inventario_final: inventarioFinal, rotacion_semanal: rotacion, cobertura_semanas: cobertura,
-      excepciones_costeo: r.excepciones_costeo.length, ventas_epos_pendientes: r.ventas_epos_pendientes,
-      incidencias_inventario: incidenciasInventario, resultado_independiente: r.resultado_independiente,
+      excepciones_costeo: agregado.excepciones.size, ventas_epos_pendientes: agregado.ventasPendientes,
+      incidencias_inventario: incidenciasInventario, resultado_independiente: resultadoIndependiente,
     };
-  }));
+  });
 
   // Un rebase físico explícito establece un nuevo punto de partida. Las
   // diferencias anteriores permanecen en el historial de cada semana, pero

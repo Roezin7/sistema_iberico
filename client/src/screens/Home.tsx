@@ -61,18 +61,37 @@ export default function Home() {
     if (!usuario || usuario.rol !== 'admin') return;
     let activo = true;
     setEstado((prev) => ({ ...prev, cargando: true, error: '' }));
-    void Promise.all([finanzas.semanaActual(), finanzas.saludOperativa(), finanzas.tableroDecisiones(8), finanzas.patrimonioTendencia(), finanzas.estadoResultados(12)])
-      .then(async ([semana, salud, tablero, patrimonioData, resultados]) => {
-        if (!semana) return { semana: null, dias: [], conciliaciones: [], resumen: null, salud, tablero, patrimonio: patrimonioData.serie, resultados };
+    // El resumen actual es lo único necesario para el primer render útil. Las
+    // tendencias históricas son independientes y se cargan después para que
+    // una consulta pesada nunca bloquee los indicadores operativos.
+    const cargarTendencias = () => {
+      void Promise.all([
+        finanzas.tableroDecisiones(8),
+        finanzas.patrimonioTendencia(),
+        finanzas.estadoResultados(12),
+      ]).then(([tablero, patrimonioData, resultados]) => {
+        if (!activo) return;
+        setEstado((prev) => ({ ...prev, tablero, patrimonio: patrimonioData.serie, resultados }));
+      }).catch((error) => {
+        if (activo) setEstado((prev) => ({ ...prev, error: error instanceof Error ? error.message : 'No se pudieron cargar las tendencias' }));
+      });
+    };
+    void Promise.all([finanzas.semanaActual(), finanzas.saludOperativa()])
+      .then(async ([semana, salud]) => {
+        if (!activo) return;
+        if (!semana) {
+          setEstado((prev) => ({ ...prev, semana: null, dias: [], conciliaciones: [], resumen: null, salud, cargando: false, actualizado: new Date().toISOString() }));
+          cargarTendencias();
+          return;
+        }
         const [dias, resumen, conciliaciones] = await Promise.all([
           finanzas.dias(semana.id),
           finanzas.resumen(semana.id),
           epos.conciliaciones(semana.id).catch(() => []),
         ]);
-        return { semana, dias: dias.dias, conciliaciones, resumen, salud, tablero, patrimonio: patrimonioData.serie, resultados };
-      })
-      .then((data) => {
-        if (activo) setEstado({ ...data, cargando: false, error: '', actualizado: new Date().toISOString() });
+        if (!activo) return;
+        setEstado((prev) => ({ ...prev, semana, dias: dias.dias, conciliaciones, resumen, salud, cargando: false, error: '', actualizado: new Date().toISOString() }));
+        cargarTendencias();
       })
       .catch((error) => {
         if (activo) setEstado((prev) => ({ ...prev, cargando: false, error: error instanceof Error ? error.message : 'No se pudo cargar el estado de Ibérico' }));
