@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
-import { inventarioActual, listaCompras, crearConteo, listarSnapshots } from './service.js';
+import { inventarioActual, listaCompras, crearConteo, listarSnapshots, cierreInventarioPreview } from './service.js';
 import { borradorCompraTicket, borradorConteo, draftDisponible } from './draft.js';
 import { listarLotes, registrarCompra } from './compras.js';
 import { prepararAperturaFifo } from './apertura-fifo.js';
@@ -31,6 +31,12 @@ inventarioRouter.get(
 inventarioRouter.get('/snapshots', asyncHandler(async (req, res) => {
   const semanaId = req.query.semana_id ? BigInt(z.coerce.number().int().positive().parse(req.query.semana_id)) : undefined;
   res.json(await listarSnapshots(req.auth!.negocioId, semanaId));
+}));
+
+/** GET /inventario/cierre-preview — expectativa independiente para confirmar el cierre. */
+inventarioRouter.get('/cierre-preview', soloAdmin, asyncHandler(async (req, res) => {
+  const semanaId = BigInt(z.coerce.number().int().positive().parse(req.query.semana_id));
+  res.json(await cierreInventarioPreview(req.auth!.negocioId, semanaId));
 }));
 
 /** GET /inventario/shopping-list — faltantes agrupados por tienda. */

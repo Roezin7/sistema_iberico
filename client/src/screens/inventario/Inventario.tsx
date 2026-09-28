@@ -107,6 +107,15 @@ interface SnapshotHistorial {
   id: number; tipo: 'apertura' | 'cierre' | 'ajuste' | 'conteo_operativo' | string;
   semana_id: number | null; motivo: string | null; nota: string | null; creado_at: string; lineas: number;
 }
+interface CierrePreviewLinea {
+  product_id: number; producto: string; unidad_base: string | null; unidad_operativa: string;
+  apertura_base: number; compras_base: number; ajustes_base: number; consumo_teorico_base: number;
+  esperado_base: number; esperado_operativo: number; costo_unitario_base: number | null; valor_esperado: number | null;
+}
+interface CierrePreview {
+  semana_id: number; apertura_snapshot_id: number; cierre_snapshot_id: number | null;
+  formula: string; lineas: CierrePreviewLinea[]; productos: number; consumo_teorico_base: number; valor_esperado: number;
+}
 
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
@@ -221,6 +230,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [semanas, setSemanas] = useState<SemanaRef[]>([]);
   const [semanaId, setSemanaId] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
+  const [cierrePreview, setCierrePreview] = useState<CierrePreview | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -262,6 +272,19 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       setValores(previos);
     });
   }, []);
+
+  useEffect(() => {
+    setCierrePreview(null);
+    if (!cierreGuiado || semanaId == null) return;
+    api<CierrePreview>(`/inventario/cierre-preview?semana_id=${semanaId}`)
+      .then(setCierrePreview)
+      .catch((e) => setMsg(e instanceof Error ? e.message : 'No se pudo calcular el saldo esperado'));
+  }, [cierreGuiado, semanaId]);
+
+  const cierrePreviewPorProducto = useMemo(
+    () => new Map((cierrePreview?.lineas ?? []).map((linea) => [linea.product_id, linea])),
+    [cierrePreview],
+  );
 
   const filtrados = useMemo(
     () => productos.filter((p) => p.nombre.toLowerCase().includes(filtro.toLowerCase())),
@@ -321,7 +344,11 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
     <>
       <section className="inventory-capture-context">
         <div className="section-heading"><div><strong>¿Qué estás contando?</strong><p className="muted">Elige el tipo de conteo.</p></div></div>
-        {cierreGuiado ? <div className="info-box info-box--compact"><strong>Cierre físico de {semanaId ? `la semana ${semanaId}` : 'la semana actual'}</strong><span>Captura Local y Bodega. Al guardar volverás automáticamente al cierre de la semana.</span></div> : <div className="pill-row">
+        {cierreGuiado ? <div className="info-box info-box--compact">
+          <strong>Confirmación de cierre de {semanaId ? `la semana ${semanaId}` : 'la semana actual'}</strong>
+          <span>El sistema calcula apertura + compras + ajustes − consumo teórico. Revisa el físico y cambia sólo las cantidades que no coincidan; esas diferencias quedarán como alerta de merma o receta.</span>
+          {cierrePreview && <span><b>{cierrePreview.productos} productos con movimiento</b> · consumo teórico {formatoCantidad(cierrePreview.consumo_teorico_base)} base · valor esperado {mxn(cierrePreview.valor_esperado)}</span>}
+        </div> : <div className="pill-row">
           {([
             ['apertura', 'Apertura de semana'],
             ['cierre', 'Cierre de semana'],
@@ -353,7 +380,9 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       </div>
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
         <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>
-        Se muestra el último conteo por zona. Cuando sólo hay una zona, se prellena con el saldo físico después de entradas y consumos; confirma la cantidad real antes de guardar.
+        {cierreGuiado
+          ? 'Los campos parten del último saldo físico disponible. Confirma que coincidan con el esperado y corrige sólo las diferencias reales.'
+          : 'Se muestra el último conteo por zona. Cuando sólo hay una zona, se prellena con el saldo físico después de entradas y consumos; confirma la cantidad real antes de guardar.'}
       </p>
 
       {zonaActiva != null && grupos.map((g) => (
@@ -361,6 +390,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           <ul className="conteo-list">
             {g.items.map((p) => {
               const u = unidadDe(p, zonaActiva);
+              const esperado = cierreGuiado ? cierrePreviewPorProducto.get(p.id) : undefined;
               const key = `${p.id}:${zonaActiva}`;
               const esBool = u.unidad_captura === 'boolean';
               const unidadOperativa = unidadOperativaProducto(p, u);
@@ -369,6 +399,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                   <div className="conteo-info">
                     <strong>{p.nombre}</strong>
                     <small className="muted">Se captura en {pluralUnidad(unidadOperativa, 2)} · {p.store}</small>
+                    {esperado && <small className="muted">Esperado al cierre: {formatoCantidad(esperado.esperado_operativo)} {pluralUnidad(esperado.unidad_operativa, esperado.esperado_operativo)}</small>}
                   </div>
                   {esBool ? (
                     <div className="bool-toggle">
@@ -403,7 +434,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           Limpiar
         </button>
         <button className="btn-primary" onClick={guardar} disabled={guardando}>
-          {guardando ? 'Guardando…' : 'Guardar conteo'}
+          {guardando ? 'Guardando…' : cierreGuiado ? 'Confirmar inventario de cierre' : 'Guardar conteo'}
         </button>
       </div>
     </>

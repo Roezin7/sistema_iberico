@@ -230,7 +230,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
 
       {abierta && tab === 'cuadre' && (
         <>
-          {!puedeCerrar && <div className="info-box cierre-bloqueado" role="status"><strong>El cierre todavía está bloqueado</strong><span>{!inventarioListo ? 'Captura el inventario físico de cierre. ' : ''}{!costeoListo ? 'Resuelve las excepciones o ventas Epos pendientes. ' : ''}El arqueo de caja se recomienda antes de confirmar.</span></div>}
+          {!puedeCerrar && <div className="info-box cierre-bloqueado" role="status"><strong>El cierre todavía está bloqueado</strong><span>{!inventarioListo ? 'Confirma el inventario físico de cierre. ' : ''}{!costeoListo ? 'Resuelve las excepciones o ventas Epos pendientes. ' : ''}El arqueo de caja se recomienda antes de confirmar.</span></div>}
           <button className="btn-primary" style={{ marginTop: '1.5rem' }} disabled={!puedeCerrar} onClick={async () => {
           const ok = await confirmar({
             message: '¿Cerrar la semana? Se generará la comisión de terminal y se congelarán los saldos.',
@@ -721,7 +721,7 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>El valor del corte FIFO se reconstruye con los lotes que siguen abiertos; los lotes pasan a la siguiente semana sin reiniciarse.</p>}
         <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>
           {r.inventario.estado === 'pendiente_cierre'
-            ? 'Pendiente: captura el inventario físico de cierre para abrir la siguiente semana con ese mismo saldo.'
+            ? 'Pendiente: confirma el inventario físico contra apertura + compras − consumo teórico para abrir la siguiente semana con ese saldo.'
             : 'El inventario de cierre queda congelado y será la apertura de la siguiente semana.'}
         </p>
         <div className={`fifo-independence ${r.inventario.control_fifo.reporte_independiente ? 'fifo-independence--ok' : 'fifo-independence--warning'}`}>
@@ -998,7 +998,7 @@ function CuadreView({ ref_, semana, filas, resumen, onChange }: { ref_: Referenc
         <div className="closure-flow__steps">
           <Link to={`/finanzas?semana=${semana.id}&tab=dia`} className={`closure-flow__step ${ventasListas ? 'is-done' : ''}`}><strong>1</strong><span><b>Ventas y pagos</b><small>{ventasListas ? 'Revisados' : 'Revisar Epos y corte diario'}</small></span></Link>
           <Link to={`/compras?semana=${semana.id}&fecha=${semana.fecha_inicio}&return=finanzas`} className="closure-flow__step"><strong>2</strong><span><b>Entradas y egresos</b><small>Tickets, gastos y sueldos</small></span></Link>
-          <Link to={`/inventario?tipo=cierre&semana=${semana.id}&return=finanzas`} className={`closure-flow__step ${inventarioListo ? 'is-done' : ''}`}><strong>3</strong><span><b>Conteo físico</b><small>{inventarioListo ? 'Cierre capturado' : 'Capturar inventario de cierre'}</small></span></Link>
+          <Link to={`/inventario?tipo=cierre&semana=${semana.id}&return=finanzas`} className={`closure-flow__step ${inventarioListo ? 'is-done' : ''}`}><strong>3</strong><span><b>Confirmar inventario</b><small>{inventarioListo ? 'Cierre confirmado' : 'Revisar saldo esperado y confirmar'}</small></span></Link>
           <div className={`closure-flow__step ${cajaLista ? 'is-done' : ''}`}><strong>4</strong><span><b>Arqueo y confirmar</b><small>{cajaLista ? 'Caja contada' : 'Registrar caja real abajo'}</small></span></div>
         </div>
       </section>

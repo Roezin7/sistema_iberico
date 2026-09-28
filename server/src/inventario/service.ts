@@ -651,6 +651,131 @@ export async function listarSnapshots(
   }));
 }
 
+export interface CierreInventarioPreviewLinea {
+  product_id: number;
+  producto: string;
+  unidad_base: string | null;
+  unidad_operativa: string;
+  apertura_base: number;
+  compras_base: number;
+  ajustes_base: number;
+  consumo_teorico_base: number;
+  esperado_base: number;
+  esperado_operativo: number;
+  costo_unitario_base: number | null;
+  valor_esperado: number | null;
+}
+
+/**
+ * Saldo que el operador debe confirmar al cerrar una semana.
+ *
+ * Este cálculo no toca snapshots ni FIFO: sólo expone la expectativa
+ * independiente que se contrasta contra el conteo físico del cierre.
+ */
+export async function cierreInventarioPreview(negocioId: bigint, semanaId: bigint) {
+  const semana = await prisma.semanas.findFirst({
+    where: { id: semanaId, negocio_id: negocioId },
+    select: { id: true, fecha_inicio: true, fecha_fin: true },
+  });
+  if (!semana) throw new HttpError(404, 'Semana no encontrada');
+  const ciclo = await prisma.inventario_semanal.findUnique({
+    where: { semana_id: semanaId },
+    select: { apertura_snapshot_id: true, cierre_snapshot_id: true },
+  });
+  if (!ciclo?.apertura_snapshot_id) {
+    throw new HttpError(409, 'La semana todavía no tiene inventario de apertura');
+  }
+
+  const limite = new Date(`${semana.fecha_fin.toISOString().slice(0, 10)}T23:59:59.999Z`);
+  const [productos, aperturaLineas, entradas, consumos, ajustesConsumo] = await Promise.all([
+    prisma.products.findMany({
+      where: { negocio_id: negocioId, active: true },
+      select: { id: true, name: true, unidad_base: true, unidad_compra: true, contenido_compra: true, unit_cost: true },
+      orderBy: { name: 'asc' },
+    }),
+    prisma.inventory_lines.findMany({
+      where: { snapshot_id: ciclo.apertura_snapshot_id },
+      select: { product_id: true, qty_captura: true, factor: true },
+    }),
+    prisma.inventory_lots.findMany({
+      where: {
+        negocio_id: negocioId,
+        recibido_at: { gte: semana.fecha_inicio, lte: limite },
+        OR: [{ purchase_id: { not: null } }, { fuente: 'ajuste_inventario' }],
+      },
+      select: { product_id: true, cantidad_inicial: true, fuente: true },
+    }),
+    prisma.inventory_consumptions.findMany({
+      where: {
+        negocio_id: negocioId,
+        fecha: { gte: semana.fecha_inicio, lte: limite },
+        ...filtroConsumoFifoActivo(),
+      },
+      select: { product_id: true, cantidad: true },
+    }),
+    prisma.inventory_consumptions.findMany({
+      where: {
+        negocio_id: negocioId,
+        fecha: { gte: semana.fecha_inicio, lte: limite },
+        fuente: 'ajuste_inventario',
+      },
+      select: { product_id: true, cantidad: true },
+    }),
+  ]);
+
+  const redondearCantidad = (n: number) => Math.round((n + Number.EPSILON) * 10_000) / 10_000;
+  const sumar = (mapa: Map<string, number>, productId: bigint, cantidad: number) => {
+    const key = productId.toString();
+    mapa.set(key, redondearCantidad((mapa.get(key) ?? 0) + cantidad));
+  };
+  const apertura = new Map<string, number>();
+  for (const linea of aperturaLineas) sumar(apertura, linea.product_id, num0(linea.qty_captura) * num0(linea.factor));
+  const compras = new Map<string, number>();
+  const ajustes = new Map<string, number>();
+  for (const entrada of entradas) {
+    if (entrada.fuente === 'ajuste_inventario') sumar(ajustes, entrada.product_id, num0(entrada.cantidad_inicial));
+    else sumar(compras, entrada.product_id, num0(entrada.cantidad_inicial));
+  }
+  for (const ajuste of ajustesConsumo) sumar(ajustes, ajuste.product_id, -num0(ajuste.cantidad));
+  const consumo = new Map<string, number>();
+  for (const fila of consumos) sumar(consumo, fila.product_id, num0(fila.cantidad));
+
+  const lineas = productos.map((producto) => {
+    const key = producto.id.toString();
+    const aperturaBase = redondearCantidad(apertura.get(key) ?? 0);
+    const comprasBase = redondearCantidad(compras.get(key) ?? 0);
+    const ajustesBase = redondearCantidad(ajustes.get(key) ?? 0);
+    const consumoBase = redondearCantidad(consumo.get(key) ?? 0);
+    const esperadoBase = redondearCantidad(Math.max(0, aperturaBase + comprasBase + ajustesBase - consumoBase));
+    const costo = costoUnitarioBase(producto);
+    return {
+      product_id: Number(producto.id),
+      producto: producto.name,
+      unidad_base: producto.unidad_base,
+      unidad_operativa: unidadOperativaInventario(producto.unidad_base, producto.unidad_compra),
+      apertura_base: aperturaBase,
+      compras_base: comprasBase,
+      ajustes_base: ajustesBase,
+      consumo_teorico_base: consumoBase,
+      esperado_base: esperadoBase,
+      esperado_operativo: cantidadOperativaInventario({ totalBase: esperadoBase, unidadBase: producto.unidad_base, contenidoCompra: producto.contenido_compra == null ? null : num0(producto.contenido_compra) }),
+      costo_unitario_base: costo,
+      valor_esperado: costo == null ? null : redondearCantidad(esperadoBase * costo),
+    } satisfies CierreInventarioPreviewLinea;
+  }).filter((linea) => linea.apertura_base > 0 || linea.compras_base > 0 || linea.ajustes_base !== 0 || linea.consumo_teorico_base > 0);
+
+  return {
+    semana_id: Number(semanaId),
+    apertura_snapshot_id: Number(ciclo.apertura_snapshot_id),
+    cierre_snapshot_id: ciclo.cierre_snapshot_id == null ? null : Number(ciclo.cierre_snapshot_id),
+    formula: 'apertura + compras + ajustes − consumo teórico',
+    lineas,
+    productos: lineas.length,
+    consumo_teorico_base: redondearCantidad(lineas.reduce((suma, linea) => suma + linea.consumo_teorico_base, 0)),
+    valor_esperado: redondearCantidad(lineas.reduce((suma, linea) => suma + (linea.valor_esperado ?? 0), 0)),
+  };
+}
+
 /** Lista de compras: faltantes contra el inventario físico, agrupados por tienda.
  * FIFO sólo se consulta como auditoría y nunca cambia la sugerencia de compra.
  */
