@@ -165,6 +165,25 @@
 .operation-history summary::before { content: '＋'; color: var(--ink-3); font-weight: 800; }
 .operation-history[open] summary::before { content: '−'; }
 .operation-history > .conteo-list { border-top: 1px solid var(--border); margin: 0 !important; padding: .25rem .75rem .75rem; }
+.audit-days { display: grid; gap: .65rem; padding: .75rem !important; background: var(--surface-2); }
+.audit-day-shell { list-style: none; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface); overflow: hidden; }
+.audit-day summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 1rem; cursor: pointer; list-style: none; }
+.audit-day summary::-webkit-details-marker { display: none; }
+.audit-day summary::before { content: '＋'; color: var(--ink-3); font-weight: 800; }
+.audit-day[open] summary::before { content: '−'; }
+.audit-day__title { display: grid; gap: .15rem; min-width: 12rem; text-transform: capitalize; }
+.audit-day__title small { color: var(--ink-3); font-size: .72rem; font-weight: 500; text-transform: none; }
+.audit-day__totals { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem .75rem; font-size: .72rem; font-variant-numeric: tabular-nums; }
+.audit-day__income { color: var(--success); }
+.audit-day__expense { color: var(--danger); }
+.audit-day__transfer { color: var(--ink-2); }
+.audit-day__list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.audit-day__list .operation-row { border-bottom: 1px solid var(--border); }
+.audit-day__list .operation-row:last-child { border-bottom: 0; }
+@media (max-width: 700px) {
+  .audit-day summary { align-items: flex-start; flex-direction: column; gap: .45rem; }
+  .audit-day__totals { justify-content: flex-start; padding-left: 1.25rem; }
+}
 .operation-capture { margin: .8rem 0 1rem; border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border)); border-radius: var(--r-card); background: var(--surface); }
 .operation-capture summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: .65rem; padding: .8rem 1rem; cursor: pointer; list-style: none; }
 .operation-capture summary::-webkit-details-marker { display: none; }

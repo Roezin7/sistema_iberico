@@ -1054,11 +1054,27 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
   const [errorEdit, setErrorEdit] = useState('');
   const [compraEditando, setCompraEditando] = useState<number | null>(null);
 
+  const movimientosPorDia = [...movs.reduce((grupos, movimiento) => {
+    const grupo = grupos.get(movimiento.fecha) ?? [];
+    grupo.push(movimiento);
+    grupos.set(movimiento.fecha, grupo);
+    return grupos;
+  }, new Map<string, Movimiento[]>())].sort(([a], [b]) => b.localeCompare(a));
+  const fechaVisible = (fecha: string) => new Date(`${fecha}T12:00:00Z`).toLocaleDateString('es-MX', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
+  const tipoMovimiento = (tipo: TipoMov) => {
+    if (tipo === 'venta_efectivo' || tipo === 'venta_tarjeta' || tipo === 'deposito') return 'ingreso';
+    if (tipo === 'gasto' || tipo === 'sueldo' || tipo === 'compra_inventario' || tipo === 'propina_pagada' || tipo === 'comision_terminal' || tipo === 'retiro_socio') return 'egreso';
+    return 'transferencia';
+  };
+
   function exportar() {
     descargarCSV(
       `movimientos-${semana.etiqueta}`,
-      ['Tipo', 'Monto', 'Origen', 'Destino', 'Categoría', 'Facturado', 'Descripción'],
+      ['Fecha', 'Tipo', 'Monto', 'Origen', 'Destino', 'Categoría', 'Facturado', 'Descripción'],
       movs.map((m) => [
+        m.fecha,
         TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo,
         m.monto,
         nombreUbic(m.ubicacion_origen_id),
@@ -1088,9 +1104,20 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
         {movs.length > 0 && (
           <button className="btn-secondary" style={{ margin: '0.75rem 0' }} onClick={exportar}>Exportar registro</button>
         )}
-        <ul className="conteo-list" style={{ marginTop: '0.5rem' }}>
+        <ul className="conteo-list audit-days" style={{ marginTop: '0.5rem' }}>
           {movs.length === 0 && <li className="muted" style={{ padding: '1rem' }}>Sin operaciones registradas aún.</li>}
-          {movs.map((m) => (
+          {movimientosPorDia.map(([fecha, movimientos], diaIndex) => {
+            const ingresos = movimientos.filter((m) => tipoMovimiento(m.tipo) === 'ingreso').reduce((total, m) => total + m.monto, 0);
+            const egresos = movimientos.filter((m) => tipoMovimiento(m.tipo) === 'egreso').reduce((total, m) => total + m.monto, 0);
+            const transferencias = movimientos.filter((m) => tipoMovimiento(m.tipo) === 'transferencia').reduce((total, m) => total + m.monto, 0);
+            return <li key={fecha} className="audit-day-shell">
+              <details className="audit-day" open={diaIndex === 0}>
+                <summary>
+                  <span className="audit-day__title"><strong>{fechaVisible(fecha)}</strong><small>{movimientos.length} movimiento{movimientos.length === 1 ? '' : 's'}</small></span>
+                  <span className="audit-day__totals"><b className="audit-day__income">Ingresos {mxn(ingresos)}</b><b className="audit-day__expense">Egresos {mxn(egresos)}</b>{transferencias > 0 && <b className="audit-day__transfer">Transferencias {mxn(transferencias)}</b>}</span>
+                </summary>
+                <ul className="audit-day__list">
+          {movimientos.map((m) => (
           <li key={m.id} className="conteo-row operation-row">
             {editando === m.id ? <div className="conteo-info operation-row__editor" style={{ display: 'grid', gap: '0.4rem' }}>
               <strong>Editar {TIPOS.find((t) => t.tipo === m.tipo)?.label ?? m.tipo}</strong>
@@ -1123,6 +1150,10 @@ function MovimientosView({ ref_, semana, movs, onChange }: { ref_: Referencias; 
             </div>
           </li>
           ))}
+                </ul>
+              </details>
+            </li>;
+          })}
         </ul>
       </details>
       {compraEditando != null && <CompraEditorV2 compraId={compraEditando} ref_={ref_} onClose={() => setCompraEditando(null)} onSaved={() => { setCompraEditando(null); onChange(); }} />}
