@@ -742,7 +742,9 @@ function ListaDeCompras() {
                     <strong>{it.nombre}</strong>
                     <small>{g.store}</small>
                   </div>
-                  <div className="stock-row__quantity"><strong>{formatoCantidad(actual)}</strong><span>{pluralUnidad(unidad, actual)}</span></div>
+                  <div className="stock-row__quantity" aria-label={`Faltan ${formatoCantidad(faltante)} ${pluralUnidad(unidad, faltante)}`}>
+                    <strong>{formatoCantidad(faltante)}</strong><span>{pluralUnidad(unidad, faltante)} faltantes</span>
+                  </div>
                   <div className="stock-row__health">
                     <span className={`stock-state stock-state--${nivel}`}>{nivel === 'empty' ? 'Sin existencia' : 'Bajo mínimo'}</span>
                     <div className="stock-row__bar" aria-hidden="true"><span style={{ width: `${avance}%` }} /></div>
@@ -750,7 +752,7 @@ function ListaDeCompras() {
                   </div>
                   <div className="stock-row__value"><strong>{it.costo_configurado ? mxn(it.valor_faltante) : '—'}</strong><small>compra sugerida</small></div>
                   <div className="stock-row__audit">
-                    <span>Faltan {formatoCantidad(faltante)} {pluralUnidad(unidad, faltante)}</span>
+                    <span>Existencia actual: {formatoCantidad(actual)} {pluralUnidad(unidad, actual)}</span>
                     {it.costo_configurado && it.unit_cost != null && <span>{it.fuente_costo === 'ultimo_fifo' ? 'Último FIFO' : 'Catálogo'}: {mxn(it.unit_cost)} por {pluralUnidad(unidad, 2).replace(/s$/, '')}{it.ultimo_costo_fifo_fecha ? ` · ${it.ultimo_costo_fifo_fecha}` : ''}</span>}
                   </div>
                 </li>
