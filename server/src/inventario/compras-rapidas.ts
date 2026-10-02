@@ -291,7 +291,7 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
       else await tx.movimientos.create({ data: { negocio_id: negocioId, semana_id: semanaNueva.id, fecha, tipo: 'gasto', monto: gastoTotal, ubicacion_origen_id: origen.id, categoria_id: categoria?.id ?? null, facturado: origen.tipo === 'banco', descripcion: `${descripcionBase} · gasto operativo`, usuario_id: usuarioId, compra_id: purchaseId } });
     } else if (gastoMov) await tx.movimientos.delete({ where: { id: gastoMov.id } });
     return { purchase_id: Number(purchaseId), actualizado: true, inventario: invTotal, gasto: gastoTotal, total };
-  });
+  }, { timeout: 30_000, maxWait: 15_000 });
   const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
   return { ...resultado, costeo_en_vivo: costeoEnVivo };
 }
@@ -333,6 +333,9 @@ export async function obtenerFotoCompra(negocioId: bigint, purchaseId: bigint) {
 }
 
 export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigint, purchaseId: bigint) {
+  // La confirmación también sincroniza el archivo de facturas bancarias. En
+  // negocios con histórico grande esa sincronización puede superar el timeout
+  // interactivo predeterminado de Prisma aunque la operación sea válida.
   const resultado = await prisma.$transaction(async (tx) => {
     const claim = await tx.purchases.updateMany({
       where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } },
@@ -457,7 +460,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     await tx.purchases.update({ where: { id: compra.id }, data: { total, estado: 'confirmada', notas: notasCompra, confirmada_por: usuarioId, confirmada_at: new Date() } });
     if (origen.tipo === 'banco') await asegurarFacturasBanco(negocioId, tx);
     return { purchase_id: Number(compra.id), estado: 'confirmada', inventario: inventarioTotal, gasto: gastoTotal, movimientos: (inventarioTotal > 0 ? 1 : 0) + (gastoTotal > 0 ? 1 : 0), discrepancias: validacion.advertencias };
-  });
+  }, { timeout: 30_000, maxWait: 15_000 });
   const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
   return { ...resultado, costeo_en_vivo: costeoEnVivo };
 }
