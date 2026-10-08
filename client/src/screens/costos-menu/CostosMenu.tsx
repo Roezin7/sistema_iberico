@@ -80,6 +80,7 @@ export default function CostosMenu() {
   const [data, setData] = useState<RespuestaCostos | null>(null);
   const [resultado, setResultado] = useState<RespuestaResultado | null>(null);
   const [section, setSection] = useState('Todos');
+  const [query, setQuery] = useState('');
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState('');
 
@@ -103,8 +104,9 @@ export default function CostosMenu() {
 
   const filtered = useMemo(() => {
     if (!data) return [];
-    return section === 'Todos' ? data.productos : data.productos.filter((p) => p.seccion === section);
-  }, [data, section]);
+    const normalized = query.trim().toLocaleLowerCase('es-MX');
+    return data.productos.filter((p) => (section === 'Todos' || p.seccion === section) && (!normalized || p.nombre.toLocaleLowerCase('es-MX').includes(normalized)));
+  }, [data, section, query]);
 
   const grouped = useMemo(() => filtered.reduce<Record<string, ProductoCosto[]>>((groups, product) => {
     (groups[product.seccion] ??= []).push(product);
@@ -124,6 +126,7 @@ export default function CostosMenu() {
           <p className="muted">Costo FIFO por receta.</p>
         </div>
         <div className="menu-costos-actions">
+          <label className="menu-costos-search"><Icono name="search" size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar producto…" aria-label="Buscar producto del menú" /></label>
           <button className="btn-secondary" onClick={() => window.print()}><Icono name="file" size={17} /> Imprimir / PDF</button>
           <button className="btn-ghost" onClick={() => void cargar()} disabled={cargando}><Icono name="refresh" size={17} /> Actualizar</button>
         </div>
