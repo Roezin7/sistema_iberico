@@ -95,8 +95,9 @@ export default function Compras() {
   const fechaInicial = parametros.get('fecha') || hoy;
   const semanaInicial = Number(parametros.get('semana'));
   const volverAFinanzas = parametros.get('return') === 'finanzas';
-  const [tab, setTab] = useState<'tickets' | 'lotes' | 'epos' | 'pendientes'>('tickets');
-  const [mostrarAuditoria, setMostrarAuditoria] = useState(false);
+  const tabInicial = parametros.get('tab');
+  const [tab, setTab] = useState<'tickets' | 'lotes' | 'epos' | 'pendientes'>(tabInicial === 'epos' || tabInicial === 'lotes' || tabInicial === 'pendientes' ? tabInicial : 'tickets');
+  const [mostrarAuditoria, setMostrarAuditoria] = useState(tabInicial === 'epos' || tabInicial === 'lotes');
   const [productos, setProductos] = useState<Producto[]>([]);
   const [lotes, setLotes] = useState<Lote[]>([]);
   const [mensaje, setMensaje] = useState('');

@@ -70,6 +70,12 @@ const PATHS: Record<string, JSX.Element> = {
       <path d="M21 3v6h-6" />
     </>
   ),
+  search: (
+    <>
+      <circle cx="10.8" cy="10.8" r="6.8" />
+      <path d="m16 16 5 5" />
+    </>
+  ),
   x: <path d="M6 6l12 12M18 6 6 18" />,
   send: <path d="M22 3 11 14M22 3l-7 19-4-8-8-4 19-7Z" />,
   pin: (

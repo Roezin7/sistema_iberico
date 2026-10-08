@@ -3,6 +3,7 @@ import { AuthProvider, useAuth, type Rol } from './auth';
 import Login from './screens/Login';
 import Home from './screens/Home';
 const Inventario = lazy(() => import('./screens/inventario/Inventario'));
+const Operacion = lazy(() => import('./screens/Operacion'));
 const Finanzas = lazy(() => import('./screens/finanzas/Finanzas'));
 const Patrimonio = lazy(() => import('./screens/patrimonio/Patrimonio'));
 const Configuracion = lazy(() => import('./screens/config/Configuracion'));
@@ -46,10 +47,10 @@ function AppBody() {
       <Suspense fallback={<div className="page"><Cargando etiqueta="Cargando vista…" /></div>}>
       <Routes>
         <Route path="/" element={<Home />} />
-        {/* Acceso legado: la operación diaria y el cierre viven ahora en un solo flujo. */}
-        <Route path="/operacion" element={<Navigate to="/finanzas" replace />} />
+        <Route path="/operacion" element={<Operacion />} />
         <Route path="/inventario" element={<Inventario />} />
         <Route path="/finanzas" element={<SoloAdmin rol="admin"><Finanzas /></SoloAdmin>} />
+        <Route path="/reportes" element={<Navigate to="/finanzas" replace />} />
         <Route path="/patrimonio" element={<SoloAdmin rol="admin"><Patrimonio /></SoloAdmin>} />
         <Route path="/configuracion" element={<SoloAdmin rol="admin"><Configuracion /></SoloAdmin>} />
         <Route path="/marketing" element={<SoloAdmin rol="admin"><Marketing /></SoloAdmin>} />
