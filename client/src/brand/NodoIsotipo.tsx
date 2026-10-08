@@ -2,11 +2,12 @@
 // un cuadrado con una diagonal. Sirve estático (nav/login) y animado (intro).
 
 export const NODO_COLORS = {
-  verde: '#21A645',
-  rojo: '#FF3B21',
-  ambar: '#FBA61A',
-  azul: '#1F8EF1',
-  edge: '#1b2735',
+  // Ibérico Brandbook: Pantone 5743 C / Pantone 5835 C.
+  verde: '#A09857',
+  rojo: '#C1B878',
+  ambar: '#6E753F',
+  azul: '#D8D2A1',
+  edge: '#3B4020',
 };
 
 const N = {

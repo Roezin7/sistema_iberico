@@ -2812,28 +2812,37 @@ body {
    21. NODO 2.0 — interfaz integrada y minimalista
    ========================================================================== */
 :root {
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-2: #f1f3f6;
-  --ink: #111827;
-  --ink-2: #667085;
-  --ink-3: #98a2b3;
-  --border: #e4e7ec;
-  --border-strong: #cfd5dd;
-  --brand: #4f46e5;
-  --brand-tint: #eef2ff;
-  --accent: #0f766e;
-  --primary: #111827;
-  --primary-hover: #273449;
-  --on-primary: #ffffff;
-  --success: #087443;
-  --success-bg: #e7f6ee;
-  --warning: #a15c00;
-  --warning-bg: #fff4dc;
-  --danger: #c4322c;
-  --danger-bg: #fff0ee;
-  --info: #175cd3;
-  --info-bg: #eff8ff;
+  /* Ibérico Brandbook: Pantone 5743 C + Pantone 5835 C */
+  --brand-olive: #292D14;
+  --brand-gold: #A09857;
+  --brand-ivory: #F7F4EC;
+  --bg: #F7F4EC;
+  --surface: #FFFDF7;
+  --surface-2: #EFEEE2;
+  --ink: #292D14;
+  --ink-2: #55583D;
+  --ink-3: #777A61;
+  --border: #DEDDCA;
+  --border-strong: #BDB98E;
+  --brand: #292D14;
+  --brand-tint: #E8E8D8;
+  --accent: #A09857;
+  --line: #DEDDCA;
+  --data-vino: #292D14;
+  --data-olivo: #6E753F;
+  --data-azulejo: #A09857;
+  --data-ochre: #8A7B3A;
+  --primary: #292D14;
+  --primary-hover: #3B4020;
+  --on-primary: #F7F4EC;
+  --success: #4E6B32;
+  --success-bg: #E8EDDF;
+  --warning: #806D2E;
+  --warning-bg: #F3EED6;
+  --danger: #A33D31;
+  --danger-bg: #F7E6E1;
+  --info: #59633D;
+  --info-bg: #E7EADD;
   --font-ui: 'Inter', 'Hanken Grotesk', system-ui, sans-serif;
   --font-body: 'Inter', system-ui, sans-serif;
   --rail-w: 252px;
@@ -2843,12 +2852,17 @@ body {
   --sh-md: 0 8px 24px rgba(16, 24, 40, .08);
 }
 :root[data-tema='dark'] {
-  --bg: #0d1117; --surface: #151b24; --surface-2: #1b2430; --ink: #f4f6f8;
-  --ink-2: #b5beca; --ink-3: #84909f; --border: #293442; --border-strong: #3b4858;
-  --brand: #818cf8; --brand-tint: #20263d; --primary: #f4f6f8; --primary-hover: #dfe5ec;
-  --on-primary: #10151d; --success: #55c98a; --success-bg: #123324; --warning: #f2b866;
-  --warning-bg: #3a2a12; --danger: #ff8176; --danger-bg: #3a1918; --info: #7db8ff;
-  --info-bg: #142a43; --sh-sm: 0 1px 2px rgba(0,0,0,.35); --sh-md: 0 8px 24px rgba(0,0,0,.35);
+  --brand-olive: #292D14; --brand-gold: #A09857; --brand-ivory: #F7F4EC;
+  --bg: #20230F; --surface: #292D14; --surface-2: #34391F;
+  --ink: #F7F4EC; --ink-2: #D8D5B8; --ink-3: #AAA77F;
+  --border: #4A4D2B; --border-strong: #77744A;
+  --brand: #A09857; --brand-tint: #45482A; --accent: #A09857;
+  --line: #4A4D2B;
+  --data-vino: #A09857; --data-olivo: #A9BE7B; --data-azulejo: #C1B878; --data-ochre: #D8C77E;
+  --primary: #A09857; --primary-hover: #B5AA67; --on-primary: #292D14;
+  --success: #A9BE7B; --success-bg: #2E3A1D; --warning: #D8C77E;
+  --warning-bg: #48401E; --danger: #ED8D79; --danger-bg: #48241F; --info: #C4C98F;
+  --info-bg: #343B22; --sh-sm: 0 1px 2px rgba(0,0,0,.35); --sh-md: 0 8px 24px rgba(0,0,0,.35);
 }
 body { background: var(--bg); color: var(--ink); font-size: .9rem; }
 .shell { grid-template-columns: var(--rail-w) minmax(0, 1fr); background: var(--bg); }
