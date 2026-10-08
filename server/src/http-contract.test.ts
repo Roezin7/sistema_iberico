@@ -33,4 +33,10 @@ describe('contrato HTTP de seguridad', () => {
     expect(res.status).toBe(401);
     expect(res.headers.get('content-type')).toMatch(/json/);
   });
+
+  it('protege el resumen agregado de operación', async () => {
+    const res = await fetch(`${base}/api/operacion/resumen`);
+    expect(res.status).toBe(401);
+    expect(res.headers.get('content-type')).toMatch(/json/);
+  });
 });

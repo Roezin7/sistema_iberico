@@ -11,6 +11,7 @@ import { silviaRouter } from '../silvia/routes.js';
 import { eposRouter } from '../epos/routes.js';
 import { recetasRouter } from '../recetas/routes.js';
 import { facturacionRouter } from '../facturacion/routes.js';
+import { operacionRouter } from '../operacion/routes.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { readonlyHealth } from '../readonly-db.js';
 
@@ -41,3 +42,4 @@ apiRouter.use('/silvia', silviaRouter); // Silvia (coach IA)
 apiRouter.use('/epos', eposRouter); // Epos Now: solo lectura durante el piloto
 apiRouter.use('/recetas', recetasRouter); // Menú y costeo: recetas versionadas
 apiRouter.use('/facturacion', facturacionRouter); // Archivo mensual de facturas
+apiRouter.use('/operacion', operacionRouter); // Estado agregado de la jornada

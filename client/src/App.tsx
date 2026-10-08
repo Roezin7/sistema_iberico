@@ -12,6 +12,7 @@ const CostosMenu = lazy(() => import('./screens/costos-menu/CostosMenu'));
 const Facturacion = lazy(() => import('./screens/facturacion/Facturacion'));
 const Tareas = lazy(() => import('./screens/tareas/Tareas'));
 const Decisiones = lazy(() => import('./screens/decisiones/Decisiones'));
+const Auditoria = lazy(() => import('./screens/Auditoria'));
 import OfflineBanner from './OfflineBanner';
 import SilviaBubble from './silvia/SilviaBubble';
 import Shell from './Shell';
@@ -58,6 +59,7 @@ function AppBody() {
         <Route path="/compras" element={<Compras />} />
         <Route path="/tareas" element={<Tareas />} />
         <Route path="/decisiones" element={<SoloAdmin rol="admin"><Decisiones /></SoloAdmin>} />
+        <Route path="/auditoria" element={<SoloAdmin rol="admin"><Auditoria /></SoloAdmin>} />
         <Route path="/costos-menu" element={<SoloAdmin rol="admin"><CostosMenu /></SoloAdmin>} />
         <Route path="/facturacion" element={<SoloAdmin rol="admin"><Facturacion /></SoloAdmin>} />
         <Route path="*" element={<Navigate to="/" replace />} />

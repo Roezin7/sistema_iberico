@@ -1,5 +1,6 @@
 import { Prisma, type TipoMovimiento } from '@prisma/client';
 import { prisma } from '../db.js';
+import { registrarAuditoria } from '../lib/auditoria.js';
 import { num0 } from '../lib/num.js';
 import { HttpError } from '../middleware/error.js';
 import {
@@ -39,6 +40,14 @@ function masDias(d: Date, n: number): Date {
 }
 function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+function fechaHoyMexico(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
+function fechaOperativaHoy(): Date {
+  return new Date(`${fechaHoyMexico()}T00:00:00Z`);
 }
 
 // Epos entrega timestamps reales en UTC, mientras que las semanas y los
@@ -254,6 +263,12 @@ export async function crearSemana(
 }
 
 function serializarSemana(s: { id: bigint; etiqueta: string; fecha_inicio: Date; fecha_fin: Date; estado: string; cerrada_at: Date | null }) {
+  const hoy = fechaHoyMexico();
+  const fase = s.estado === 'cerrada'
+    ? 'cerrada'
+    : hoy < iso(s.fecha_inicio) ? 'preparacion'
+      : hoy > iso(s.fecha_fin) ? 'cierre'
+        : 'operacion';
   return {
     id: Number(s.id),
     // No dependemos de etiquetas históricas inconsistentes ("- Mayo", fechas
@@ -262,6 +277,7 @@ function serializarSemana(s: { id: bigint; etiqueta: string; fecha_inicio: Date;
     fecha_inicio: iso(s.fecha_inicio),
     fecha_fin: iso(s.fecha_fin),
     estado: s.estado,
+    fase,
     cerrada_at: s.cerrada_at ? s.cerrada_at.toISOString() : null,
   };
 }
@@ -929,6 +945,11 @@ export async function crearMovimiento(negocioId: bigint, usuarioId: bigint, m: M
   const semana = await getSemanaAbierta(negocioId, BigInt(m.semana_id));
   if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana está cerrada; no admite movimientos');
 
+  const fechaMovimiento = m.fecha ? new Date(`${m.fecha}T00:00:00Z`) : fechaOperativaHoy();
+  if (Number.isNaN(fechaMovimiento.getTime()) || fechaMovimiento < semana.fecha_inicio || fechaMovimiento > semana.fecha_fin) {
+    throw new HttpError(400, 'La fecha del movimiento debe estar dentro de la semana seleccionada');
+  }
+
   const regla = REGLAS_MOVIMIENTO[m.tipo];
   if (regla.autogenerado) throw new HttpError(400, 'La comisión de terminal se genera automáticamente al cerrar');
   if (m.monto <= 0) throw new HttpError(400, 'El monto debe ser mayor a cero');
@@ -965,7 +986,7 @@ export async function crearMovimiento(negocioId: bigint, usuarioId: bigint, m: M
     data: {
       negocio_id: negocioId,
       semana_id: semana.id,
-      fecha: m.fecha ? new Date(m.fecha + 'T00:00:00Z') : new Date(),
+      fecha: fechaMovimiento,
       tipo: m.tipo,
       monto: m.monto,
       ubicacion_origen_id: m.ubicacion_origen_id != null ? BigInt(m.ubicacion_origen_id) : null,
@@ -977,6 +998,7 @@ export async function crearMovimiento(negocioId: bigint, usuarioId: bigint, m: M
       usuario_id: usuarioId,
     },
   });
+  await registrarAuditoria({ negocioId, usuarioId, entidad: 'movimiento', entidadId: creado.id, accion: 'crear', despues: { tipo: creado.tipo, monto: Number(creado.monto), fecha: iso(creado.fecha), semana_id: creado.semana_id } });
   return { id: Number(creado.id), facturado };
 }
 
@@ -1169,6 +1191,7 @@ export async function registrarDia(negocioId: bigint, usuarioId: bigint, semanaI
         },
       });
     }
+    await registrarAuditoria({ negocioId, usuarioId, entidad: 'dia_operativo', entidadId: fecha, accion: 'reemplazar', despues: datos }, tx);
   });
   return resumenDiario(negocioId, semanaId);
 }
@@ -1223,6 +1246,10 @@ export async function crearArqueo(negocioId: bigint, usuarioId: bigint, semanaId
   const semana = await getSemanaAbierta(negocioId, semanaId);
   const ubic = await prisma.ubicaciones_fondos.findFirst({ where: { id: BigInt(ubicacionId), negocio_id: negocioId } });
   if (!ubic) throw new HttpError(400, 'Ubicación inválida');
+  const fechaArqueo = fecha ? new Date(`${fecha}T00:00:00Z`) : fechaOperativaHoy();
+  if (Number.isNaN(fechaArqueo.getTime()) || fechaArqueo < semana.fecha_inicio || fechaArqueo > semana.fecha_fin) {
+    throw new HttpError(400, 'La fecha del arqueo debe estar dentro de la semana seleccionada');
+  }
   const a = await prisma.arqueos.create({
     data: {
       negocio_id: negocioId,
@@ -1230,7 +1257,7 @@ export async function crearArqueo(negocioId: bigint, usuarioId: bigint, semanaId
       ubicacion_id: BigInt(ubicacionId),
       monto_real: montoReal,
       usuario_id: usuarioId,
-      fecha: fecha ? new Date(fecha + 'T00:00:00Z') : new Date(),
+      fecha: fechaArqueo,
     },
   });
   return { id: Number(a.id) };
@@ -1821,6 +1848,7 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
     }
 
     await tx.semanas.updateMany({ where: { id: semanaId, negocio_id: negocioId }, data: { estado: 'cerrada', cerrada_at: new Date() } });
+    await registrarAuditoria({ negocioId, usuarioId, entidad: 'semana', entidadId: semanaId, accion: 'cerrar', despues: { cierre_snapshot_id: cierreSnapshotId, valor_inventario: valorInventario } }, tx);
 
     // Deja preparada la siguiente semana en la misma transacción del cierre.
     // Si ya existe (por ejemplo, cuando el lunes se abrió manualmente), no se
@@ -1900,6 +1928,7 @@ export async function reabrirSemana(negocioId: bigint, semanaId: bigint) {
     // no es el oficial; se regenerará al volver a cerrar o al recalcular.
     await tx.inventory_fifo_reconciliations.deleteMany({ where: { negocio_id: negocioId, semana_id: semanaId } });
     await tx.semanas.updateMany({ where: { id: semanaId, negocio_id: negocioId }, data: { estado: 'abierta', cerrada_at: null } });
+    await registrarAuditoria({ negocioId, entidad: 'semana', entidadId: semanaId, accion: 'reabrir', despues: { estado: 'abierta' } }, tx);
   });
 
   const actual = await prisma.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId } });

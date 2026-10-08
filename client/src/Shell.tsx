@@ -20,6 +20,7 @@ const TOOL_ITEMS: Item[] = [
   { ruta: '/tareas', label: 'Checklist', description: 'Tareas del día', icono: 'checks' },
   { ruta: '/facturacion', label: 'Facturación', description: 'Comprobantes mensuales', icono: 'file', soloAdmin: true },
   { ruta: '/decisiones', label: 'Decisiones', description: 'Alertas y prioridades', icono: 'alertTriangle', soloAdmin: true },
+  { ruta: '/auditoria', label: 'Auditoría', description: 'Historial de cambios', icono: 'file', soloAdmin: true },
   { ruta: '/patrimonio', label: 'Patrimonio', description: 'Activos y pasivos', icono: 'trending', soloAdmin: true },
   { ruta: '/configuracion', label: 'Configuración', description: 'Catálogo e integraciones', icono: 'settings', soloAdmin: true },
 ];

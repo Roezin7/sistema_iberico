@@ -7,6 +7,7 @@ import { costearVentasPendientesEnVivo } from './consumo-epos.js';
 import { inventarioActual } from './service.js';
 import { redondear } from './logic.js';
 import { asegurarFacturasBanco, mesDeFecha } from '../facturacion/service.js';
+import { registrarAuditoria } from '../lib/auditoria.js';
 
 export type CapturaCompraLinea = {
   product_id?: bigint | null;
@@ -459,6 +460,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     }
     await tx.purchases.update({ where: { id: compra.id }, data: { total, estado: 'confirmada', notas: notasCompra, confirmada_por: usuarioId, confirmada_at: new Date() } });
     if (origen.tipo === 'banco') await asegurarFacturasBanco(negocioId, tx);
+    await registrarAuditoria({ negocioId, usuarioId, entidad: 'compra', entidadId: compra.id, accion: 'confirmar', despues: { total, inventario: inventarioTotal, gasto: gastoTotal, origen_pago_id: origen.id } }, tx);
     return { purchase_id: Number(compra.id), estado: 'confirmada', inventario: inventarioTotal, gasto: gastoTotal, movimientos: (inventarioTotal > 0 ? 1 : 0) + (gastoTotal > 0 ? 1 : 0), discrepancias: validacion.advertencias };
   }, { timeout: 30_000, maxWait: 15_000 });
   const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });

@@ -15,6 +15,19 @@ const publicDir = path.resolve(__dirname, '../public');
 
 export const app = express();
 
+// Telemetría ligera para localizar regresiones de consultas sin introducir un
+// APM externo. Sólo se registra en servidor cuando una ruta supera 750 ms.
+app.use((req, res, next) => {
+  const inicio = process.hrtime.bigint();
+  res.on('finish', () => {
+    const ms = Number(process.hrtime.bigint() - inicio) / 1_000_000;
+    if (ms >= 750 && req.originalUrl.startsWith('/api')) {
+      console.warn(`[slow-request] ${req.method} ${req.originalUrl} ${res.statusCode} ${ms.toFixed(1)}ms`);
+    }
+  });
+  next();
+});
+
 // Detrás de un proxy (Coolify/Traefik, Render): confiar en 1 salto para que el
 // rate-limit y los logs vean la IP real del cliente (X-Forwarded-For), no la del proxy.
 if (isProd) app.set('trust proxy', 1);

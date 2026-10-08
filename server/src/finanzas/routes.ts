@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import * as svc from './service.js';
 import { crearCorreccionInventario, listarCorrecciones, referenciasCorreccion } from '../inventario/correcciones.js';
+import { listarAuditoria } from '../lib/auditoria.js';
 
 export const finanzasRouter = Router();
 
@@ -40,6 +41,12 @@ finanzasRouter.get('/tablero-decisiones', asyncHandler(async (req, res) => {
 
 finanzasRouter.get('/salud-operativa', asyncHandler(async (req, res) => {
   res.json(await svc.saludOperativa(req.auth!.negocioId));
+}));
+
+finanzasRouter.get('/auditoria', asyncHandler(async (req, res) => {
+  const entidad = req.query.entidad == null ? undefined : z.string().trim().max(80).parse(req.query.entidad);
+  const limite = req.query.limit == null ? undefined : z.coerce.number().int().positive().parse(req.query.limit);
+  res.json(await listarAuditoria(req.auth!.negocioId, { entidad, limite }));
 }));
 
 finanzasRouter.post('/saldos-iniciales', asyncHandler(async (req, res) => {

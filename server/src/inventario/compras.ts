@@ -2,6 +2,8 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { costearVentasPendientesEnVivo } from './consumo-epos.js';
+import { asegurarFacturasBanco } from '../facturacion/service.js';
+import { registrarAuditoria } from '../lib/auditoria.js';
 
 export interface LineaCompraInput {
   product_id: bigint;
@@ -20,6 +22,8 @@ export interface CompraInput {
   moneda?: string;
   fuente?: string;
   notas?: string | null;
+  origen_pago_id: bigint;
+  usuario_id: bigint;
   lineas: LineaCompraInput[];
 }
 
@@ -54,6 +58,12 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
     if (!semana) throw new HttpError(409, 'No existe una semana para la fecha de la compra');
     if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana de la compra está cerrada');
 
+    const origen = await tx.ubicaciones_fondos.findFirst({
+      where: { id: input.origen_pago_id, negocio_id: negocioId, activo: true },
+      select: { id: true, tipo: true },
+    });
+    if (!origen) throw new HttpError(400, 'La ubicación de pago no pertenece al negocio o está inactiva');
+
     if (ticketRef) {
       const repetida = await tx.purchases.findFirst({
         where: { negocio_id: negocioId, ticket_ref: ticketRef },
@@ -85,6 +95,9 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
         moneda: input.moneda ?? 'MXN',
         fuente: input.fuente ?? 'manual',
         notas: input.notas?.trim() || null,
+        origen_pago_id: origen.id,
+        confirmada_por: input.usuario_id,
+        confirmada_at: new Date(),
       },
     });
 
@@ -124,6 +137,25 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
       });
       lotes.push(lote);
     }
+
+    // La ruta directa conserva la misma invariante que la captura rápida:
+    // compra, lote FIFO y salida de caja/banco nacen en una transacción única.
+    await tx.movimientos.create({
+      data: {
+        negocio_id: negocioId,
+        semana_id: semana.id,
+        fecha,
+        tipo: 'compra_inventario',
+        monto: input.total ?? totalCalculado,
+        ubicacion_origen_id: origen.id,
+        facturado: origen.tipo === 'banco',
+        descripcion: `Compra ticket ${ticketRef ?? compra.id}`,
+        usuario_id: input.usuario_id,
+        compra_id: compra.id,
+      },
+    });
+    if (origen.tipo === 'banco') await asegurarFacturasBanco(negocioId, tx);
+    await registrarAuditoria({ negocioId, usuarioId: input.usuario_id, entidad: 'compra', entidadId: compra.id, accion: 'crear_confirmada', despues: { total: input.total ?? totalCalculado, origen_pago_id: origen.id, lineas: input.lineas.length } }, tx);
 
     return {
       purchase_id: Number(compra.id),

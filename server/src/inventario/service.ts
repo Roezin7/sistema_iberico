@@ -21,6 +21,7 @@ import {
 import { filtroConsumoFifoActivo } from './fuentes.js';
 import { convertirCantidad } from '../recetas/costeo.js';
 import { normalizarNombreEpos } from '../epos/mapeo-menu.js';
+import { registrarAuditoria } from '../lib/auditoria.js';
 
 export interface ProductoActual {
   product_id: number;
@@ -190,12 +191,31 @@ function valorarFisicoConLotes(cantidad: number, lotes: LoteValuacion[], costoCa
 /** Valor de un snapshot histórico usando el costo vigente del catálogo. */
 export async function valorSnapshot(negocioId: bigint, snapshotId: bigint | null): Promise<number> {
   if (!snapshotId) return 0;
+  const snapshot = await prisma.inventory_snapshot.findFirst({
+    where: { id: snapshotId, negocio_id: negocioId },
+    select: { created_at: true },
+  });
+  if (!snapshot) return 0;
   const lineas = await prisma.inventory_lines.findMany({
     where: { snapshot_id: snapshotId, inventory_snapshot: { negocio_id: negocioId } },
-    include: { products: { select: { unit_cost: true, unidad_base: true, contenido_compra: true } } },
+    include: { products: { select: { id: true, unit_cost: true, unidad_base: true, contenido_compra: true } } },
   });
+  const fechas = new Date(Date.UTC(snapshot.created_at.getUTCFullYear(), snapshot.created_at.getUTCMonth(), snapshot.created_at.getUTCDate()));
+  const historicos = lineas.length ? await prisma.producto_costos_historicos.findMany({
+    where: { product_id: { in: [...new Set(lineas.map((l) => l.product_id))] }, fecha: { lte: fechas } },
+    orderBy: [{ fecha: 'desc' }, { id: 'desc' }],
+    select: { product_id: true, costo: true },
+  }) : [];
+  const historicoPorProducto = new Map<string, number>();
+  for (const h of historicos) if (!historicoPorProducto.has(h.product_id.toString())) historicoPorProducto.set(h.product_id.toString(), num0(h.costo));
   return Math.round(lineas.reduce((total, l) => {
-    const costo = costoUnitarioBase(l.products);
+    // El costo histórico tiene prioridad para no revaluar una apertura antigua
+    // con el precio vigente del catálogo. Si no existe, se conserva el fallback
+    // anterior al costo actual.
+    const historico = historicoPorProducto.get(l.products.id.toString());
+    const costo = historico == null
+      ? costoUnitarioBase(l.products)
+      : costoUnitarioBase({ ...l.products, unit_cost: historico });
     return total + (costo == null ? 0 : num0(l.qty_captura) * num0(l.factor) * costo);
   }, 0) * 100) / 100;
 }
@@ -244,6 +264,9 @@ const inventarioEnVuelo = new Map<string, Promise<InventarioActual>>();
 export function inventarioActual(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
   // `vista` se conserva por compatibilidad de API, pero ambas vistas parten
   // del mismo inventario físico y sólo exponen campos distintos.
+  // `vista` sólo cambia los campos presentados, no el cálculo fuente. Ignorar
+  // esa bandera permite compartir la misma lectura pesada entre Inventario,
+  // Lista de compras y Operación cuando llegan en paralelo.
   const key = `${negocioId}:${options.semanaId?.toString() ?? ''}:${options.hasta?.toISOString() ?? ''}`;
   const pendiente = inventarioEnVuelo.get(key);
   if (pendiente) return pendiente;
@@ -878,8 +901,7 @@ export async function cierreInventarioPreview(negocioId: bigint, semanaId: bigin
 /** Lista de compras: faltantes contra el inventario físico, agrupados por tienda.
  * FIFO sólo se consulta como auditoría y nunca cambia la sugerencia de compra.
  */
-export async function listaCompras(negocioId: bigint) {
-  const actual = await inventarioActual(negocioId, { vista: 'operativa' });
+export function listaComprasDesdeInventario(actual: InventarioActual) {
   const faltantes: ProductoFaltante[] = actual.productos.map((p) => {
     // `base_qty` es el mínimo configurado en presentaciones de compra
     // (botellas, bolsas, paquetes, etc.). El conteo ya está normalizado a la
@@ -935,6 +957,10 @@ export async function listaCompras(negocioId: bigint) {
   return armarListaCompras(faltantes);
 }
 
+export async function listaCompras(negocioId: bigint) {
+  return listaComprasDesdeInventario(await inventarioActual(negocioId, { vista: 'operativa' }));
+}
+
 export interface LineaConteoInput {
   product_id: number;
   zona_id: number;
@@ -950,6 +976,7 @@ export interface MetadataSnapshotInventario {
   nota?: string | null;
   /** `operativa` recibe piezas físicas y convierte al formato histórico al guardar. */
   unidad_conteo?: 'captura' | 'operativa';
+  usuario_id?: bigint | null;
 }
 
 /**
@@ -1084,5 +1111,6 @@ export async function crearConteo(
       throw new HttpError(409, `La semana no tiene un ciclo de inventario disponible para vincular el ${metadata.tipo} oficial`);
     }
   }
+  await registrarAuditoria({ negocioId, usuarioId: metadata.usuario_id, entidad: 'snapshot_inventario', entidadId: resultado.snapshot_id, accion: 'crear', despues: { tipo: metadata.tipo, semana_id: metadata.semana_id ?? null, lineas: lineasInput.length, motivo: metadata.motivo ?? null } });
   return resultado;
 }

@@ -4,13 +4,14 @@ import { api } from '../api';
 import { useAuth } from '../auth';
 import { Icono } from '../icons';
 import { Cargando } from '../ui/Cargando';
-import { epos, finanzas, mxn, type ConciliacionDiaria, type DiaFila, type Resumen, type SaludOperativa, type Semana } from './finanzas/api';
+import { mxn, type ConciliacionDiaria, type DiaFila, type Resumen, type SaludOperativa, type Semana } from './finanzas/api';
 import { todayMexico, weekLabel, weekStateLabel } from '../operating';
 
-interface InventarioActual { valor_total: number; valor_fifo_actual_total: number; productos: ProductoInventario[]; sin_costo: { product_id: number; nombre: string }[] }
+interface InventarioActual { valor_total: number; valor_fifo_actual_total: number; productos: ProductoInventario[]; sin_costo: { product_id: number; nombre: string }[]; lista_compras?: ListaCompras }
 interface ProductoInventario { product_id: number; nombre: string; total_operativo: number; minimo_operativo: number; faltante_operativo?: number; unidad_operativa: string; fuente_valoracion: string; }
 interface ListaCompras { total: number; grupos: { store: string; subtotal: number; items: { product_id: number; nombre: string; faltante: number; unidad_operativa?: string; valor_faltante: number }[] }[] }
-interface TareasDia { fecha: string; checklists?: { id: number; nombre: string; tipo: string; completados: number; total: number }[]; items?: { id: number; texto: string; completado: boolean }[] }
+interface TareasDia { fecha: string; checklists?: { checklist_id: number; nombre: string; tipo: string; items?: { id: number; texto: string; completado: boolean }[]; progreso?: { hechos: number; total: number } }[] }
+interface OperacionPayload { semana: Semana | null; salud: SaludOperativa | null; resumen: Resumen | null; dias: DiaFila[]; conciliaciones: ConciliacionDiaria[]; inventario: InventarioActual; compras: ListaCompras; tareas: TareasDia }
 
 type ActionTone = 'danger' | 'warning' | 'info' | 'success';
 interface ActionItem { id: string; title: string; description: string; href: string; tone: ActionTone; label: string }
@@ -61,24 +62,11 @@ export default function Operacion() {
 
   async function cargar() {
     setCargando(true); setError('');
-    const inventarioPromise = api<InventarioActual>('/inventario/current?vista=fisica');
-    const comprasPromise = api<ListaCompras>('/inventario/shopping-list');
-    const tareasPromise = api<TareasDia>(`/tareas/dia?fecha=${todayMexico()}`);
-    const corePromise = admin
-      ? Promise.all([finanzas.semanaActual(), finanzas.saludOperativa()])
-      : Promise.resolve([null, null] as const);
     try {
-      const [[semanaActual, saludActual], tareasDia] = await Promise.all([corePromise, tareasPromise]);
-      setSemana(semanaActual); setSalud(saludActual); setTareas(tareasDia); setCargando(false); setActualizado(new Date());
-
-      // Las consultas de mayor volumen quedan fuera del primer render útil.
-      void inventarioPromise.then(setInventario).catch((e) => setError(e instanceof Error ? `Inventario: ${e.message}` : 'No se pudo leer el inventario.'));
-      void comprasPromise.then(setCompras).catch((e) => setError(e instanceof Error ? `Compras: ${e.message}` : 'No se pudo leer la lista de compras.'));
-      if (admin && semanaActual) {
-        void Promise.all([finanzas.resumen(semanaActual.id), finanzas.dias(semanaActual.id), epos.conciliaciones(semanaActual.id).catch(() => [])]).then(([weekSummary, daily, cuts]) => {
-          setResumen(weekSummary); setDias(daily.dias); setConciliaciones(cuts);
-        }).catch((e) => setError(e instanceof Error ? `Semana: ${e.message}` : 'No se pudo leer el resumen de la semana.'));
-      }
+      const data = await api<OperacionPayload>('/operacion/resumen');
+      setSemana(data.semana); setSalud(data.salud); setTareas(data.tareas);
+      setResumen(data.resumen); setDias(data.dias); setConciliaciones(data.conciliaciones);
+      setInventario(data.inventario); setCompras(data.compras); setCargando(false); setActualizado(new Date());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo cargar la operación.'); setCargando(false);
     }
@@ -89,8 +77,8 @@ export default function Operacion() {
   const actions = useMemo(() => actionFromHealth(salud, semana, resumen, conciliaciones), [salud, semana, resumen, conciliaciones]);
   const faltantes = useMemo(() => (compras?.grupos ?? []).flatMap((g) => g.items).sort((a, b) => b.valor_faltante - a.valor_faltante), [compras]);
   const ventasHoy = dias.find((d) => d.fecha === todayMexico());
-  const tareasCompletadas = tareas?.items?.filter((i) => i.completado).length ?? 0;
-  const tareasTotal = tareas?.items?.length ?? 0;
+  const tareasCompletadas = tareas?.checklists?.reduce((sum, c) => sum + (c.progreso?.hechos ?? c.items?.filter((i) => i.completado).length ?? 0), 0) ?? 0;
+  const tareasTotal = tareas?.checklists?.reduce((sum, c) => sum + (c.progreso?.total ?? c.items?.length ?? 0), 0) ?? 0;
   const estado = salud?.estado === 'requiere_atencion' ? 'danger' : salud?.estado === 'operable_con_alertas' ? 'warning' : 'success';
   const estadoLabel = estado === 'danger' ? 'Requiere atención' : estado === 'warning' ? 'Operable con alertas' : 'Operación lista';
 

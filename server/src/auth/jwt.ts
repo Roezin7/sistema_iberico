@@ -8,7 +8,10 @@ export interface JwtPayload {
   nombre: string;
 }
 
-const EXPIRA_EN = '30d'; // sesión larga: es una tablet/dispositivo dedicado
+// Doce horas cubren una jornada completa sin dejar una sesión financiera
+// válida durante semanas si se pierde la tablet. El usuario puede volver a
+// iniciar sesión al siguiente turno.
+const EXPIRA_EN = '12h';
 
 export function firmarToken(payload: JwtPayload): string {
   return jwt.sign(payload, env.JWT_SECRET, { expiresIn: EXPIRA_EN });

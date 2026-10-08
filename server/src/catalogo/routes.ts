@@ -4,6 +4,7 @@ import { prisma } from '../db.js';
 import { num } from '../lib/num.js';
 import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
+import { registrarAuditoria } from '../lib/auditoria.js';
 
 export const catalogoRouter = Router();
 catalogoRouter.use(requireAuth); // lecturas: cualquier usuario autenticado
@@ -117,7 +118,7 @@ catalogoRouter.patch(
     const b = productoBody.partial().parse(req.body);
     const prod = await prisma.products.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
     if (!prod) throw new HttpError(404, 'Producto no encontrado');
-    await prisma.products.update({
+    const actualizado = await prisma.products.update({
       where: { id },
       data: {
         name: b.nombre,
@@ -132,6 +133,7 @@ catalogoRouter.patch(
         categoria_id: b.categoria_id === undefined ? undefined : b.categoria_id != null ? BigInt(b.categoria_id) : null,
       },
     });
+    await registrarAuditoria({ negocioId: req.auth!.negocioId, usuarioId: req.auth!.usuarioId, entidad: 'producto', entidadId: id, accion: 'editar', antes: { nombre: prod.name, base_qty: Number(prod.base_qty), unit_cost: prod.unit_cost == null ? null : Number(prod.unit_cost), active: prod.active, categoria_id: prod.categoria_id }, despues: { nombre: actualizado.name, base_qty: Number(actualizado.base_qty), unit_cost: actualizado.unit_cost == null ? null : Number(actualizado.unit_cost), active: actualizado.active, categoria_id: actualizado.categoria_id } });
     res.json({ ok: true });
   }),
 );

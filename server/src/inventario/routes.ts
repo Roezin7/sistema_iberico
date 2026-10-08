@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
-import { inventarioActual, listaCompras, crearConteo, listarSnapshots, cierreInventarioPreview } from './service.js';
+import { inventarioActual, listaCompras, listaComprasDesdeInventario, crearConteo, listarSnapshots, cierreInventarioPreview } from './service.js';
 import { borradorCompraTicket, borradorConteo, draftDisponible } from './draft.js';
 import { listarLotes, registrarCompra } from './compras.js';
 import { prepararAperturaFifo } from './apertura-fifo.js';
@@ -24,7 +24,14 @@ inventarioRouter.get(
   '/current',
   asyncHandler(async (req, res) => {
     const vista = req.query.vista === 'fisica' ? 'fisica' : 'operativa';
-    res.json(await inventarioActual(req.auth!.negocioId, { vista }));
+    const actual = await inventarioActual(req.auth!.negocioId, { vista });
+    // La pantalla Operación puede pedir ambos datos en una sola respuesta. La
+    // lista se deriva del mismo cálculo para no reconstruir lotes/consumos.
+    if (req.query.include_lista === '1' || req.query.include_lista === 'true') {
+      res.json({ ...actual, lista_compras: listaComprasDesdeInventario(actual) });
+      return;
+    }
+    res.json(actual);
   }),
 );
 
@@ -81,6 +88,7 @@ inventarioRouter.post(
       semana_id: body.semana_id ?? null,
       motivo: body.motivo,
       nota: body.nota,
+      usuario_id: req.auth!.usuarioId,
     });
     res.status(201).json(r);
   }),
@@ -130,6 +138,7 @@ inventarioRouter.post(
       moneda: z.string().trim().min(1).max(8).default('MXN'),
       fuente: z.string().trim().min(1).max(40).default('manual'),
       notas: z.string().trim().max(1000).optional().nullable(),
+      origen_pago_id: z.coerce.number().int().positive(),
       lineas: z.array(z.object({
         product_id: z.coerce.number().int().positive(),
         cantidad_base: z.coerce.number().positive(),
@@ -141,6 +150,8 @@ inventarioRouter.post(
     }).parse(req.body);
     const resultado = await registrarCompra(req.auth!.negocioId, {
       ...body,
+      origen_pago_id: BigInt(body.origen_pago_id),
+      usuario_id: req.auth!.usuarioId,
       lineas: body.lineas.map((linea) => ({ ...linea, product_id: BigInt(linea.product_id) })),
     });
     res.status(201).json(resultado);
