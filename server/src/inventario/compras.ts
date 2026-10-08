@@ -43,6 +43,17 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
   const fecha = fechaUTC(input.fecha_recepcion);
   const ticketRef = input.ticket_ref?.trim() || null;
   const resultado = await prisma.$transaction(async (tx) => {
+    const semana = await tx.semanas.findFirst({
+      where: {
+        negocio_id: negocioId,
+        fecha_inicio: { lte: fecha },
+        fecha_fin: { gte: fecha },
+      },
+      select: { id: true, estado: true },
+    });
+    if (!semana) throw new HttpError(409, 'No existe una semana para la fecha de la compra');
+    if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana de la compra está cerrada');
+
     if (ticketRef) {
       const repetida = await tx.purchases.findFirst({
         where: { negocio_id: negocioId, ticket_ref: ticketRef },

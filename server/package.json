@@ -15,6 +15,11 @@
     "seed": "tsx prisma/seed.ts",
     "migrar:historico": "tsx scripts/migrar-historico.ts",
     "fifo:repair-opening": "tsx scripts/reparar-costos-apertura-fifo.ts",
+    "epos:catalog-sync": "tsx scripts/sincronizar-catalogo-epos.ts",
+    "epos:map-bottles": "tsx scripts/mapear-botellas-menu-2026.ts",
+    "epos:menu-organize": "tsx scripts/organizar-menu-epos.ts",
+    "menu:add-missing-2026": "tsx scripts/agregar-menu-faltante-2026.ts",
+    "menu:update-input-costs": "tsx scripts/actualizar-costos-insumos-menu-2026.ts",
     "test": "vitest run"
   },
   "prisma": {
