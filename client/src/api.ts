@@ -1,4 +1,5 @@
 // Cliente HTTP mínimo para la API. Guarda el JWT en localStorage.
+import { encolar } from './offline';
 
 const TOKEN_KEY = 'iberico_token';
 
@@ -54,7 +55,6 @@ async function requestApi<T = unknown>(
   } catch (e) {
     // Fallo de red. Si es una mutación, la encolamos para sincronizar luego.
     if (esMutacion && puedeGuardarOffline(path, body)) {
-      const { encolar } = await import('./offline');
       await encolar({ method, path, body, token: auth ? getToken() : null });
       return { queued: true } as T;
     }
