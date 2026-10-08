@@ -2812,57 +2812,60 @@ body {
    21. NODO 2.0 — interfaz integrada y minimalista
    ========================================================================== */
 :root {
-  /* Ibérico Brandbook: Pantone 5743 C + Pantone 5835 C */
+  /* Burrito PM: lienzo cálido y superficies crema. Sólo la marca se adapta al
+     verde oliva de ÍBERICO (#292D14). */
   --brand-olive: #292D14;
   --brand-gold: #A09857;
   --brand-ivory: #F7F4EC;
-  --bg: #F7F4EC;
-  --surface: #FFFDF7;
-  --surface-2: #EFEEE2;
-  --ink: #292D14;
-  --ink-2: #55583D;
-  --ink-3: #777A61;
-  --border: #DEDDCA;
-  --border-strong: #BDB98E;
+  --bg: #eee7da;
+  --surface: #faf6ee;
+  --surface-2: #e8dece;
+  --ink: #211b15;
+  --ink-2: #62584c;
+  --ink-3: #6d604f;
+  --border: #ddd0bd;
+  --border-strong: #cbbba4;
   --brand: #292D14;
-  --brand-tint: #E8E8D8;
-  --accent: #A09857;
-  --line: #DEDDCA;
-  --data-vino: #292D14;
-  --data-olivo: #6E753F;
-  --data-azulejo: #A09857;
-  --data-ochre: #8A7B3A;
+  --brand-strong: #23250f;
+  --brand-tint: #e8eadc;
+  --accent: #e5392b;
+  --accent-tint: #fde6e3;
+  --line: var(--border);
+  --data-vino: #6e1423;
+  --data-olivo: #5b6b3a;
+  --data-azulejo: #1f6f8b;
+  --data-ochre: #b7791f;
   --primary: #292D14;
-  --primary-hover: #3B4020;
-  --on-primary: #F7F4EC;
-  --success: #4E6B32;
-  --success-bg: #E8EDDF;
-  --warning: #806D2E;
-  --warning-bg: #F3EED6;
-  --danger: #A33D31;
-  --danger-bg: #F7E6E1;
-  --info: #59633D;
-  --info-bg: #E7EADD;
-  --font-ui: 'Inter', 'Hanken Grotesk', system-ui, sans-serif;
-  --font-body: 'Inter', system-ui, sans-serif;
-  --rail-w: 252px;
+  --primary-hover: #3b4020;
+  --on-primary: #ffffff;
+  --success: #1e7a46;
+  --success-bg: #e4f2e9;
+  --warning: #b7791f;
+  --warning-bg: #f8efd9;
+  --danger: #b42318;
+  --danger-bg: #fbe9e7;
+  --info: #1f6f8b;
+  --info-bg: #e2eef2;
+  --rail-w: 240px;
   --r-input: 10px;
-  --r-card: 14px;
-  --sh-sm: 0 1px 2px rgba(16, 24, 40, .04);
-  --sh-md: 0 8px 24px rgba(16, 24, 40, .08);
+  --r-card: 16px;
+  --sh-sm: 0 1px 2px rgba(27, 24, 21, .06);
+  --sh-md: 0 2px 8px rgba(27, 24, 21, .08);
+  --sh-lg: 0 12px 32px rgba(27, 24, 21, .14);
 }
 :root[data-tema='dark'] {
   --brand-olive: #292D14; --brand-gold: #A09857; --brand-ivory: #F7F4EC;
-  --bg: #20230F; --surface: #292D14; --surface-2: #34391F;
-  --ink: #F7F4EC; --ink-2: #D8D5B8; --ink-3: #AAA77F;
-  --border: #4A4D2B; --border-strong: #77744A;
-  --brand: #A09857; --brand-tint: #45482A; --accent: #A09857;
-  --line: #4A4D2B;
-  --data-vino: #A09857; --data-olivo: #A9BE7B; --data-azulejo: #C1B878; --data-ochre: #D8C77E;
-  --primary: #A09857; --primary-hover: #B5AA67; --on-primary: #292D14;
-  --success: #A9BE7B; --success-bg: #2E3A1D; --warning: #D8C77E;
-  --warning-bg: #48401E; --danger: #ED8D79; --danger-bg: #48241F; --info: #C4C98F;
-  --info-bg: #343B22; --sh-sm: 0 1px 2px rgba(0,0,0,.35); --sh-md: 0 8px 24px rgba(0,0,0,.35);
+  --bg: #151411; --surface: #1f1b16; --surface-2: #2a251e;
+  --ink: #f3eee6; --ink-2: #c3bbaf; --ink-3: #8e877d;
+  --border: #342e26; --border-strong: #463e33;
+  --brand: #3b4020; --brand-strong: #4a5227; --brand-tint: #29351d;
+  --accent: #ef5b4f; --accent-tint: #3a1c19;
+  --line: var(--border);
+  --data-vino: #c24a5a; --data-olivo: #93a86a; --data-azulejo: #4fa3be; --data-ochre: #e0a84b;
+  --primary: #3b4020; --primary-hover: #4a5227; --on-primary: #ffffff;
+  --success: #4fb87e; --success-bg: #16331f; --warning: #e0a84b;
+  --warning-bg: #352a14; --danger: #e5675c; --danger-bg: #3a1c19; --info: #4fa3be;
+  --info-bg: #142a32; --sh-sm: 0 1px 2px rgba(0,0,0,.3); --sh-md: 0 2px 10px rgba(0,0,0,.4); --sh-lg: 0 12px 36px rgba(0,0,0,.55);
 }
 body { background: var(--bg); color: var(--ink); font-size: .9rem; }
 .shell { grid-template-columns: var(--rail-w) minmax(0, 1fr); background: var(--bg); }
