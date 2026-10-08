@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { useConfirm, usePrompt } from '../../ui/ConfirmProvider';
@@ -10,8 +10,13 @@ const mxn = (n: number | null) =>
 
 type Tab = 'general' | 'inventario' | 'recetas' | 'finanzas';
 
+type ConfigFocus = 'minimo' | 'zona' | 'categoria' | 'conversion';
+
 export default function Configuracion() {
-  const [tab, setTab] = useState<Tab>('general');
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    return requested === 'inventario' || requested === 'recetas' || requested === 'finanzas' ? requested : 'general';
+  });
   return (
     <div className="page">
       <header className="page-head">
@@ -247,7 +252,8 @@ function RecetasCfg() {
   const [estado, setEstado] = useState<'borrador' | 'validada'>('borrador');
   const [lineas, setLineas] = useState<DraftLinea[]>([]);
   const [filtroMenu, setFiltroMenu] = useState('');
-  const [filtroCalidad, setFiltroCalidad] = useState<'todos' | 'sin_epos' | 'sin_receta' | 'incompleta'>('todos');
+  const calidadInicial = new URLSearchParams(window.location.search).get('calidad');
+  const [filtroCalidad, setFiltroCalidad] = useState<'todos' | 'sin_epos' | 'sin_receta' | 'incompleta'>(calidadInicial === 'sin_epos' || calidadInicial === 'sin_receta' || calidadInicial === 'incompleta' ? calidadInicial : 'todos');
   const [draft, setDraft] = useState<DraftLinea>({ product_id: '', cantidad: '', unidad: 'ml', nota: '' });
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -370,10 +376,16 @@ function InventarioCfg() {
   const [stores, setStores] = useState<Store[]>([]);
   const [zonas, setZonas] = useState<Zona[]>([]);
   const [categorias, setCategorias] = useState<CategoriaInv[]>([]);
+  const params = new URLSearchParams(window.location.search);
+  const productoSolicitado = Number(params.get('producto'));
+  const focoSolicitado = params.get('focus') as ConfigFocus | null;
+  const calidadSolicitada = params.get('calidad');
   const [filtro, setFiltro] = useState('');
   const [storeFilter, setStoreFilter] = useState<number | ''>('');
   const [categoriaFilter, setCategoriaFilter] = useState<number | ''>('');
-  const [calidadFilter, setCalidadFilter] = useState<'todos' | 'sin_zona' | 'sin_categoria' | 'sin_conversion'>('todos');
+  const [calidadFilter, setCalidadFilter] = useState<'todos' | 'sin_zona' | 'sin_categoria' | 'sin_conversion'>(
+    calidadSolicitada === 'sin_zona' || calidadSolicitada === 'sin_categoria' || calidadSolicitada === 'sin_conversion' ? calidadSolicitada : 'todos',
+  );
   const [mostrarInactivos, setMostrarInactivos] = useState(false);
   const [nuevoAbierto, setNuevoAbierto] = useState(false);
   const [seleccionado, setSeleccionado] = useState<number | null>(null);
@@ -400,6 +412,19 @@ function InventarioCfg() {
     if (filtrados.length === 0) setSeleccionado(null);
     else if (seleccionado == null || !filtrados.some((p) => p.id === seleccionado)) setSeleccionado(filtrados[0].id);
   }, [filtrados, seleccionado]);
+
+  // Los enlaces de acciones prioritarias pueden traer el producto exacto. Si
+  // no lo traen, el filtro de calidad deja seleccionado el primer problema.
+  useEffect(() => {
+    if (!productos.length) return;
+    if (Number.isFinite(productoSolicitado) && productoSolicitado > 0 && productos.some((p) => p.id === productoSolicitado)) {
+      setCalidadFilter('todos');
+      setFiltro('');
+      setStoreFilter('');
+      setCategoriaFilter('');
+      setSeleccionado(productoSolicitado);
+    }
+  }, [productos, productoSolicitado]);
 
   const productoSeleccionado = filtrados.find((p) => p.id === seleccionado) ?? null;
   const recargar = () => { void cargar(); };
@@ -453,7 +478,7 @@ function InventarioCfg() {
           {filtrados.length === 0 && <p className="muted product-list__empty">Sin resultados.</p>}
         </aside>
         <main className="product-detail">
-          {productoSeleccionado ? <ProductoEditorPanel key={productoSeleccionado.id} p={productoSeleccionado} stores={stores} zonas={zonas} categorias={categorias} onChange={recargar} /> : <div className="empty-state"><strong>Selecciona un producto</strong><p>Elige un producto del catálogo para editarlo.</p></div>}
+          {productoSeleccionado ? <ProductoEditorPanel key={productoSeleccionado.id} p={productoSeleccionado} stores={stores} zonas={zonas} categorias={categorias} focusField={focoSolicitado ?? undefined} onChange={recargar} /> : <div className="empty-state"><strong>Selecciona un producto</strong><p>Elige un producto del catálogo para editarlo.</p></div>}
         </main>
       </div>
     </>
@@ -588,7 +613,7 @@ const UNIDADES_BASE = [
 const PRESENTACIONES = ['botella', 'caja', 'paquete', 'bolsa', 'pieza', 'rollo', 'bote', 'litro', 'kilogramo', 'unidad'];
 const UNIDADES_CAPTURA = ['botellas', 'cajas', 'paquetes', 'bolsas', 'piezas', 'rollos', 'botes', 'unidades'];
 
-function ProductoEditorPanel({ p, stores, zonas, categorias, onChange }: { p: Producto; stores: Store[]; zonas: Zona[]; categorias: CategoriaInv[]; onChange: () => void }) {
+function ProductoEditorPanel({ p, stores, zonas, categorias, focusField, onChange }: { p: Producto; stores: Store[]; zonas: Zona[]; categorias: CategoriaInv[]; focusField?: ConfigFocus; onChange: () => void }) {
   const [nombre, setNombre] = useState(p.nombre);
   const [storeId, setStoreId] = useState(p.store_id);
   const [categoriaId, setCategoriaId] = useState<number | ''>(p.categoria_id ?? '');
@@ -600,6 +625,21 @@ function ProductoEditorPanel({ p, stores, zonas, categorias, onChange }: { p: Pr
   const [rendimiento, setRendimiento] = useState(String(p.rendimiento_util ?? 1));
   const [ok, setOk] = useState(false);
   const [error, setError] = useState('');
+  const minimoRef = useRef<HTMLInputElement>(null);
+  const categoriaRef = useRef<HTMLSelectElement>(null);
+  const zonaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const target = focusField === 'minimo' ? minimoRef.current : focusField === 'categoria' ? categoriaRef.current : focusField === 'zona' ? zonaRef.current : null;
+    if (!target) return;
+    const timer = window.setTimeout(() => {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (target instanceof HTMLInputElement || target instanceof HTMLSelectElement) target.focus({ preventScroll: true });
+      target.classList.add('field-attention');
+      window.setTimeout(() => target.classList.remove('field-attention'), 2200);
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [p.id, focusField]);
 
   async function guardar() {
     setError('');
@@ -626,14 +666,14 @@ function ProductoEditorPanel({ p, stores, zonas, categorias, onChange }: { p: Pr
           <label>Nombre<input value={nombre} onChange={(e) => setNombre(e.target.value)} /></label>
           <label>Tienda de compra<select value={storeId} onChange={(e) => setStoreId(Number(e.target.value))}>{stores.map((s) => <option key={s.id} value={s.id}>{s.nombre}</option>)}</select></label>
           <label>Categoría
-            <select value={categoriaId} onChange={(e) => setCategoriaId(e.target.value === '' ? '' : Number(e.target.value))}>
+            <select ref={categoriaRef} value={categoriaId} onChange={(e) => setCategoriaId(e.target.value === '' ? '' : Number(e.target.value))}>
               <option value="">— Sin categoría —</option>
               {categorias.filter((c) => c.activo || c.id === p.categoria_id).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
             </select>
           </label>
       </div></section>
       <section className="product-editor__section"><h3>Compra y FIFO</h3><p className="muted">Configura mínimo y presentación.</p><div className="form-grid form-grid--four">
-        <label>Mínimo de compra<input type="number" min="0" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} /></label>
+        <label>Mínimo de compra<input ref={minimoRef} data-product-field="minimo" type="number" min="0" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} /></label>
         <label>Presentación<select value={unidadCompra} onChange={(e) => setUnidadCompra(e.target.value)}><option value="">Selecciona…</option>{PRESENTACIONES.map((u) => <option key={u} value={u}>{u}</option>)}</select></label>
         <label>Contenido por presentación<input type="number" min="0" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" /></label>
         <label>Costo presentación<input type="number" min="0" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="—" /></label>
@@ -642,7 +682,7 @@ function ProductoEditorPanel({ p, stores, zonas, categorias, onChange }: { p: Pr
         <label>Rendimiento útil<input type="number" min="0.01" max="1" step="0.01" value={rendimiento} onChange={(e) => setRendimiento(e.target.value)} /><small className="field-help">1 = 100% aprovechable</small></label>
         <div className="conversion-preview"><span>Conversión</span><strong>{contenidoCompra && unidadBase ? `1 ${unidadCompra || 'presentación'} = ${contenidoCompra} ${unidadBase}` : 'Falta configurar'}</strong><small>{costo && contenidoCompra ? `${mxn(Number(costo) / Number(contenidoCompra))} por ${unidadBase || 'unidad base'}` : 'Agrega costo y contenido'}</small></div>
       </div></section>
-      <section className="product-editor__section"><h3>Cómo se cuenta</h3><p className="muted">Unidad de captura por zona.</p><div className="zone-editor">{zonas.map((z) => { const u = p.unidades.find((x) => x.zona_id === z.id); return <UnidadZonaRow key={z.id} productId={p.id} zona={z} unidad={u} onChange={onChange} />; })}</div></section>
+      <section ref={zonaRef} className="product-editor__section"><h3>Cómo se cuenta</h3><p className="muted">Unidad de captura por zona.</p><div className="zone-editor">{zonas.map((z) => { const u = p.unidades.find((x) => x.zona_id === z.id); return <UnidadZonaRow key={z.id} productId={p.id} zona={z} unidad={u} onChange={onChange} />; })}</div></section>
       {error && <p className="error-msg">{error}</p>}
       <div className="product-editor__actions"><button className="btn-primary" onClick={guardar}>{ok ? 'Guardado ✓' : 'Guardar cambios'}</button><button className="btn-secondary" onClick={async () => { await api(`/catalogo/products/${p.id}`, { method: 'PATCH', body: { active: !p.active } }); onChange(); }}>{p.active ? 'Desactivar producto' : 'Reactivar producto'}</button></div>
     </div>

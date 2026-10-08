@@ -17,10 +17,21 @@ function saludo() {
 type Tone = 'success' | 'warning' | 'danger' | 'info';
 interface Action { id: string; title: string; description: string; href: string; tone: Tone; label: string }
 
+/** Convierte un diagnóstico en el destino exacto donde se corrige. */
+function destinoProblema(description: string) {
+  const texto = description.toLocaleLowerCase('es-MX');
+  if (texto.includes('sin zona')) return '/configuracion?tab=inventario&calidad=sin_zona&focus=zona';
+  if (texto.includes('sin categoría') || texto.includes('sin categoria')) return '/configuracion?tab=inventario&calidad=sin_categoria&focus=categoria';
+  if (texto.includes('sin receta')) return '/configuracion?tab=recetas&calidad=sin_receta';
+  if (texto.includes('venta') && (texto.includes('epos') || texto.includes('pendiente'))) return '/compras?tab=epos&focus=ventas-pendientes';
+  if (texto.includes('compra') && texto.includes('pendiente')) return '/compras?tab=pendientes&focus=compras-pendientes';
+  return '/decisiones';
+}
+
 function buildActions(salud: SaludOperativa | null, semana: Semana | null, resumen: Resumen | null, cortes: ConciliacionDiaria[]): Action[] {
   const rows: Action[] = [];
-  (salud?.bloqueadores ?? []).slice(0, 2).forEach((description, i) => rows.push({ id: `block-${i}`, title: 'Resolver bloqueador', description, href: '/decisiones', tone: 'danger', label: 'Revisar' }));
-  if (resumen?.ventas_epos_pendientes) rows.push({ id: 'pending-sales', title: 'Revisar ventas pendientes', description: `${resumen.ventas_epos_pendientes} ventas aún no tienen costeo completo.`, href: '/compras?tab=epos', tone: 'warning', label: 'Resolver' });
+  (salud?.bloqueadores ?? []).slice(0, 2).forEach((description, i) => rows.push({ id: `block-${i}`, title: 'Resolver bloqueador', description, href: destinoProblema(description), tone: 'danger', label: 'Corregir ahora' }));
+  if (resumen?.ventas_epos_pendientes) rows.push({ id: 'pending-sales', title: 'Revisar ventas pendientes', description: `${resumen.ventas_epos_pendientes} ventas aún no tienen costeo completo.`, href: '/compras?tab=epos&focus=ventas-pendientes', tone: 'warning', label: 'Corregir ahora' });
   if (semana && resumen?.inventario.estado !== 'cerrado') rows.push({ id: 'inventory', title: 'Confirmar inventario', description: 'La existencia física debe confirmar el consumo teórico.', href: `/inventario?tipo=cierre&semana=${semana.id}`, tone: 'warning', label: 'Contar' });
   if (semana && cortes.every((c) => c.fecha !== todayMexico())) rows.push({ id: 'cut', title: 'Confirmar corte de hoy', description: 'Sincroniza Epos y valida los métodos de pago.', href: `/finanzas?semana=${semana.id}&tab=dia`, tone: 'info', label: 'Abrir corte' });
   if (!rows.length) rows.push({ id: 'ok', title: 'Todo en orden', description: 'No hay acciones críticas. Continúa con la operación del día.', href: '/operacion', tone: 'success', label: 'Abrir operación' });

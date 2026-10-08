@@ -19,17 +19,27 @@ const toneIcon: Record<ActionTone, Parameters<typeof Icono>[0]['name']> = {
   danger: 'alertCircle', warning: 'alertTriangle', info: 'sparkles', success: 'checkCircle',
 };
 
+function destinoProblema(description: string) {
+  const texto = description.toLocaleLowerCase('es-MX');
+  if (texto.includes('sin zona')) return '/configuracion?tab=inventario&calidad=sin_zona&focus=zona';
+  if (texto.includes('sin categoría') || texto.includes('sin categoria')) return '/configuracion?tab=inventario&calidad=sin_categoria&focus=categoria';
+  if (texto.includes('sin receta')) return '/configuracion?tab=recetas&calidad=sin_receta';
+  if (texto.includes('venta') && (texto.includes('epos') || texto.includes('pendiente'))) return '/compras?tab=epos&focus=ventas-pendientes';
+  if (texto.includes('compra') && texto.includes('pendiente')) return '/compras?tab=pendientes&focus=compras-pendientes';
+  return '/decisiones';
+}
+
 function todayLabel() {
   return new Date(`${todayMexico()}T12:00:00`).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
 function actionFromHealth(salud: SaludOperativa | null, semana: Semana | null, resumen: Resumen | null, conciliaciones: ConciliacionDiaria[]) {
   const items: ActionItem[] = [];
-  (salud?.bloqueadores ?? []).slice(0, 3).forEach((description, i) => items.push({ id: `block-${i}`, title: 'Resolver bloqueador', description, href: '/decisiones', tone: 'danger', label: 'Revisar' }));
-  if (resumen?.ventas_epos_pendientes) items.push({ id: 'epos-pending', title: 'Costear ventas pendientes', description: `${resumen.ventas_epos_pendientes} ventas esperan receta, mapeo o lote FIFO.`, href: '/compras?tab=epos', tone: 'warning', label: 'Resolver' });
+  (salud?.bloqueadores ?? []).slice(0, 3).forEach((description, i) => items.push({ id: `block-${i}`, title: 'Resolver bloqueador', description, href: destinoProblema(description), tone: 'danger', label: 'Corregir ahora' }));
+  if (resumen?.ventas_epos_pendientes) items.push({ id: 'epos-pending', title: 'Costear ventas pendientes', description: `${resumen.ventas_epos_pendientes} ventas esperan receta, mapeo o lote FIFO.`, href: '/compras?tab=epos&focus=ventas-pendientes', tone: 'warning', label: 'Corregir ahora' });
   if (semana && !semana.cerrada_at && resumen?.inventario.estado !== 'cerrado') items.push({ id: 'inventory-close', title: 'Confirmar inventario', description: 'El cierre físico se compara contra apertura, compras y consumo teórico.', href: `/inventario?tipo=cierre&semana=${semana.id}`, tone: 'warning', label: 'Abrir conteo' });
   if (semana && !semana.cerrada_at && conciliaciones.filter((c) => c.fecha >= semana.fecha_inicio && c.fecha <= semana.fecha_fin).length === 0) items.push({ id: 'daily-cut', title: 'Confirmar corte diario', description: 'Importa las ventas de Epos y confirma los métodos de pago del día.', href: `/finanzas?semana=${semana.id}&tab=dia`, tone: 'info', label: 'Abrir corte' });
-  (salud?.advertencias ?? []).slice(0, 3).forEach((description, i) => items.push({ id: `warn-${i}`, title: 'Revisar advertencia', description, href: '/decisiones', tone: 'warning', label: 'Ver' }));
+  (salud?.advertencias ?? []).slice(0, 3).forEach((description, i) => items.push({ id: `warn-${i}`, title: 'Revisar advertencia', description, href: destinoProblema(description), tone: 'warning', label: 'Corregir ahora' }));
   if (!items.length) items.push({ id: 'ok', title: 'Operación en orden', description: 'No hay bloqueadores críticos. Mantén el registro diario y confirma el cierre cuando corresponda.', href: '/tareas', tone: 'success', label: 'Ver checklist' });
   return items.slice(0, 6);
 }
@@ -108,7 +118,7 @@ export default function Operacion() {
       </div>
 
       <div className="operation-grid operation-grid--secondary">
-        <section className="card"><div className="section-heading"><div><span className="eyebrow">Abasto</span><h2>Lo que falta comprar</h2></div><Link className="inline-link" to="/inventario">Ver inventario →</Link></div>{faltantes.length ? <div className="operation-stock-list">{faltantes.slice(0, 7).map((item) => <div key={item.product_id}><span><strong>{item.nombre}</strong><small>Faltan {item.faltante.toLocaleString('es-MX', { maximumFractionDigits: 2 })} {item.unidad_operativa ?? 'unidades'}</small></span><strong>{mxn(item.valor_faltante)}</strong></div>)}</div> : <div className="empty-inline"><Icono name="checkCircle" size={18} /><span>Inventario dentro de mínimos.</span></div>}</section>
+        <section className="card"><div className="section-heading"><div><span className="eyebrow">Abasto</span><h2>Lo que falta comprar</h2></div><Link className="inline-link" to="/inventario">Ver inventario →</Link></div>{faltantes.length ? <div className="operation-stock-list">{faltantes.slice(0, 7).map((item) => <Link className="operation-stock-list__item" to={`/configuracion?tab=inventario&producto=${item.product_id}&focus=minimo`} key={item.product_id}><span><strong>{item.nombre}</strong><small>Faltan {item.faltante.toLocaleString('es-MX', { maximumFractionDigits: 2 })} {item.unidad_operativa ?? 'unidades'} · configurar mínimo</small></span><strong>{mxn(item.valor_faltante)}</strong></Link>)}</div> : <div className="empty-inline"><Icono name="checkCircle" size={18} /><span>Inventario dentro de mínimos.</span></div>}</section>
         <section className="card"><div className="section-heading"><div><span className="eyebrow">Trazabilidad</span><h2>Qué alimenta los números</h2></div></div><div className="trace-list"><div><span className="trace-dot trace-dot--ok" /><span><strong>Ventas</strong><small>{admin ? `${resumen?.ventas_epos_pendientes ?? 0} pendientes de costeo` : 'Fuente Epos y corte diario'}</small></span></div><div><span className="trace-dot trace-dot--ok" /><span><strong>Inventario</strong><small>{inventario?.sin_costo?.length ? `${inventario.sin_costo.length} productos sin costo` : 'Físico y FIFO disponibles'}</small></span></div><div><span className={`trace-dot trace-dot--${semana?.estado === 'cerrada' ? 'ok' : 'warn'}`} /><span><strong>Semana</strong><small>{semana ? weekStateLabel(semana) : 'Sin semana activa'}</small></span></div></div></section>
       </div>
     </>}
