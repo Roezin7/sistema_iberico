@@ -1,7 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth, type Rol } from './auth';
 import Login from './screens/Login';
-import Home from './screens/Home';
 const Inventario = lazy(() => import('./screens/inventario/Inventario'));
 const Operacion = lazy(() => import('./screens/Operacion'));
 const Finanzas = lazy(() => import('./screens/finanzas/Finanzas'));
@@ -46,8 +45,10 @@ function AppBody() {
       <OfflineBanner />
       <Suspense fallback={<div className="page"><Cargando etiqueta="Cargando vista…" /></div>}>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/operacion" element={<Operacion />} />
+        {/* Inicio y Operación son el mismo espacio operativo. La raíz es la
+            URL canónica y conservamos /operacion como alias compatible. */}
+        <Route path="/" element={<Operacion />} />
+        <Route path="/operacion" element={<Navigate to="/" replace />} />
         <Route path="/inventario" element={<Inventario />} />
         <Route path="/finanzas" element={<SoloAdmin rol="admin"><Finanzas /></SoloAdmin>} />
         <Route path="/reportes" element={<Navigate to="/finanzas" replace />} />
