@@ -1675,7 +1675,7 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
 /** Diagnóstico de preparación de datos maestros y colas operativas. Sólo
  * lectura: sirve para saber si los indicadores pueden usarse para decidir. */
 export async function saludOperativa(negocioId: bigint) {
-  const [productosActivos, sinZona, sinCategoria, menuActivo, menuSinEpos, menuSinReceta, comprasPendientes, ventasPendientes, semanasAbiertas, snapshotsLegado] = await Promise.all([
+  const [productosActivos, sinZona, sinCategoria, menuActivo, menuSinEpos, menuSinReceta, comprasPendientes, semanasAbiertasFilas, snapshotsLegado] = await Promise.all([
     prisma.products.count({ where: { negocio_id: negocioId, active: true } }),
     prisma.products.count({ where: { negocio_id: negocioId, active: true, product_zone_units: { none: {} } } }),
     prisma.products.count({ where: { negocio_id: negocioId, active: true, categoria_id: null } }),
@@ -1684,14 +1684,38 @@ export async function saludOperativa(negocioId: bigint) {
     // `validada` is the current terminal state for a recipe. Keep the legacy
     // `completada` value accepted so historical records remain operable.
     prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, recetas: { none: { estado: { in: ['validada', 'completada'] } } } } }),
-    prisma.purchases.count({ where: { negocio_id: negocioId, estado: 'pendiente' } }),
-    prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: { in: ['pendiente', 'excepcion'] } } }),
-    prisma.semanas.count({ where: { negocio_id: negocioId, estado: 'abierta' } }),
+    // `revision` is the state used by OCR/manual drafts; it is still a
+    // pending purchase until an administrator confirms or rejects it.
+    prisma.purchases.count({ where: { negocio_id: negocioId, estado: { in: ['pendiente', 'revision'] } } }),
+    prisma.semanas.findMany({ where: { negocio_id: negocioId, estado: 'abierta' }, orderBy: { fecha_inicio: 'desc' }, select: { fecha_inicio: true, fecha_fin: true } }),
     // Los conteos operativos históricos pueden existir fuera de una semana y
     // siguen siendo evidencia válida. Sólo un snapshot de ciclo sin semana
     // rompe la trazabilidad de apertura/cierre/ajuste.
     prisma.inventory_snapshot.count({ where: { negocio_id: negocioId, semana_id: null, tipo: { in: ['apertura', 'cierre', 'cierre_apertura', 'ajuste'] } } }),
   ]);
+  // Las excepciones de semanas cerradas permanecen en la auditoría, pero no
+  // deben bloquear el tablero operativo actual. Epos usa timestamps UTC y las
+  // semanas del negocio son fechas civiles de México (06:00Z a 06:00Z).
+  // Sólo la semana abierta más reciente es la cola operativa actual. Las
+  // semanas abiertas antiguas se conservan como advertencia para cerrarlas,
+  // pero no inflan el número de excepciones que debe atender hoy.
+  const semanaOperativa = semanasAbiertasFilas[0];
+  const rangosAbiertos = semanaOperativa ? [semanaOperativa].map((semana) => {
+    const inicio = new Date(`${iso(semana.fecha_inicio)}T06:00:00.000Z`);
+    const fin = new Date(`${iso(semana.fecha_fin)}T06:00:00.000Z`);
+    fin.setUTCDate(fin.getUTCDate() + 1);
+    return { inicio, fin };
+  }) : [];
+  const ventasPendientes = rangosAbiertos.length
+    ? await prisma.epos_ventas.count({
+      where: {
+        negocio_id: negocioId,
+        costeo_estado: { in: ['pendiente', 'excepcion'] },
+        OR: rangosAbiertos.map((rango) => ({ fecha: { gte: rango.inicio, lt: rango.fin } })),
+      },
+    })
+    : 0;
+  const semanasAbiertas = semanasAbiertasFilas.length;
   const bloqueadores = [
     ...(sinZona ? [`${sinZona} producto(s) activo(s) sin zona de conteo`] : []),
     ...(menuSinEpos ? [`${menuSinEpos} producto(s) de menú sin vínculo Epos`] : []),

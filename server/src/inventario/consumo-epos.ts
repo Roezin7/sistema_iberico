@@ -401,13 +401,34 @@ export async function costearVentasPendientesEnVivo(input: {
 
 /** Snapshot operativo del ledger continuo. No cambia lotes ni ventas. */
 export async function estadoFifoEnVivo(negocioId: bigint) {
-  const [lotes, pendientes, excepciones] = await Promise.all([
+  const [lotes, semanasAbiertas] = await Promise.all([
     prisma.inventory_lots.findMany({
       where: { negocio_id: negocioId, estado: 'abierto', cantidad_restante: { gt: 0 } },
       select: { product_id: true, cantidad_restante: true, costo_unitario: true, fuente: true },
     }),
-    prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: 'pendiente' } }),
-    prisma.epos_ventas.count({ where: { negocio_id: negocioId, costeo_estado: 'excepcion' } }),
+    prisma.semanas.findMany({ where: { negocio_id: negocioId, estado: 'abierta' }, orderBy: { fecha_inicio: 'desc' }, take: 1, select: { fecha_inicio: true, fecha_fin: true } }),
+  ]);
+  // El estado visible en Compras es operativo: las excepciones de semanas
+  // cerradas siguen auditables, pero no deben mezclarse con la cola actual.
+  const rangosAbiertos = semanasAbiertas.map((semana) => {
+    // Las columnas de semana son `date` (medianoche UTC), no timestamps de
+    // venta. Aquí se debe conservar la fecha civil almacenada; `fechaISO`
+    // convierte instantes a México y desplazaría el inicio un día.
+    const inicio = new Date(`${semana.fecha_inicio.toISOString().slice(0, 10)}T06:00:00.000Z`);
+    const fin = new Date(`${semana.fecha_fin.toISOString().slice(0, 10)}T06:00:00.000Z`);
+    fin.setUTCDate(fin.getUTCDate() + 1);
+    return { inicio, fin };
+  });
+  const pendientesWhere = rangosAbiertos.length
+    ? {
+      negocio_id: negocioId,
+      costeo_estado: { in: ['pendiente', 'excepcion'] },
+      OR: rangosAbiertos.map((rango) => ({ fecha: { gte: rango.inicio, lt: rango.fin } })),
+    }
+    : { negocio_id: negocioId, id: -1n, costeo_estado: { in: ['pendiente', 'excepcion'] } };
+  const [pendientes, excepciones] = await Promise.all([
+    prisma.epos_ventas.count({ where: { ...pendientesWhere, costeo_estado: 'pendiente' } }),
+    prisma.epos_ventas.count({ where: { ...pendientesWhere, costeo_estado: 'excepcion' } }),
   ]);
   const seleccionados = [...new Set(lotes.map((lote) => lote.product_id.toString()))]
     .flatMap((productId) => seleccionarLotesOperativos(lotes.filter((lote) => lote.product_id.toString() === productId)));
