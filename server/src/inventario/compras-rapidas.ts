@@ -299,6 +299,9 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
 
 /** Corrige el origen de pago de una compra ya confirmada sin tocar sus lotes. */
 export async function cambiarOrigenPagoCompra(negocioId: bigint, purchaseId: bigint, origenPagoId: bigint) {
+  // La sincronización de facturas bancarias recorre el histórico de compras.
+  // El timeout interactivo por defecto (5 s) puede expirar antes de actualizar
+  // el movimiento, dejando la compra intacta aunque la operación sea válida.
   return prisma.$transaction(async (tx) => {
     const origen = await tx.ubicaciones_fondos.findFirst({
       where: { id: origenPagoId, negocio_id: negocioId, activo: true },
@@ -324,7 +327,7 @@ export async function cambiarOrigenPagoCompra(negocioId: bigint, purchaseId: big
       data: { ubicacion_origen_id: origen.id, facturado: origen.tipo === 'banco' },
     });
     return { purchase_id: Number(compra.id), origen_pago_id: Number(origen.id), origen: origen.nombre, facturado: origen.tipo === 'banco' };
-  });
+  }, { timeout: 30_000, maxWait: 15_000 });
 }
 
 export async function obtenerFotoCompra(negocioId: bigint, purchaseId: bigint) {

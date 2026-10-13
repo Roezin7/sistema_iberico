@@ -40,6 +40,7 @@ export default function Shell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const admin = usuario?.rol === 'admin';
   const mainItems = useMemo(() => MAIN_ITEMS.filter((i) => !i.soloAdmin || admin), [admin]);
   const toolItems = useMemo(() => TOOL_ITEMS.filter((i) => !i.soloAdmin || admin), [admin]);
@@ -53,7 +54,7 @@ export default function Shell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  useEffect(() => { setPaletteOpen(false); }, [location.pathname]);
+  useEffect(() => { setPaletteOpen(false); setMobileMoreOpen(false); }, [location.pathname]);
 
   const syncChip = !online ? <button className="sync-chip sync-chip--off" onClick={() => void sincronizar()}><span className="sync-dot" /> Sin conexión{pendientes > 0 && ` · ${pendientes} pendientes`}</button> : pendientes > 0 ? <button className="sync-chip sync-chip--pending" onClick={() => void sincronizar()}><span className="sync-dot" /> Sincronizar {pendientes}</button> : <span className="sync-chip"><span className="sync-dot sync-dot--ok" /> Todo al día</span>;
 
@@ -73,7 +74,20 @@ export default function Shell({ children }: { children: ReactNode }) {
       <header className="context-bar"><div className="context-bar__left"><span className="context-brand">Ibérico</span><span className="context-divider" /><span className="context-page">{location.pathname === '/' ? 'Operación' : mainItems.find((item) => location.pathname.startsWith(item.ruta) && item.ruta !== '/')?.label ?? toolItems.find((item) => location.pathname.startsWith(item.ruta))?.label ?? 'Espacio de trabajo'}</span></div><div className="context-bar__right"><button className="global-search" onClick={() => setPaletteOpen(true)}><Icono name="search" size={16} /><span>Buscar en Ibérico</span><kbd>⌘K</kbd></button>{syncChip}<button className="icon-btn" onClick={alternar} aria-label="Cambiar tema" title="Cambiar tema"><Icono name={tema === 'dark' ? 'sun' : 'moon'} size={18} /></button></div></header>
       <main className="content">{children}</main>
     </div>
-    <nav className="bottom-nav">{mainItems.slice(0, 4).map((item) => <NavLink key={item.ruta} to={item.ruta} end={item.ruta === '/'} className={({ isActive }) => isActive ? 'bottom-link bottom-link--on' : 'bottom-link'}><Icono name={item.icono} size={21} /><span>{item.label}</span></NavLink>)}</nav>
+    <nav className="bottom-nav" aria-label="Navegación móvil">
+      {mainItems.slice(0, 4).map((item) => <NavLink key={item.ruta} to={item.ruta} end={item.ruta === '/'} className={({ isActive }) => isActive ? 'bottom-link bottom-link--on' : 'bottom-link'}><Icono name={item.icono} size={21} /><span>{item.label}</span></NavLink>)}
+      <button type="button" className={`bottom-link bottom-link--button ${mobileMoreOpen ? 'bottom-link--on' : ''}`} aria-expanded={mobileMoreOpen} onClick={() => setMobileMoreOpen((open) => !open)}><Icono name="sparkles" size={21} /><span>Más</span></button>
+    </nav>
+    {mobileMoreOpen && <div className="mobile-more-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileMoreOpen(false); }}>
+      <section className="mobile-more-panel" aria-label="Más secciones">
+        <div className="mobile-more-panel__head"><div><span className="eyebrow">Espacio de trabajo</span><h2>Más secciones</h2></div><button type="button" className="icon-btn" onClick={() => setMobileMoreOpen(false)} aria-label="Cerrar menú"><Icono name="x" size={18} /></button></div>
+        <div className="mobile-more-list">
+          {[...mainItems.slice(4), ...toolItems].map((item) => <NavLink key={item.ruta} to={item.ruta} className={({ isActive }) => isActive ? 'mobile-more-link mobile-more-link--on' : 'mobile-more-link'}><span className="mobile-more-link__icon"><Icono name={item.icono} size={18} /></span><span><strong>{item.label}</strong><small>{item.description}</small></span><Icono name="chevron" size={16} /></NavLink>)}
+          <button type="button" className="mobile-more-link" onClick={alternar}><span className="mobile-more-link__icon"><Icono name={tema === 'dark' ? 'sun' : 'moon'} size={18} /></span><span><strong>{tema === 'dark' ? 'Modo claro' : 'Modo oscuro'}</strong><small>Preferencia visual</small></span></button>
+          <button type="button" className="mobile-more-link mobile-more-link--danger" onClick={logout}><span className="mobile-more-link__icon"><Icono name="logout" size={18} /></span><span><strong>Salir</strong><small>Cerrar sesión</small></span></button>
+        </div>
+      </section>
+    </div>}
     {paletteOpen && <div className="palette-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPaletteOpen(false); }}><section className="command-palette" role="dialog" aria-modal="true" aria-label="Registrar o navegar"><div className="command-palette__head"><div><span className="eyebrow">Acceso rápido</span><h2>¿Qué necesitas hacer?</h2></div><button className="icon-btn" onClick={() => setPaletteOpen(false)} aria-label="Cerrar"><Icono name="x" size={18} /></button></div><div className="command-palette__search"><Icono name="search" size={18} /><input autoFocus placeholder="Buscar una acción…" onChange={(event) => { const term = event.target.value.toLowerCase(); document.querySelectorAll<HTMLElement>('[data-command-item]').forEach((el) => { el.hidden = !el.dataset.commandItem?.includes(term); }); }} /></div><div className="command-list">{QUICK_ITEMS.filter((item) => !item.ruta.startsWith('/finanzas') || admin).map((item) => <button data-command-item={`${item.label} ${item.description}`.toLowerCase()} key={item.ruta} onClick={() => { setPaletteOpen(false); navigate(item.ruta); }}><span className="command-icon"><Icono name={item.icono} size={18} /></span><span><strong>{item.label}</strong><small>{item.description}</small></span><Icono name="chevron" size={16} /></button>)}</div><p className="command-hint">Esc para cerrar · ⌘K para abrir desde cualquier pantalla</p></section></div>}
   </div>;
 }

@@ -2956,3 +2956,61 @@ body { background: var(--bg); color: var(--ink); font-size: .9rem; }
 .menu-costos-search { display: flex; align-items: center; gap: .45rem; min-width: 190px; padding: .5rem .65rem; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--ink-3); }.menu-costos-search input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; font-size: .78rem; }.menu-costos-search:focus-within { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-tint); }
 @media (max-width: 980px) { .home-grid { grid-template-columns: 1fr; }.home-quick__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 720px) { .home-health { align-items: flex-start; flex-direction: column; }.home-health__actions { width: 100%; }.home-health__actions > * { flex: 1; }.home-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }.home-quick__grid { grid-template-columns: 1fr 1fr; } }
+
+/* Responsive guardrails
+   Keep the application canvas inside the viewport at every breakpoint. The
+   data tables retain their own horizontal scroll container, while cards and
+   forms can shrink instead of pushing content underneath the viewport. */
+html, body, #root { max-width: 100%; min-height: 100%; }
+body { overflow-x: hidden; }
+img, svg, video, canvas { max-width: 100%; }
+button, input, select, textarea { max-width: 100%; }
+.main-area, .content, .page, .card, section, article, form { min-width: 0; }
+.table-wrap, .table-scroll, .ticket-list, .audit-list { max-width: 100%; }
+
+.bottom-link--button { border: 0; background: transparent; font: inherit; cursor: pointer; }
+.mobile-more-backdrop { display: none; }
+
+@media (max-width: 720px) {
+  .main-area { padding-bottom: calc(4.8rem + env(safe-area-inset-bottom)); }
+  .content { width: 100%; padding: 1.15rem .9rem 2.5rem; }
+  .page { width: 100%; padding-bottom: 10rem; }
+  .page-head, .section-heading { align-items: flex-start; flex-wrap: wrap; }
+  .page-head__actions, .form-actions { width: 100%; flex-wrap: wrap; }
+  .page-head__actions > *, .form-actions > * { flex: 1 1 9rem; min-width: 0; }
+  .section-heading > * { min-width: 0; }
+  .operation-status__actions { flex-wrap: wrap; }
+  .operation-status__actions > * { flex: 1 1 9rem; min-width: 0; }
+  .bottom-nav { grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: stretch; min-height: 62px; padding: .32rem .3rem calc(.32rem + env(safe-area-inset-bottom)); }
+  .bottom-link { min-width: 0; min-height: 50px; overflow: hidden; }
+  .bottom-link span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-more-backdrop { position: fixed; inset: 0; z-index: 55; display: flex; align-items: flex-end; background: rgba(12, 10, 8, .42); backdrop-filter: blur(3px); }
+  .mobile-more-panel { width: 100%; max-height: min(76vh, 620px); overflow-y: auto; padding: 1rem .9rem calc(1rem + env(safe-area-inset-bottom)); border: 1px solid var(--border); border-bottom: 0; border-radius: 18px 18px 0 0; background: var(--surface); box-shadow: 0 -18px 42px rgba(0, 0, 0, .28); }
+  .mobile-more-panel__head { display: flex; align-items: flex-start; justify-content: space-between; gap: .8rem; margin-bottom: .65rem; }
+  .mobile-more-panel__head h2 { margin: .2rem 0 0; font-size: 1.1rem; }
+  .mobile-more-list { display: grid; gap: .3rem; }
+  .mobile-more-link { display: flex; align-items: center; gap: .65rem; width: 100%; min-height: 48px; padding: .55rem .6rem; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--ink); font: inherit; text-align: left; text-decoration: none; }
+  .mobile-more-link:hover, .mobile-more-link--on { border-color: var(--border); background: var(--brand-tint); color: var(--brand); }
+  .mobile-more-link--danger { color: var(--danger); }
+  .mobile-more-link > span:nth-child(2) { display: grid; min-width: 0; flex: 1; gap: .05rem; }
+  .mobile-more-link strong, .mobile-more-link small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-more-link strong { font-size: .8rem; }
+  .mobile-more-link small { color: var(--ink-3); font-size: .7rem; }
+  .mobile-more-link__icon { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; border-radius: 8px; background: var(--surface-2); color: var(--brand); }
+  .mobile-more-link > svg { flex: 0 0 auto; color: var(--ink-3); }
+  .mobile-more-link:not(a) > svg { display: none; }
+  .quick-line, .quick-line__numbers, .quick-pending__meta, .form-grid, .form-grid--three, .form-grid--four { min-width: 0; }
+  .quick-line__numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-line__numbers--simple { grid-template-columns: 1fr; }
+  .dia-chart, .ventas-detalle, .fifo-panel, .ticket-card { max-width: 100%; min-width: 0; }
+}
+
+@media (max-width: 430px) {
+  .content { padding-inline: .7rem; }
+  .page { padding-inline: .1rem; }
+  .bottom-link { padding-inline: .1rem; font-size: .58rem; }
+  .bottom-link svg { width: 19px; height: 19px; }
+  .operation-metrics, .home-metrics { grid-template-columns: 1fr 1fr; gap: .45rem; }
+  .operation-metrics article, .home-metrics article { padding: .8rem .7rem; }
+  .operation-metrics strong, .home-metrics strong { font-size: 1.05rem; }
+}
