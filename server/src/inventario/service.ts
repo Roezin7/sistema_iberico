@@ -281,7 +281,7 @@ export function inventarioActual(negocioId: bigint, options: { semanaId?: bigint
 }
 
 async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
-  const [productos, snaps, lotesTodos, consumosPosteriores, ajustesInventario] = await Promise.all([
+  const [productos, snaps, lotesTodos, consumosPosteriores, ajustesInventario, zonasInventario] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
       select: {
@@ -306,7 +306,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
         negocio_id: negocioId,
         ...(options.hasta ? { recibido_at: { lte: options.hasta } } : {}),
       },
-      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchase_id: true, estado: true, creado_at: true },
+      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchase_id: true, zona_id: true, estado: true, creado_at: true },
       orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
     }),
     prisma.inventory_consumptions.findMany({
@@ -323,9 +323,15 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       where: { negocio_id: negocioId },
       select: { product_id: true, cantidad_base: true, snapshot_nuevo_id: true, creado_at: true },
     }),
+    prisma.zonas_inventario.findMany({
+      where: { negocio_id: negocioId },
+      select: { id: true, nombre: true, orden: true },
+      orderBy: { orden: 'asc' },
+    }),
   ]);
 
   const lotes = lotesTodos.filter((lote) => lote.estado === 'abierto' && num0(lote.cantidad_restante) > 0);
+  const zonaBodegaGlobal = zonasInventario.find((zona) => zona.nombre.trim().toLowerCase() === 'bodega') ?? null;
 
   // El precio de compra sugerido debe ser el último precio realmente recibido
   // en FIFO, no el costo estático del catálogo. Preferimos un lote operativo
@@ -438,16 +444,17 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       inventory_snapshot: { created_at: linea.snapshot_created_at },
     }));
 
-  const unidadesCaptura = lineas.length
+  const zonaBodega = zonasInventario.find((zona) => zona.nombre.trim().toLowerCase() === 'bodega') ?? null;
+  const unidadesCaptura = lineas.length || zonaBodega
     ? await prisma.product_zone_units.findMany({
         where: {
-          product_id: { in: lineas.map((l) => l.product_id) },
-          zona_id: { in: lineas.map((l) => l.zona_id) },
+          product_id: { in: productos.map((p) => p.id) },
+          zona_id: { in: [...new Set([...lineas.map((l) => l.zona_id), ...(zonaBodega ? [zonaBodega.id] : [])])] },
         },
-        select: { product_id: true, zona_id: true, unidad_captura: true },
+        select: { product_id: true, zona_id: true, unidad_captura: true, factor: true },
       })
     : [];
-  const unidadCapturaPorPar = new Map(unidadesCaptura.map((u) => [`${u.product_id}:${u.zona_id}`, u.unidad_captura]));
+  const unidadCapturaPorPar = new Map(unidadesCaptura.map((u) => [`${u.product_id}:${u.zona_id}`, { unidad: u.unidad_captura, factor: num0(u.factor) }]));
 
   // Fecha/snapshot a mostrar = el conteo por zona más reciente.
   let snapIdActual: bigint | null = null;
@@ -564,13 +571,22 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
   // los consumos para calcular sus entradas/salidas; con el histórico en
   // crecimiento eso convertía la lectura en O(productos × movimientos).
   const entradasPosterioresPorProducto = new Map<string, number>();
+  const entradasPosterioresPorProductoZona = new Map<string, number>();
   for (const lote of lotesTodos) {
     if (lote.estado === 'cancelado'
       || lote.purchase_id == null && lote.fuente !== 'ajuste_inventario'
       || (fechaActual != null && lote.recibido_at <= fechaActual)
       || esAjusteDelConteoVigente({ product_id: lote.product_id, cantidad: lote.cantidad_inicial, creado_at: lote.creado_at, fuente: lote.fuente })) continue;
     const key = lote.product_id.toString();
-    entradasPosterioresPorProducto.set(key, (entradasPosterioresPorProducto.get(key) ?? 0) + num0(lote.cantidad_inicial));
+    const cantidad = num0(lote.cantidad_inicial);
+    entradasPosterioresPorProducto.set(key, (entradasPosterioresPorProducto.get(key) ?? 0) + cantidad);
+    // Los lotes nuevos ya tienen ubicación persistida. Los históricos sin
+    // ubicación se conservan como Bodega para no perder entradas en la vista.
+    const zonaKey = (lote.zona_id ?? zonaBodegaGlobal?.id)?.toString();
+    if (zonaKey) {
+      const keyZona = `${key}:${zonaKey}`;
+      entradasPosterioresPorProductoZona.set(keyZona, (entradasPosterioresPorProductoZona.get(keyZona) ?? 0) + cantidad);
+    }
   }
   const consumosAjustesPorProducto = new Map<string, number>();
   for (const consumo of consumosPosteriores) {
@@ -608,11 +624,34 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       orden: l.zonas_inventario.orden,
       qty_base: num0(l.qty_captura) * num0(l.factor),
     }));
-    // Las compras recibidas después del conteo entran físicamente a Bodega.
-    // Si esa zona todavía no tiene línea, se conserva el total agregado y no
-    // se inventa una línea histórica que el operador nunca contó.
-    const bodega = zonasConEntradas.find((zona) => zona.zona.trim().toLowerCase() === 'bodega');
-    if (bodega) bodega.qty_base += entradasPosterioresBase;
+    // Toda compra confirmada es una entrada física a Bodega. Si el último
+    // conteo no tenía una línea para ese producto en Bodega (por ejemplo, un
+    // producto nuevo o uno omitido del conteo), agregamos una línea derivada
+    // sólo en la vista operativa. No mutamos el snapshot histórico ni
+    // sumamos la compra dos veces: el total base y FIFO ya la contabilizan.
+    const entradasZona = [...entradasPosterioresPorProductoZona.entries()]
+      .filter(([keyZona]) => keyZona.startsWith(`${p.id}:`));
+    for (const [keyZona, cantidad] of entradasZona) {
+      const zonaId = Number(keyZona.slice(`${p.id}:`.length));
+      let zona = zonasConEntradas.find((candidate) => candidate.zona_id === zonaId);
+      if (!zona) {
+        const metadata = zonasInventario.find((candidate) => Number(candidate.id) === zonaId);
+        if (!metadata) continue;
+        zona = { zona_id: zonaId, zona: metadata.nombre, orden: metadata.orden, qty_base: 0 };
+        zonasConEntradas.push(zona);
+      }
+      zona.qty_base += cantidad;
+    }
+    // Si no existe zona persistida (casos históricos), mantiene el fallback
+    // operativo en Bodega sin duplicar la entrada agregada.
+    if (entradasPosterioresBase > 0 && !entradasZona.length && zonaBodegaGlobal) {
+      let bodega = zonasConEntradas.find((zona) => zona.zona_id === Number(zonaBodegaGlobal.id));
+      if (!bodega) {
+        bodega = { zona_id: Number(zonaBodegaGlobal.id), zona: zonaBodegaGlobal.nombre, orden: zonaBodegaGlobal.orden, qty_base: 0 };
+        zonasConEntradas.push(bodega);
+      }
+      bodega.qty_base += entradasPosterioresBase;
+    }
     const repartoFisico = distribuirConsumoPorZona(zonasConEntradas, consumosPosterioresBase);
     const unitCostPresentation = num(p.unit_cost);
     const unitCostBase = costoUnitarioBase(p);
@@ -719,13 +758,18 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       valor: valorCatalogo,
       categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
       categoria: p.categorias_inventario?.nombre ?? null,
-      por_zona: ls.map((l) => ({
-        zona_id: Number(l.zona_id),
-        zona: l.zonas_inventario.nombre,
-        qty_captura: Math.max(0, (repartoFisico.saldos.get(Number(l.zona_id)) ?? num0(l.qty_captura) * num0(l.factor)) / Math.max(num0(l.factor), 0.0000001)),
-        factor: num0(l.factor),
-        unidad_captura: unidadCapturaPorPar.get(`${l.product_id}:${l.zona_id}`) ?? 'unidad base',
-      })),
+      por_zona: zonasConEntradas.map((zona) => {
+        const referencia = ls.find((linea) => Number(linea.zona_id) === zona.zona_id);
+        const unidad = unidadCapturaPorPar.get(`${p.id}:${zona.zona_id}`);
+        const factor = referencia ? num0(referencia.factor) : unidad?.factor == null ? 1 : num0(unidad.factor);
+        return {
+          zona_id: zona.zona_id,
+          zona: zona.zona,
+          qty_captura: Math.max(0, (repartoFisico.saldos.get(zona.zona_id) ?? zona.qty_base) / Math.max(factor, 0.0000001)),
+          factor,
+          unidad_captura: unidad?.unidad ?? (referencia ? 'unidad base' : p.unidad_base ?? 'unidad base'),
+        };
+      }),
     };
   });
 

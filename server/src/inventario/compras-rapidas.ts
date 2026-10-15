@@ -259,6 +259,8 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     const origenId = input.origen_pago_id === undefined ? actual.origen_pago_id : input.origen_pago_id;
     const origen = origenId ? await tx.ubicaciones_fondos.findFirst({ where: { id: origenId, negocio_id: negocioId, activo: true }, select: { id: true, tipo: true } }) : null;
     if (!origen) throw new HttpError(400, 'La compra requiere una ubicación de pago válida');
+    const bodega = await tx.zonas_inventario.findFirst({ where: { negocio_id: negocioId, nombre: 'Bodega' }, select: { id: true } });
+    if (!bodega) throw new HttpError(409, 'El negocio no tiene configurada la zona Bodega');
     await tx.purchase_capture_lines.deleteMany({ where: { purchase_id: purchaseId } });
     await tx.purchase_capture_lines.createMany({ data: input.lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
     await tx.purchase_lines.deleteMany({ where: { purchase_id: purchaseId } });
@@ -271,7 +273,7 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     for (const [productId, line] of porProducto) {
       const costo = line.importe / line.qty;
       await tx.purchase_lines.create({ data: { purchase_id: purchaseId, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
-      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: BigInt(productId), purchase_id: purchaseId, recibido_at: fecha, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: actual.moneda, fuente: actual.fuente, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref, notas: actual.notas } });
+      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: BigInt(productId), purchase_id: purchaseId, zona_id: bodega.id, recibido_at: fecha, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: actual.moneda, fuente: actual.fuente, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref, notas: actual.notas } });
     }
     const dataCompra = { fecha_recepcion: fecha, proveedor: input.proveedor === undefined ? actual.proveedor : input.proveedor?.trim() || null, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref?.trim() || null, total, origen_pago_id: origen.id };
     await tx.purchases.update({ where: { id: purchaseId }, data: dataCompra });
@@ -433,6 +435,8 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       throw new HttpError(400, `La compra tiene discrepancias que deben corregirse: ${validacion.errores.map((d) => `[${d.codigo}] ${d.mensaje}`).join(' ')}`);
     }
     const notasCompra = notasDeValidacion(compra.notas, validacion);
+    const bodega = await tx.zonas_inventario.findFirst({ where: { negocio_id: negocioId, nombre: 'Bodega' }, select: { id: true } });
+    if (!bodega) throw new HttpError(409, 'El negocio no tiene configurada la zona Bodega');
 
     const productos = new Map<string, { qty: number; importe: number; costo: number; unidad: string | null; contenido: number | null }>();
     for (const l of lineasNormalizadas.filter((linea) => linea.tipo_linea === 'inventario')) {
@@ -451,7 +455,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     for (const [productId, line] of productos) {
       const costo = line.costo;
       const purchaseLine = await tx.purchase_lines.create({ data: { purchase_id: compra.id, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
-      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: purchaseLine.product_id, purchase_id: compra.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: compra.moneda, fuente: compra.fuente, ticket_ref: compra.ticket_ref, notas: notasCompra } });
+      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: purchaseLine.product_id, purchase_id: compra.id, zona_id: bodega.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: compra.moneda, fuente: compra.fuente, ticket_ref: compra.ticket_ref, notas: notasCompra } });
     }
     const categoria = gastoTotal > 0 ? await tx.categorias_gasto.findFirst({ where: { negocio_id: negocioId, nombre: 'Otros', activo: true } }) : null;
     const facturado = origen.tipo === 'banco';

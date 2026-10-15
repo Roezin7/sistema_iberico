@@ -149,6 +149,7 @@ export async function crearCorreccionInventario(input: AjusteInput) {
     if (cantidadBase > 0) {
       await tx.inventory_lots.create({ data: {
         negocio_id: input.negocioId, product_id: input.productId, recibido_at: semana.fecha_fin,
+        zona_id: input.zonaId,
         cantidad_inicial: cantidadBase, cantidad_restante: cantidadBase, costo_unitario: costo,
         fuente: 'ajuste_inventario', ticket_ref: `AJUSTE-INVENTARIO-${input.semanaId}-${ajuste.id}`,
         notas: input.motivo.trim(),

@@ -48,6 +48,7 @@ model negocios {
   silvia_memoria         silvia_memoria[]
   productos_menu         productos_menu[]
   inventory_lots         inventory_lots[]
+  inventory_lot_transfers inventory_lot_transfers[]
   facturas               facturas[]
   inventory_consumptions inventory_consumptions[]
   inventory_fifo_reconciliations inventory_fifo_reconciliations[]
@@ -155,6 +156,9 @@ model zonas_inventario {
   inventory_lines       inventory_lines[]
   product_zone_units    product_zone_units[]
   inventory_adjustments inventory_adjustments[]
+  inventory_lots       inventory_lots[]
+  transferencias_lotes_origen  inventory_lot_transfers[] @relation("TransferZonaOrigen")
+  transferencias_lotes_destino inventory_lot_transfers[] @relation("TransferZonaDestino")
 
   @@unique([negocio_id, nombre])
   @@index([negocio_id])
@@ -376,6 +380,9 @@ model inventory_lots {
   negocio_id        BigInt
   product_id        BigInt
   purchase_id       BigInt?
+  // Ubicación física persistida del lote. Las compras nuevas entran a Bodega;
+  // puede quedar nula en lotes históricos aún no ubicados.
+  zona_id           BigInt?
   recibido_at       DateTime                 @db.Date
   cantidad_inicial  Decimal                  @db.Decimal(14, 4)
   cantidad_restante Decimal                  @db.Decimal(14, 4)
@@ -389,13 +396,41 @@ model inventory_lots {
   negocios          negocios                 @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
   products          products                 @relation(fields: [product_id], references: [id], onDelete: Restrict)
   purchases         purchases?               @relation(fields: [purchase_id], references: [id], onDelete: SetNull)
+  zona              zonas_inventario?        @relation(fields: [zona_id], references: [id], onDelete: Restrict)
   consumptions      inventory_consumptions[]
+  transferencias    inventory_lot_transfers[]
 
   @@index([negocio_id, product_id, recibido_at, id])
   @@index([negocio_id, recibido_at])
   @@index([negocio_id, estado, recibido_at])
   @@index([negocio_id, product_id, estado, recibido_at])
   @@index([purchase_id])
+  @@index([negocio_id, zona_id, product_id, estado, recibido_at])
+}
+
+/// Movimiento auditable de un lote entre zonas físicas. Para no falsear
+/// existencias mientras no exista un balance por zona por lote, sólo se
+/// permiten transferencias del saldo completo del lote.
+model inventory_lot_transfers {
+  id             BigInt   @id @default(autoincrement())
+  negocio_id     BigInt
+  lote_id        BigInt
+  zona_origen_id BigInt?
+  zona_destino_id BigInt
+  cantidad       Decimal  @db.Decimal(14, 4)
+  fecha          DateTime @db.Date
+  motivo         String?
+  usuario_id     BigInt?
+  creado_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  negocios      negocios         @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
+  lote          inventory_lots   @relation(fields: [lote_id], references: [id], onDelete: Cascade)
+  zona_origen   zonas_inventario? @relation("TransferZonaOrigen", fields: [zona_origen_id], references: [id], onDelete: Restrict)
+  zona_destino  zonas_inventario  @relation("TransferZonaDestino", fields: [zona_destino_id], references: [id], onDelete: Restrict)
+
+  @@index([negocio_id, fecha])
+  @@index([negocio_id, lote_id])
+  @@index([negocio_id, zona_destino_id, fecha])
 }
 
 /// Libro inmutable de consumo de lotes. Cada fila explica qué lote pagó una

@@ -81,6 +81,12 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
     const faltantes = productIds.filter((id) => !validos.has(id.toString()));
     if (faltantes.length) throw new HttpError(400, `Producto no válido para este negocio: ${faltantes.map(String).join(', ')}`);
 
+    const bodega = await tx.zonas_inventario.findFirst({
+      where: { negocio_id: negocioId, nombre: 'Bodega' },
+      select: { id: true },
+    });
+    if (!bodega) throw new HttpError(409, 'El negocio no tiene configurada la zona Bodega');
+
     const totalCalculado = input.lineas.reduce(
       (sum, linea) => sum + (linea.importe ?? linea.cantidad_base * linea.costo_unitario_base),
       0,
@@ -124,6 +130,7 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
           negocio_id: negocioId,
           product_id: linea.product_id,
           purchase_id: compra.id,
+          zona_id: bodega.id,
           recibido_at: fecha,
           cantidad_inicial: linea.cantidad_base,
           cantidad_restante: linea.cantidad_base,
@@ -178,7 +185,7 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
 export async function listarLotes(negocioId: bigint, productId?: bigint) {
   const lotes = await prisma.inventory_lots.findMany({
     where: { negocio_id: negocioId, ...(productId ? { product_id: productId } : {}) },
-    include: { products: { select: { name: true, unidad_base: true } } },
+    include: { products: { select: { name: true, unidad_base: true } }, zona: { select: { nombre: true } } },
     orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
   });
   return lotes.map((l) => ({
@@ -191,6 +198,8 @@ export async function listarLotes(negocioId: bigint, productId?: bigint) {
     cantidad_restante: Number(l.cantidad_restante),
     costo_unitario: Number(l.costo_unitario),
     estado: l.estado,
+    zona_id: l.zona_id == null ? null : Number(l.zona_id),
+    zona: l.zona?.nombre ?? null,
     ticket_ref: l.ticket_ref,
   }));
 }

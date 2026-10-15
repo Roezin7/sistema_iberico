@@ -566,7 +566,16 @@ async function conciliacionInventarioSemanaCalculada(negocioId: bigint, semanaId
       select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
     }),
     prisma.inventory_lots.findMany({
-      where: { negocio_id: negocioId, fuente: 'ajuste_inventario', ticket_ref: { startsWith: `AJUSTE-INVENTARIO-${semanaId}-` } },
+      // Los ajustes documentados y la producción interna son entradas físicas
+      // de la semana. La producción no es una compra ni mueve caja, pero sí
+      // debe entrar en la ecuación apertura + entradas − consumo = cierre.
+      where: {
+        negocio_id: negocioId,
+        OR: [
+          { fuente: 'ajuste_inventario', ticket_ref: { startsWith: `AJUSTE-INVENTARIO-${semanaId}-` } },
+          { fuente: 'produccion_interna', recibido_at: { gte: semana.fecha_inicio, lte: limiteSemanaDb } },
+        ],
+      },
       select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true },
     }),
     // FIFO es un libro continuo. No lo reiniciamos al cambiar de semana:

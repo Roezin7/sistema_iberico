@@ -8,6 +8,7 @@ import { listarLotes, registrarCompra } from './compras.js';
 import { prepararAperturaFifo } from './apertura-fifo.js';
 import { consumirVentasEpos, costearVentasPendientesEnVivo, estadoFifoEnVivo } from './consumo-epos.js';
 import { actualizarBorradorLineas, cambiarOrigenPagoCompra, confirmarBorradorCompra, crearBorradorCompra, editarCompraConfirmada, listarBorradoresCompra, listarCompras, obtenerCompraConfirmada, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra, validarCapturaCompra } from './compras-rapidas.js';
+import { listarTransferencias, transferirLote } from './ubicacion-lotes.js';
 
 export const inventarioRouter = Router();
 
@@ -117,6 +118,22 @@ inventarioRouter.get(
     res.json(await listarLotes(req.auth!.negocioId, productId));
   }),
 );
+
+inventarioRouter.get('/lotes/transferencias', soloAdmin, asyncHandler(async (req, res) => {
+  const loteId = req.query.lote_id ? BigInt(z.coerce.number().int().positive().parse(req.query.lote_id)) : undefined;
+  res.json(await listarTransferencias(req.auth!.negocioId, loteId));
+}));
+
+/** POST /inventario/lotes/:id/transferir — mueve el lote completo entre zonas. */
+inventarioRouter.post('/lotes/:id/transferir', soloAdmin, asyncHandler(async (req, res) => {
+  const loteId = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  const body = z.object({
+    zona_destino_id: z.coerce.number().int().positive(),
+    fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    motivo: z.string().trim().max(500).optional().nullable(),
+  }).parse(req.body);
+  res.status(201).json(await transferirLote({ negocioId: req.auth!.negocioId, loteId, zonaDestinoId: BigInt(body.zona_destino_id), fecha: body.fecha, motivo: body.motivo, usuarioId: req.auth!.usuarioId }));
+}));
 
 /** POST /inventario/apertura-fifo — materializa el snapshot de apertura como lotes FIFO. */
 inventarioRouter.post('/apertura-fifo', soloAdmin, asyncHandler(async (req, res) => {

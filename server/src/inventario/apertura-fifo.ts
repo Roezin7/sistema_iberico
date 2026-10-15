@@ -124,7 +124,7 @@ export async function prepararAperturaFifo(input: {
 
     const lineas = await tx.inventory_lines.findMany({
       where: { snapshot_id: semana.inventario_semanal.apertura_snapshot_id },
-      select: { product_id: true, qty_captura: true, factor: true },
+      select: { product_id: true, zona_id: true, qty_captura: true, factor: true },
     });
     if (!lineas.length) throw new HttpError(409, 'El snapshot de apertura no tiene líneas');
 
@@ -135,6 +135,10 @@ export async function prepararAperturaFifo(input: {
     });
     const porId = new Map(productos.map((p) => [p.id.toString(), p]));
     const cantidades = new Map<string, number>();
+    // Si el producto aparece en una sola zona, la apertura FIFO conserva esa
+    // ubicación. Si está repartido, se deja sin zona para no inventar una
+    // localización única y queda visible para regularización/transferencia.
+    const zonaPorProducto = new Map<string, bigint | null>();
     for (const linea of lineas) {
       const cantidad = cantidadBaseDesdeLineaSnapshot({
         qtyCaptura: Number(linea.qty_captura),
@@ -143,6 +147,8 @@ export async function prepararAperturaFifo(input: {
       if (cantidad == null) continue;
       const key = linea.product_id.toString();
       cantidades.set(key, round((cantidades.get(key) ?? 0) + cantidad, 4));
+      const anterior = zonaPorProducto.get(key);
+      zonaPorProducto.set(key, anterior === undefined ? linea.zona_id : anterior === linea.zona_id ? anterior : null);
     }
 
     // El libro FIFO es continuo. Si ya existe existencia abierta recibida
@@ -233,6 +239,7 @@ export async function prepararAperturaFifo(input: {
         data: {
           negocio_id: input.negocioId,
           product_id: lote.product_id,
+          zona_id: zonaPorProducto.get(lote.product_id.toString()) ?? null,
           recibido_at: semana.fecha_inicio,
           cantidad_inicial: lote.cantidad,
           cantidad_restante: lote.cantidad,
