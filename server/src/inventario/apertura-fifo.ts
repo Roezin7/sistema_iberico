@@ -144,7 +144,9 @@ export async function prepararAperturaFifo(input: {
         qtyCaptura: Number(linea.qty_captura),
         factor: Number(linea.factor),
       });
-      if (cantidad == null) continue;
+      // Las líneas en cero sólo describen la unidad disponible en una zona;
+      // no deben volver ambigua la ubicación del lote que sí tiene saldo.
+      if (cantidad == null || cantidad <= 0) continue;
       const key = linea.product_id.toString();
       cantidades.set(key, round((cantidades.get(key) ?? 0) + cantidad, 4));
       const anterior = zonaPorProducto.get(key);
