@@ -1255,7 +1255,14 @@ export async function crearArqueo(negocioId: bigint, usuarioId: bigint, semanaId
   const semana = await getSemanaAbierta(negocioId, semanaId);
   const ubic = await prisma.ubicaciones_fondos.findFirst({ where: { id: BigInt(ubicacionId), negocio_id: negocioId } });
   if (!ubic) throw new HttpError(400, 'Ubicación inválida');
-  const fechaArqueo = fecha ? new Date(`${fecha}T00:00:00Z`) : fechaOperativaHoy();
+  // Si el operador está cerrando una semana que terminó antes de hoy (por
+  // ejemplo, una semana domingo cuando el servidor ya está en lunes), usar
+  // "hoy" deja la fecha fuera del periodo y el arqueo se rechaza aunque el
+  // resto del formulario sea correcto. Cuando no se manda fecha, conserva la
+  // fecha operativa dentro de la semana seleccionada.
+  const hoy = fechaOperativaHoy();
+  const fechaPorDefecto = hoy < semana.fecha_inicio ? semana.fecha_inicio : hoy > semana.fecha_fin ? semana.fecha_fin : hoy;
+  const fechaArqueo = fecha ? new Date(`${fecha}T00:00:00Z`) : fechaPorDefecto;
   if (Number.isNaN(fechaArqueo.getTime()) || fechaArqueo < semana.fecha_inicio || fechaArqueo > semana.fecha_fin) {
     throw new HttpError(400, 'La fecha del arqueo debe estar dentro de la semana seleccionada');
   }
