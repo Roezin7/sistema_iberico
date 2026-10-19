@@ -175,7 +175,7 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
         costo_unitario: Number(l.costo_unitario),
       })),
     };
-  });
+  }, { timeout: 30_000, maxWait: 15_000 });
   // Una compra confirmada puede resolver excepciones anteriores. El lote queda
   // disponible de inmediato y el recálculo respeta la fecha de recepción.
   const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
