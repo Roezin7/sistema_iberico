@@ -30,7 +30,13 @@ function sumarDias(fechaIso: string, n: number): string {
 
 function esDiaOperativo(fecha: string) {
   const weekday = new Date(`${fecha}T12:00:00Z`).getUTCDay();
-  return weekday === 0 || weekday === 5 || weekday === 6;
+  // Viernes–domingo son la operación regular. El jueves queda visible para
+  // registrar eventos especiales sin convertirlo en un día operativo normal.
+  return weekday === 0 || weekday === 4 || weekday === 5 || weekday === 6;
+}
+
+function esEventoEspecial(fecha: string) {
+  return new Date(`${fecha}T12:00:00Z`).getUTCDay() === 4;
 }
 
 type MetodoMixto = 'cash' | 'card';
@@ -211,7 +217,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
           )}
         </span>
       </div>
-      <p className="muted weekly-flow-note">Flujo de la semana: lunes–jueves para preparar y comprar; viernes–domingo para operar, cobrar y cerrar.</p>
+      <p className="muted weekly-flow-note">Flujo de la semana: lunes–miércoles para preparar y comprar; jueves sólo para eventos especiales; viernes–domingo para operar, cobrar y cerrar.</p>
       <nav className="tabs" aria-label="Flujo semanal">
         <button className={tab === 'dia' ? 'tab tab--on' : 'tab'} onClick={() => setTab('dia')}>Operación diaria</button>
         <button className={tab === 'resumen' ? 'tab tab--on' : 'tab'} onClick={() => setTab('resumen')}>Resultado y patrimonio</button>
@@ -259,7 +265,7 @@ function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; d
   return (
     <>
       <div className="resumen-card">
-        <span className="muted">Operación viernes a domingo · ventas de la semana</span>
+        <span className="muted">Operación viernes a domingo · jueves habilitado para eventos especiales</span>
         <strong className="big-number">{mxn(totalSemana)}</strong>
       </div>
 
@@ -278,15 +284,15 @@ function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; d
         })}
       </div>
 
-      {operativos.length === 0 && <div className="empty-state"><strong>No hay días operativos en esta semana.</strong><p>Ibérico registra ventas regulares de viernes a domingo.</p></div>}
+      {operativos.length === 0 && <div className="empty-state"><strong>No hay días operativos ni eventos especiales en esta semana.</strong><p>Ibérico registra ventas regulares de viernes a domingo y permite jueves cuando hay evento.</p></div>}
       {operativos.map((d) => (
-        <DiaCard key={d.fecha} semana={semana} dia={d} abierta={abierta} operativo conciliacion={conciliaciones.find((c) => c.fecha === d.fecha)} onSaved={onChange} />
+        <DiaCard key={d.fecha} semana={semana} dia={d} abierta={abierta} operativo eventoEspecial={esEventoEspecial(d.fecha)} conciliacion={conciliaciones.find((c) => c.fecha === d.fecha)} onSaved={onChange} />
       ))}
     </>
   );
 }
 
-function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { semana: Semana; dia: DiaFila; abierta: boolean; operativo: boolean; conciliacion?: ConciliacionDiaria; onSaved: () => void }) {
+function DiaCard({ semana, dia, abierta, operativo, eventoEspecial = false, conciliacion, onSaved }: { semana: Semana; dia: DiaFila; abierta: boolean; operativo: boolean; eventoEspecial?: boolean; conciliacion?: ConciliacionDiaria; onSaved: () => void }) {
   const [efectivo, setEfectivo] = useState(String(dia.venta_efectivo || ''));
   const [tarjeta, setTarjeta] = useState(String(dia.venta_tarjeta || ''));
   const [propina, setPropina] = useState(String(dia.propina_tarjeta || ''));
@@ -433,7 +439,7 @@ function DiaCard({ semana, dia, abierta, operativo, conciliacion, onSaved }: { s
   return (
     <div className="dia-card">
       <div className="dia-card__head">
-        <strong>{dia.dia} <span className="muted">{dia.fecha.slice(5)}</span></strong>
+        <strong>{dia.dia} <span className="muted">{dia.fecha.slice(5)}</span>{eventoEspecial && <span className="chip chip--info" style={{ marginLeft: '.45rem' }}>Evento especial</span>}</strong>
         <span className="muted">ventas {mxn(ventas)}{egresos ? ` · egresos ${mxn(egresos)}` : ''}</span>
       </div>
       {operativo && <>
