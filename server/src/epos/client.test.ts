@@ -32,6 +32,16 @@ describe('puente Epos', () => {
     expect(eposDiscount({ DiscountValue: 5 })).toBe(5);
   });
 
+  it('prefiere el desglose v4 y descuenta el cambio de efectivo', () => {
+    const result = summarizeBookkeeping([
+      { Product: 'Evento', Quantity: 1, TotalSales: 2722.5, Tender: 'Card/Cash', TransactionID: 79449654 },
+    ], [
+      { transaction_id: 79449654, tender_type_id: 16851, metodo: 'Card', monto: 2000, cambio: 0, aplicado: 2000 },
+      { transaction_id: 79449654, tender_type_id: 16850, metodo: 'Cash', monto: 900, cambio: 177.5, aplicado: 722.5 },
+    ]);
+    expect(result.metodos_pago).toEqual([{ metodo: 'Card', total: 2000 }, { metodo: 'Cash', total: 722.5 }]);
+  });
+
   it('interpreta DateTime sin zona en la zona operativa de Ibérico', () => {
     expect(fechaDeFila({ DateTime: '2026-08-16T20:01:37.15' }, '2026-08-16T00:00:00-06:00').toISOString()).toBe('2026-08-17T02:01:37.150Z');
   });
