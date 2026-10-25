@@ -40,6 +40,7 @@ describe('puente Epos', () => {
       { transaction_id: 79449654, tender_type_id: 16850, metodo: 'Cash', monto: 900, cambio: 177.5, aplicado: 722.5 },
     ]);
     expect(result.metodos_pago).toEqual([{ metodo: 'Card', total: 2000 }, { metodo: 'Cash', total: 722.5 }]);
+    expect(result.dias[0]?.metodos_pago).toEqual([{ metodo: 'Card', total: 2000 }, { metodo: 'Cash', total: 722.5 }]);
   });
 
   it('interpreta DateTime sin zona en la zona operativa de Ibérico', () => {

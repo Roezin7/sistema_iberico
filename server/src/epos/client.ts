@@ -201,6 +201,12 @@ export function summarizeBookkeeping(rows: EposReportRow[], tenderBreakdown: Epo
   const transactions = new Set(rows.map((r) => r.TransactionID).filter((id): id is number => Number.isFinite(id)));
   const products = new Map<string, { nombre: string; product_id: number | null; cantidad: number; ventas: number }>();
   const tenders = new Map<string, number>();
+  const tendersByTransaction = new Map<number, EposTenderBreakdown[]>();
+  for (const tender of tenderBreakdown) {
+    const list = tendersByTransaction.get(tender.transaction_id) ?? [];
+    list.push(tender);
+    tendersByTransaction.set(tender.transaction_id, list);
+  }
   const daily = new Map<string, { fecha: string; transacciones: Set<number>; unidades: number; ventas: number; metodos: Map<string, number> }>();
   for (const row of rows) {
     const productId = eposProductId(row);
@@ -214,10 +220,18 @@ export function summarizeBookkeeping(rows: EposReportRow[], tenderBreakdown: Epo
     tenders.set(tender, (tenders.get(tender) ?? 0) + numberOrZero(row.TotalSales ?? row.NetSales));
     const date = typeof row.DateTime === 'string' && row.DateTime.length >= 10 ? row.DateTime.slice(0, 10) : 'SIN_FECHA';
     const day = daily.get(date) ?? { fecha: date, transacciones: new Set<number>(), unidades: 0, ventas: 0, metodos: new Map<string, number>() };
-    if (Number.isFinite(row.TransactionID)) day.transacciones.add(row.TransactionID!);
+    const transactionId = Number.isFinite(row.TransactionID) ? row.TransactionID! : null;
+    const transactionNueva = transactionId != null && !day.transacciones.has(transactionId);
+    if (transactionId != null) day.transacciones.add(transactionId);
     day.unidades += numberOrZero(row.Quantity);
     day.ventas += numberOrZero(row.TotalSales ?? row.NetSales);
-    day.metodos.set(tender, (day.metodos.get(tender) ?? 0) + numberOrZero(row.TotalSales ?? row.NetSales));
+    if (transactionNueva && tendersByTransaction.has(transactionId)) {
+      for (const detalle of tendersByTransaction.get(transactionId)!) {
+        day.metodos.set(detalle.metodo, (day.metodos.get(detalle.metodo) ?? 0) + detalle.aplicado);
+      }
+    } else if (!tenderBreakdown.length || transactionId == null || !tendersByTransaction.has(transactionId)) {
+      day.metodos.set(tender, (day.metodos.get(tender) ?? 0) + numberOrZero(row.TotalSales ?? row.NetSales));
+    }
     daily.set(date, day);
   }
   return {
