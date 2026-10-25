@@ -41,6 +41,36 @@ export interface EposDailySalesRow {
   [key: string]: unknown;
 }
 
+/** Detalle de cobros de una transacción en la API v4.  BookkeepingReport sólo
+ * expone el texto agregado `Card/Cash`; Transaction conserva cada tender y el
+ * cambio entregado. */
+interface EposV4Tender {
+  TenderTypeId?: number | null;
+  Amount?: number | null;
+  ChangeGiven?: number | null;
+  Type?: string | null;
+}
+
+interface EposV4Transaction {
+  Id?: number | null;
+  Tenders?: EposV4Tender[] | null;
+}
+
+interface EposV4TenderType {
+  Id?: number | null;
+  Name?: string | null;
+  ClassificationId?: number | null;
+}
+
+export interface EposTenderBreakdown {
+  transaction_id: number;
+  tender_type_id: number | null;
+  metodo: string;
+  monto: number;
+  cambio: number;
+  aplicado: number;
+}
+
 function numberOrZero(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -114,7 +144,60 @@ export async function bookkeepingReport(from: string, to: string, locationId?: n
   });
 }
 
-export function summarizeBookkeeping(rows: EposReportRow[]) {
+function clasificarTender(type: EposV4TenderType | undefined, fallback: string | null | undefined) {
+  if (type?.ClassificationId === 2) return 'Cash';
+  if (type?.ClassificationId === 3) return 'Card';
+  const nombre = String(type?.Name ?? fallback ?? '').trim();
+  const clave = nombre.toLowerCase().replace(/[\s_-]/g, '');
+  if (clave.includes('cash') || clave.includes('efectivo')) return 'Cash';
+  if (clave.includes('card') || clave.includes('tarjeta')) return 'Card';
+  return nombre || 'SIN_METODO';
+}
+
+/** Obtiene el desglose real de efectivo/tarjeta. Es deliberadamente tolerante:
+ * si una cuenta no tiene habilitado Transaction v4, el importador conserva el
+ * BookkeepingReport y deja visible el método agregado original. */
+export async function fetchTenderBreakdown(transactionIds: number[]): Promise<EposTenderBreakdown[]> {
+  const ids = [...new Set(transactionIds.filter((id) => Number.isFinite(id)))];
+  if (!ids.length) return [];
+  try {
+    const transactions = await Promise.all(ids.map(async (id) => {
+      try {
+        return { id, transaction: await get<EposV4Transaction>(`v4/Transaction/${id}/false`, {}) };
+      } catch {
+        return null;
+      }
+    }));
+    const rows = transactions.filter((item): item is { id: number; transaction: EposV4Transaction } => item !== null);
+    const typeIds = [...new Set(rows.flatMap(({ transaction }) => (transaction.Tenders ?? []).map((tender) => tender.TenderTypeId).filter((id): id is number => Number.isFinite(id))))];
+    const types = await Promise.all(typeIds.map(async (id) => {
+      try { return [id, await get<EposV4TenderType>(`v4/TenderType/${id}`, {})] as const; } catch { return [id, undefined] as const; }
+    }));
+    const typeMap = new Map(types);
+    return rows.flatMap(({ id, transaction }) => (transaction.Tenders ?? []).map((tender) => {
+      const monto = numberOrZero(tender.Amount);
+      const cambio = numberOrZero(tender.ChangeGiven);
+      return {
+        transaction_id: id,
+        tender_type_id: Number.isFinite(tender.TenderTypeId) ? Number(tender.TenderTypeId) : null,
+        metodo: clasificarTender(typeMap.get(Number(tender.TenderTypeId)), tender.Type),
+        monto,
+        cambio,
+        aplicado: Math.round((monto - cambio) * 100) / 100,
+      };
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function resumirTenders(tenders: EposTenderBreakdown[]) {
+  const totals = new Map<string, number>();
+  for (const tender of tenders) totals.set(tender.metodo, (totals.get(tender.metodo) ?? 0) + tender.aplicado);
+  return [...totals.entries()].map(([metodo, total]) => ({ metodo, total: Math.round(total * 100) / 100 }));
+}
+
+export function summarizeBookkeeping(rows: EposReportRow[], tenderBreakdown: EposTenderBreakdown[] = []) {
   const transactions = new Set(rows.map((r) => r.TransactionID).filter((id): id is number => Number.isFinite(id)));
   const products = new Map<string, { nombre: string; product_id: number | null; cantidad: number; ventas: number }>();
   const tenders = new Map<string, number>();
@@ -143,7 +226,7 @@ export function summarizeBookkeeping(rows: EposReportRow[]) {
     unidades: rows.reduce((sum, row) => sum + numberOrZero(row.Quantity), 0),
     ventas: rows.reduce((sum, row) => sum + numberOrZero(row.TotalSales ?? row.NetSales), 0),
     productos: [...products.values()],
-    metodos_pago: [...tenders.entries()].map(([metodo, total]) => ({ metodo, total })),
+    metodos_pago: tenderBreakdown.length ? resumirTenders(tenderBreakdown) : [...tenders.entries()].map(([metodo, total]) => ({ metodo, total })),
     dias: [...daily.values()].sort((a, b) => a.fecha.localeCompare(b.fecha)).map((day) => ({
       fecha: day.fecha,
       transacciones: day.transacciones.size,
@@ -176,7 +259,8 @@ export async function fetchReconcileData(from: string, to: string, locationId?: 
     dailySales(from, to, locationId),
     bookkeepingReport(from, to, locationId),
   ]);
-  return { daily, bookkeeping };
+  const tenderBreakdown = await fetchTenderBreakdown(bookkeeping.map((row) => row.TransactionID ?? NaN));
+  return { daily, bookkeeping, tenderBreakdown };
 }
 
 export function buildReconcilePreview(
@@ -200,8 +284,8 @@ export function buildReconcilePreview(
 }
 
 export async function reconcilePreview(from: string, to: string, locationId?: number) {
-  const { daily, bookkeeping } = await fetchReconcileData(from, to, locationId);
+  const { daily, bookkeeping, tenderBreakdown } = await fetchReconcileData(from, to, locationId);
   const dailySummary = summarizeDailySales(daily);
-  const bookkeepingSummary = summarizeBookkeeping(bookkeeping);
-  return buildReconcilePreview(from, to, dailySummary, bookkeepingSummary);
+  const bookkeepingSummary = summarizeBookkeeping(bookkeeping, tenderBreakdown);
+  return { ...buildReconcilePreview(from, to, dailySummary, bookkeepingSummary), tender_breakdown: tenderBreakdown };
 }

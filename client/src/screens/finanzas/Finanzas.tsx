@@ -257,7 +257,14 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
 
 function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; dias: DiaFila[]; conciliaciones: ConciliacionDiaria[]; onChange: () => void }) {
   const abierta = semana.estado === 'abierta';
-  const operativos = dias.filter((d) => esDiaOperativo(d.fecha));
+  const jueves = dias.find((d) => esEventoEspecial(d.fecha));
+  const juevesConDatos = Boolean(jueves && (jueves.total_ventas > 0 || jueves.total_egresos > 0 || conciliaciones.some((c) => c.fecha === jueves.fecha)));
+  const [mostrarJueves, setMostrarJueves] = useState(juevesConDatos);
+  useEffect(() => { setMostrarJueves(juevesConDatos); }, [semana.id, juevesConDatos]);
+  const operativos = dias.filter((d) => {
+    const weekday = new Date(`${d.fecha}T12:00:00Z`).getUTCDay();
+    return weekday === 0 || weekday === 5 || weekday === 6 || (weekday === 4 && mostrarJueves);
+  });
   const maxVenta = Math.max(1, ...operativos.map((d) => d.total_ventas));
   const totalSemana = operativos.reduce((a, d) => a + d.total_ventas, 0);
   const promedio = operativos.length ? totalSemana / operativos.length : 0;
@@ -267,6 +274,8 @@ function DiaView({ semana, dias, conciliaciones, onChange }: { semana: Semana; d
       <div className="resumen-card">
         <span className="muted">Operación viernes a domingo · jueves habilitado para eventos especiales</span>
         <strong className="big-number">{mxn(totalSemana)}</strong>
+        {jueves && !mostrarJueves && <button className="btn-secondary" type="button" style={{ marginTop: '1rem' }} onClick={() => setMostrarJueves(true)}>＋ Registrar jueves especial</button>}
+        {jueves && mostrarJueves && <small className="muted" style={{ display: 'block', marginTop: '0.75rem' }}>Jueves visible para captura manual o sincronización de evento especial.</small>}
       </div>
 
       {/* Mini-gráfica de barras por día — misma paleta de datos que Patrimonio:

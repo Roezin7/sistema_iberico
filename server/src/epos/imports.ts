@@ -57,9 +57,9 @@ export async function importarVentasEpos(input: {
     throw new HttpError(400, 'Periodo inválido');
   }
 
-  const { daily, bookkeeping } = await fetchReconcileData(input.from, input.to, input.locationId);
+  const { daily, bookkeeping, tenderBreakdown } = await fetchReconcileData(input.from, input.to, input.locationId);
   const dailySummary = summarizeDailySales(daily);
-  const bookkeepingSummary = summarizeBookkeeping(bookkeeping);
+  const bookkeepingSummary = summarizeBookkeeping(bookkeeping, tenderBreakdown);
   const preview = buildReconcilePreview(input.from, input.to, dailySummary, bookkeepingSummary);
   const claveImportacion = `${input.locationId ?? 0}:${input.from}:${input.to}`;
   const occurrence = new Map<string, number>();
@@ -95,14 +95,14 @@ export async function importarVentasEpos(input: {
           data: {
             location_id: input.locationId, periodo_desde: fromDate, periodo_hasta: toDate,
             estado: 'completada', filas_recibidas: bookkeeping.length,
-            payload_json: JSON.stringify({ daily, bookkeeping }),
+            payload_json: JSON.stringify({ daily, bookkeeping, tender_breakdown: tenderBreakdown }),
           },
         })
       : await tx.epos_importaciones.create({
           data: {
             negocio_id: input.negocioId, clave: claveImportacion, location_id: input.locationId,
             periodo_desde: fromDate, periodo_hasta: toDate, filas_recibidas: bookkeeping.length,
-            payload_json: JSON.stringify({ daily, bookkeeping }),
+            payload_json: JSON.stringify({ daily, bookkeeping, tender_breakdown: tenderBreakdown }),
           },
         });
 
@@ -138,7 +138,7 @@ export async function importarVentasEpos(input: {
   const mapeo = await aplicarMapeoEpos({ negocioId: input.negocioId, from: fromDate, to: toDate });
 
   return {
-    ...preview, persistido: true, importacion_id: Number(result.importacion.id),
+    ...preview, tender_breakdown: tenderBreakdown, persistido: true, importacion_id: Number(result.importacion.id),
     filas_persistidas: result.nuevas, filas_duplicadas: result.duplicadas,
     costeo_en_vivo: {
       ventas: costeoEnVivo.ventas,

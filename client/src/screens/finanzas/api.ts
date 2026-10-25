@@ -169,6 +169,7 @@ export interface EposCorteDiario {
   filas_persistidas: number;
   filas_duplicadas: number;
   importacion_id?: number;
+  tender_breakdown?: { transaction_id: number; tender_type_id: number | null; metodo: string; monto: number; cambio: number; aplicado: number }[];
 }
 
 export interface EposVenta {
