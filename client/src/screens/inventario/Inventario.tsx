@@ -512,6 +512,11 @@ export function BorradorIA({ onGuardado }: { onGuardado: () => void }) {
           lineas: validas.map((l) => ({ product_id: l.product_id, zona_id: zonaId, qty_captura: l.qty_captura })),
           tipo: 'ajuste',
           motivo: 'Borrador de conteo confirmado',
+          // El borrador se revisa y captura en presentaciones físicas
+          // (botellas, bolsas, frascos, etc.). Sin esta bandera el servidor
+          // interpreta la cifra como unidad base y 600 g podrían terminar
+          // convertidos en 600 frascos.
+          unidad_conteo: 'operativa',
         },
       });
       onGuardado();
@@ -526,7 +531,8 @@ export function BorradorIA({ onGuardado }: { onGuardado: () => void }) {
     <>
       <div className="aviso">
         Pega tu conteo (ej. “Corona 48, Ultra 67…”) o sube una foto. La IA propone un borrador;
-        tú lo revisas y confirmas. <b>Nada se guarda hasta que confirmes.</b>
+        tú lo revisas y confirmas. Captura presentaciones físicas (frascos, bolsas, botellas o piezas), no gramos/ml.
+        <b> Nada se guarda hasta que confirmes.</b>
       </div>
 
       <div className="form-mov">
