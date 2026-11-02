@@ -142,26 +142,28 @@ function fechaCivil(value: Date) {
   return `${year}-${month}-${day}`;
 }
 
-/** Las ventas del mismo día que se capturaron después del conteo también
- * deben bajar el físico, salvo cuando el snapshot es un cierre oficial: en
- * ese caso el día de cierre ya está incluido y una importación nocturna no
- * debe volver a descontarlo. */
-function movimientoPosteriorAlSnapshot(fechaEvento: Date, creadoAt: Date, snapshot: Date | null, fechaCierre: string | null = null) {
+/** El snapshot es un corte temporal, no sólo un corte de día.
+ *
+ * Una venta se descuenta únicamente si ocurrió después de que se guardó el
+ * inventario físico. Esto también aplica a cierres oficiales: importar por la
+ * noche una venta ocurrida antes del conteo no debe volver a bajar el físico,
+ * mientras que una venta posterior al conteo sí representa una salida nueva.
+ */
+export function movimientoPosteriorAlSnapshot(fechaEvento: Date, _creadoAt: Date, snapshot: Date | null, _fechaCierre: string | null = null) {
   if (!snapshot) return true;
-  const evento = fechaCivil(fechaEvento);
-  if (fechaCierre) return evento > fechaCierre;
-  const corte = fechaCivil(snapshot);
-  return evento > corte || (evento === corte && creadoAt > snapshot);
+  return fechaEvento.getTime() > snapshot.getTime();
 }
 
 /** Variante para columnas PostgreSQL `date`: Prisma las materializa a
- * medianoche UTC, así que aquí se conserva el día civil almacenado sin
- * convertirlo a la zona de México. */
-function fechaDbPosteriorAlSnapshot(fechaDb: Date, creadoAt: Date, snapshot: Date | null, fechaCierre: string | null = null) {
+ * medianoche UTC. Para consumos ligados a una venta se debe pasar la fecha
+ * real del ticket en `fechaEvento`; los consumos manuales sólo tienen día y
+ * conservan el `creado_at` como mejor aproximación temporal. */
+export function fechaDbPosteriorAlSnapshot(fechaDb: Date, creadoAt: Date, snapshot: Date | null, fechaCierre: string | null = null, fechaEvento: Date | null = null) {
   if (!snapshot) return true;
+  if (fechaEvento) return fechaEvento.getTime() > snapshot.getTime();
   const evento = fechaDb.toISOString().slice(0, 10);
-  if (fechaCierre) return evento > fechaCierre;
   const corte = fechaCivil(snapshot);
+  if (fechaCierre) return evento > fechaCierre || (evento === fechaCierre && creadoAt > snapshot);
   return evento > corte || (evento === corte && creadoAt > snapshot);
 }
 
@@ -320,7 +322,10 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       },
       // `fecha` es el día operativo en que ocurrió el consumo. `creado_at`
       // sólo indica cuándo se importó/costeó y puede ser posterior al conteo.
-      select: { product_id: true, cantidad: true, fecha: true, creado_at: true, fuente: true, epos_venta_id: true },
+      select: {
+        product_id: true, cantidad: true, fecha: true, creado_at: true, fuente: true, epos_venta_id: true,
+        epos_venta: { select: { fecha: true } },
+      },
     }),
     prisma.inventory_adjustments.findMany({
       where: { negocio_id: negocioId },
@@ -581,7 +586,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
 
   const consumoFifoSinRecetaPorProducto = new Map<string, number>();
   for (const consumo of consumosPosteriores) {
-    if (consumo.epos_venta_id == null || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual, fechaCierreActual)) continue;
+    if (consumo.epos_venta_id == null || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual, fechaCierreActual, consumo.epos_venta?.fecha ?? null)) continue;
     const clave = `${consumo.epos_venta_id}:${consumo.product_id}`;
     // Una receta encontrada ya representa la salida física completa; no la
     // volvemos a sumar con su(s) lote(s) FIFO.
@@ -615,7 +620,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
   for (const consumo of consumosPosteriores) {
     if (consumo.epos_venta_id != null
       || esAjusteDelConteoVigente({ product_id: consumo.product_id, cantidad: consumo.cantidad, creado_at: consumo.creado_at, fuente: consumo.fuente })
-      || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual, fechaCierreActual)) continue;
+      || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual, fechaCierreActual, consumo.epos_venta?.fecha ?? null)) continue;
     const key = consumo.product_id.toString();
     consumosAjustesPorProducto.set(key, (consumosAjustesPorProducto.get(key) ?? 0) + num0(consumo.cantidad));
   }
