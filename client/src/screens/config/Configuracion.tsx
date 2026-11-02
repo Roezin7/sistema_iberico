@@ -1,41 +1,58 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { useConfirm, usePrompt } from '../../ui/ConfirmProvider';
 import { useToast } from '../../ui/ToastProvider';
 import { Cargando } from '../../ui/Cargando';
+import CostosMenu from '../costos-menu/CostosMenu';
+import Facturacion from '../facturacion/Facturacion';
+import Marketing from '../marketing/Marketing';
 
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
 
-type Tab = 'general' | 'inventario' | 'recetas' | 'finanzas';
+type Tab = 'general' | 'inventario' | 'recetas' | 'finanzas' | 'menu' | 'facturacion' | 'marketing';
 
 type ConfigFocus = 'minimo' | 'zona' | 'categoria' | 'conversion';
 
 export default function Configuracion() {
+  const location = useLocation();
   const [tab, setTab] = useState<Tab>(() => {
-    const requested = new URLSearchParams(window.location.search).get('tab');
-    return requested === 'inventario' || requested === 'recetas' || requested === 'finanzas' ? requested : 'general';
+    const requested = new URLSearchParams(location.search).get('tab');
+    return requested === 'inventario' || requested === 'recetas' || requested === 'finanzas' || requested === 'menu' || requested === 'facturacion' || requested === 'marketing' ? requested : 'general';
   });
+  useEffect(() => {
+    const requested = new URLSearchParams(location.search).get('tab');
+    if (requested === 'inventario' || requested === 'recetas' || requested === 'finanzas' || requested === 'menu' || requested === 'facturacion' || requested === 'marketing') setTab(requested);
+    else if (!requested) setTab('general');
+  }, [location.search]);
   return (
     <div className="page">
       <header className="page-head">
         <div className="page-title">
           <Icono name="settings" size={24} className="ttl-icon" />
-          <h1>Configuración</h1>
+          <h1>Administración</h1>
         </div>
+        <p className="muted">Catálogo, menú, facturación e integraciones del negocio.</p>
       </header>
       <nav className="tabs">
         <button className={tab === 'general' ? 'tab tab--on' : 'tab'} onClick={() => setTab('general')}>General</button>
         <button className={tab === 'inventario' ? 'tab tab--on' : 'tab'} onClick={() => setTab('inventario')}>Productos</button>
         <button className={tab === 'recetas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('recetas')}>Recetas y costeo</button>
         <button className={tab === 'finanzas' ? 'tab tab--on' : 'tab'} onClick={() => setTab('finanzas')}>Finanzas</button>
+        <button className={tab === 'menu' ? 'tab tab--on' : 'tab'} onClick={() => setTab('menu')}>Menú y precios</button>
+        <button className={tab === 'facturacion' ? 'tab tab--on' : 'tab'} onClick={() => setTab('facturacion')}>Facturación</button>
+        <button className={tab === 'marketing' ? 'tab tab--on' : 'tab'} onClick={() => setTab('marketing')}>Marketing</button>
       </nav>
       <div className="tab-body">
         {tab === 'general' && <General />}
         {tab === 'inventario' && <InventarioCfg />}
         {tab === 'recetas' && <RecetasCfg />}
         {tab === 'finanzas' && <FinanzasCfg />}
+        {tab === 'menu' && <div className="admin-embedded"><CostosMenu /></div>}
+        {tab === 'facturacion' && <div className="admin-embedded"><Facturacion /></div>}
+        {tab === 'marketing' && <div className="admin-embedded"><Marketing /></div>}
       </div>
     </div>
   );

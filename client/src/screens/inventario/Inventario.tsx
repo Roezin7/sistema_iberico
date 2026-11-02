@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { Cargando } from '../../ui/Cargando';
 import WeekSelector from '../../components/WeekSelector';
+import Compras from '../compras/Compras';
 
 // --- Tipos de la API ---
 interface Zona { id: number; nombre: string; orden: number }
@@ -179,24 +180,34 @@ function moverConteoConFlecha(event: KeyboardEvent<HTMLInputElement>) {
 }
 
 export default function Inventario() {
-  const [tab, setTab] = useState<Tab>('conteo');
+  const location = useLocation();
+  const [tab, setTab] = useState<Tab>(() => {
+    const requested = new URLSearchParams(location.search).get('tab');
+    return requested === 'actual' || requested === 'compras' ? requested : 'conteo';
+  });
+  useEffect(() => {
+    const requested = new URLSearchParams(location.search).get('tab');
+    if (requested === 'actual' || requested === 'compras') setTab(requested);
+    else if (!requested) setTab('conteo');
+  }, [location.search]);
   return (
     <div className="page">
       <header className="page-head">
         <div className="page-title">
           <Icono name="package" size={24} className="ttl-icon" />
-          <h1>Inventario</h1>
+          <h1>Abasto</h1>
         </div>
+        <p className="muted">Inventario físico, compras y lotes FIFO en un solo flujo.</p>
       </header>
       <nav className="tabs">
         <button className={tab === 'conteo' ? 'tab tab--on' : 'tab'} onClick={() => setTab('conteo')}>Conteo</button>
         <button className={tab === 'actual' ? 'tab tab--on' : 'tab'} onClick={() => setTab('actual')}>Existencia actual</button>
-        <button className={tab === 'compras' ? 'tab tab--on' : 'tab'} onClick={() => setTab('compras')}>Lista de compras</button>
+        <button className={tab === 'compras' ? 'tab tab--on' : 'tab'} onClick={() => setTab('compras')}>Compras y FIFO</button>
       </nav>
       <div className="tab-body">
         {tab === 'conteo' && <Conteo onGuardado={() => setTab('actual')} />}
         {tab === 'actual' && <InventarioActual />}
-        {tab === 'compras' && <ListaDeCompras />}
+        {tab === 'compras' && <Compras embebida />}
       </div>
     </div>
   );
@@ -724,7 +735,7 @@ function InventarioActual() {
 // ===========================================================================
 //  LISTA DE COMPRAS
 // ===========================================================================
-function ListaDeCompras() {
+export function ListaDeCompras() {
   const [data, setData] = useState<ListaCompras | null>(null);
   useEffect(() => { api<ListaCompras>('/inventario/shopping-list').then(setData); }, []);
   if (!data) return <Cargando />;

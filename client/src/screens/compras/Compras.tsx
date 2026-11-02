@@ -88,14 +88,14 @@ function finEposExclusivo(fecha: string) {
   return `${dia.toISOString().slice(0, 10)}T00:00:00-06:00`;
 }
 
-export default function Compras() {
+export default function Compras({ embebida = false }: { embebida?: boolean }) {
   const { usuario } = useAuth();
   const esAdmin = usuario?.rol === 'admin';
   const parametros = new URLSearchParams(window.location.search);
   const fechaInicial = parametros.get('fecha') || hoy;
   const semanaInicial = Number(parametros.get('semana'));
   const volverAFinanzas = parametros.get('return') === 'finanzas';
-  const tabInicial = parametros.get('tab');
+  const tabInicial = parametros.get('comprasTab') || parametros.get('tab');
   const focoInicial = parametros.get('focus') || undefined;
   const [tab, setTab] = useState<'tickets' | 'lotes' | 'epos' | 'pendientes'>(tabInicial === 'epos' || tabInicial === 'lotes' || tabInicial === 'pendientes' ? tabInicial : 'tickets');
   const [mostrarAuditoria, setMostrarAuditoria] = useState(tabInicial === 'epos' || tabInicial === 'lotes');
@@ -159,8 +159,8 @@ export default function Compras() {
     finally { setConsultando(false); }
   }
 
-  return <div className="page compras-page">
-    <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Entradas</h1></div><p className="muted">Registra compras y gastos.</p>{volverAFinanzas && <Link className="inline-link" to={`/finanzas?semana=${semanaId ?? ''}&tab=cuadre`}>← Volver a Semana</Link>}</header>
+  return <div className={embebida ? 'compras-page compras-page--embedded' : 'page compras-page'}>
+    {!embebida && <header className="page-head"><div className="page-title"><Icono name="package" size={24} className="ttl-icon" /><h1>Entradas</h1></div><p className="muted">Registra compras y gastos.</p>{volverAFinanzas && <Link className="inline-link" to={`/finanzas?semana=${semanaId ?? ''}&tab=cuadre`}>← Volver a Semana</Link>}</header>}
     {!esAdmin && <div className="info-box purchase-operator-note"><strong>Para registrar una compra</strong><span>Sube la foto, confirma fecha y forma de pago y envíala a revisión. No necesitas calcular FIFO.</span></div>}
     {esAdmin && <WeekSelector
       semanas={semanas}

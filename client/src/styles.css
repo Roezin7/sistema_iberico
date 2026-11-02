@@ -2410,6 +2410,9 @@ select:disabled {
 
 /* Compras: el flujo visible es captura → revisión → FIFO. */
 .compras-page .page-head { margin-bottom: .75rem; }
+.compras-page--embedded { display: grid; gap: .75rem; margin-top: .25rem; }
+.admin-embedded > .page { max-width: none; padding: 0; }
+.admin-embedded > .page .page-head { margin-top: .25rem; }
 .compras-week-summary { border-color: rgba(139, 199, 99, .35); }
 .compras-week-summary .section-heading { margin-top: 0; }
 .compras-week-summary .summary-grid { margin-top: .7rem; }
@@ -2981,7 +2984,7 @@ button, input, select, textarea { max-width: 100%; }
   .section-heading > * { min-width: 0; }
   .operation-status__actions { flex-wrap: wrap; }
   .operation-status__actions > * { flex: 1 1 9rem; min-width: 0; }
-  .bottom-nav { grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: stretch; min-height: 62px; padding: .32rem .3rem calc(.32rem + env(safe-area-inset-bottom)); }
+  .bottom-nav { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); align-items: stretch; min-height: 62px; padding: .32rem .3rem calc(.32rem + env(safe-area-inset-bottom)); }
   .bottom-link { min-width: 0; min-height: 50px; overflow: hidden; }
   .bottom-link span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-more-backdrop { position: fixed; inset: 0; z-index: 55; display: flex; align-items: flex-end; background: rgba(12, 10, 8, .42); backdrop-filter: blur(3px); }

@@ -25,9 +25,9 @@ function destinoProblema(description: string) {
   if (texto.includes('sin zona')) return '/configuracion?tab=inventario&calidad=sin_zona&focus=zona';
   if (texto.includes('sin categoría') || texto.includes('sin categoria')) return '/configuracion?tab=inventario&calidad=sin_categoria&focus=categoria';
   if (texto.includes('sin receta')) return '/configuracion?tab=recetas&calidad=sin_receta';
-  if (texto.includes('venta') && (texto.includes('epos') || texto.includes('pendiente'))) return '/compras?tab=epos&focus=ventas-pendientes';
-  if (texto.includes('compra') && texto.includes('pendiente')) return '/compras?tab=pendientes&focus=compras-pendientes';
-  return '/decisiones';
+  if (texto.includes('venta') && (texto.includes('epos') || texto.includes('pendiente'))) return '/inventario?tab=compras&comprasTab=epos&focus=ventas-pendientes';
+  if (texto.includes('compra') && texto.includes('pendiente')) return '/inventario?tab=compras&comprasTab=pendientes&focus=compras-pendientes';
+  return '/';
 }
 
 function todayLabel() {
@@ -37,11 +37,11 @@ function todayLabel() {
 function actionFromHealth(salud: SaludOperativa | null, semana: Semana | null, resumen: Resumen | null, conciliaciones: ConciliacionDiaria[]) {
   const items: ActionItem[] = [];
   (salud?.bloqueadores ?? []).slice(0, 3).forEach((description, i) => items.push({ id: `block-${i}`, title: 'Resolver bloqueador', description, href: destinoProblema(description), tone: 'danger', label: 'Corregir ahora' }));
-  if (resumen?.ventas_epos_pendientes) items.push({ id: 'epos-pending', title: 'Costear ventas pendientes', description: `${resumen.ventas_epos_pendientes} ventas esperan receta, mapeo o lote FIFO.`, href: '/compras?tab=epos&focus=ventas-pendientes', tone: 'warning', label: 'Corregir ahora' });
+  if (resumen?.ventas_epos_pendientes) items.push({ id: 'epos-pending', title: 'Costear ventas pendientes', description: `${resumen.ventas_epos_pendientes} ventas esperan receta, mapeo o lote FIFO.`, href: '/inventario?tab=compras&comprasTab=epos&focus=ventas-pendientes', tone: 'warning', label: 'Corregir ahora' });
   if (semana && !semana.cerrada_at && resumen?.inventario.estado !== 'cerrado') items.push({ id: 'inventory-close', title: 'Confirmar inventario', description: 'El cierre físico se compara contra apertura, compras y consumo teórico.', href: `/inventario?tipo=cierre&semana=${semana.id}`, tone: 'warning', label: 'Abrir conteo' });
   if (semana && !semana.cerrada_at && conciliaciones.filter((c) => c.fecha >= semana.fecha_inicio && c.fecha <= semana.fecha_fin).length === 0) items.push({ id: 'daily-cut', title: 'Confirmar corte diario', description: 'Importa las ventas de Epos y confirma los métodos de pago del día.', href: `/finanzas?semana=${semana.id}&tab=dia`, tone: 'info', label: 'Abrir corte' });
   (salud?.advertencias ?? []).slice(0, 3).forEach((description, i) => items.push({ id: `warn-${i}`, title: 'Revisar advertencia', description, href: destinoProblema(description), tone: 'warning', label: 'Corregir ahora' }));
-  if (!items.length) items.push({ id: 'ok', title: 'Operación en orden', description: 'No hay bloqueadores críticos. Mantén el registro diario y confirma el cierre cuando corresponda.', href: '/tareas', tone: 'success', label: 'Ver checklist' });
+  if (!items.length) items.push({ id: 'ok', title: 'Operación en orden', description: 'No hay bloqueadores críticos. Mantén el registro diario y confirma el cierre cuando corresponda.', href: '/', tone: 'success', label: 'Ver operación' });
   return items.slice(0, 6);
 }
 
@@ -90,7 +90,7 @@ export default function Operacion() {
     </header>
     {error && <div className="operation-error" role="alert"><Icono name="alertCircle" size={18} /><div><strong>No se pudo completar la lectura</strong><p>{error}</p></div><button className="btn-secondary" onClick={() => void cargar()}>Reintentar</button></div>}
     {cargando && !inventario && !resumen ? <section className="card operation-loading"><Cargando etiqueta="Preparando operación…" /></section> : <>
-      <section className={`operation-status operation-status--${estado}`}><div><span className="eyebrow">Estado del sistema</span><h2>{estadoLabel}</h2><p>{semana ? `${weekLabel(semana)} · ${weekStateLabel(semana)}` : 'La operación diaria sigue disponible para registrar actividad.'}</p></div><div className="operation-status__actions"><Link className="btn-primary" to={admin && semana ? `/finanzas?semana=${semana.id}&tab=dia` : '/tareas'}>{admin ? 'Abrir jornada' : 'Abrir checklist'}</Link>{admin && semana && <Link className="btn-secondary" to={`/finanzas?semana=${semana.id}&tab=cierre`}>Preparar cierre</Link>}</div></section>
+      <section className={`operation-status operation-status--${estado}`}><div><span className="eyebrow">Estado del sistema</span><h2>{estadoLabel}</h2><p>{semana ? `${weekLabel(semana)} · ${weekStateLabel(semana)}` : 'La operación diaria sigue disponible para registrar actividad.'}</p></div><div className="operation-status__actions"><Link className="btn-primary" to={admin && semana ? `/finanzas?semana=${semana.id}&tab=dia` : '/'}>{admin ? 'Abrir jornada' : 'Ver operación'}</Link>{admin && semana && <Link className="btn-secondary" to={`/finanzas?semana=${semana.id}&tab=cuadre`}>Preparar cierre</Link>}</div></section>
 
       <section className="operation-metrics" aria-label="Resumen operativo">
         <article><span>Ventas de hoy</span><strong>{mxn(ventasHoy?.total_ventas ?? null)}</strong><small>{ventasHoy ? 'Registradas' : 'Aún sin corte'}</small></article>
@@ -102,7 +102,7 @@ export default function Operacion() {
       <div className="operation-grid">
         <section className="card operation-actions"><div className="section-heading"><div><span className="eyebrow">Siguiente paso</span><h2>Acciones prioritarias</h2><p className="muted">El sistema ordena lo que puede bloquear el cierre.</p></div></div><div className="action-list">{actions.map((item) => <Link className={`action-row action-row--${item.tone}`} to={item.href} key={item.id}><span className="action-icon"><Icono name={toneIcon[item.tone]} size={17} /></span><span className="action-copy"><strong>{item.title}</strong><small>{item.description}</small></span><span className="action-link">{item.label} <Icono name="chevron" size={15} /></span></Link>)}</div></section>
 
-        <section className="card operation-quick"><div className="section-heading"><div><span className="eyebrow">Captura rápida</span><h2>Registrar sin navegar</h2></div></div><div className="quick-actions"><Link to="/compras" className="quick-action"><span><Icono name="package" size={19} /></span><strong>Compra o gasto</strong><small>Subir ticket y revisar</small></Link><Link to="/inventario?tipo=cierre" className="quick-action"><span><Icono name="checks" size={19} /></span><strong>Conteo físico</strong><small>Apertura, cierre o ajuste</small></Link><Link to="/tareas" className="quick-action"><span><Icono name="checkCircle" size={19} /></span><strong>Checklist</strong><small>Ver tareas del día</small></Link><Link to={admin && semana ? `/finanzas?semana=${semana.id}&tab=dia` : '/'} className="quick-action"><span><Icono name="wallet" size={19} /></span><strong>{admin ? 'Corte Epos' : 'Ver inicio'}</strong><small>{admin ? 'Ventas y métodos de pago' : 'Estado del negocio'}</small></Link></div></section>
+        <section className="card operation-quick"><div className="section-heading"><div><span className="eyebrow">Captura rápida</span><h2>Registrar sin navegar</h2></div></div><div className="quick-actions"><Link to="/inventario?tab=compras" className="quick-action"><span><Icono name="package" size={19} /></span><strong>Compra o gasto</strong><small>Subir ticket y revisar</small></Link><Link to="/inventario?tipo=cierre" className="quick-action"><span><Icono name="checks" size={19} /></span><strong>Conteo físico</strong><small>Apertura, cierre o ajuste</small></Link><Link to="/" className="quick-action"><span><Icono name="checkCircle" size={19} /></span><strong>Checklist</strong><small>Tareas dentro de operación</small></Link><Link to={admin && semana ? `/finanzas?semana=${semana.id}&tab=dia` : '/'} className="quick-action"><span><Icono name="wallet" size={19} /></span><strong>{admin ? 'Corte Epos' : 'Ver operación'}</strong><small>{admin ? 'Ventas y métodos de pago' : 'Estado del negocio'}</small></Link></div></section>
       </div>
 
       <div className="operation-grid operation-grid--secondary">
