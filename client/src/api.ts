@@ -2,6 +2,7 @@
 import { encolar } from './offline';
 
 const TOKEN_KEY = 'iberico_token';
+const GET_TIMEOUT_MS = 12_000;
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -46,19 +47,27 @@ async function requestApi<T = unknown>(
   }
 
   let res: Response;
+  const controller = method === 'GET' || method === 'HEAD' ? new AbortController() : null;
+  const timeout = controller ? window.setTimeout(() => controller.abort(), GET_TIMEOUT_MS) : null;
   try {
     res = await fetch(`/api${path}`, {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller?.signal,
     });
   } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new ApiError(0, 'La API tardó demasiado en responder. Verifica la conexión e intenta de nuevo.');
+    }
     // Fallo de red. Si es una mutación, la encolamos para sincronizar luego.
     if (esMutacion && puedeGuardarOffline(path, body)) {
       await encolar({ method, path, body, token: auth ? getToken() : null });
       return { queued: true } as T;
     }
     throw new ApiError(0, esMutacion ? 'Esta acción requiere conexión para proteger la trazabilidad.' : 'Sin conexión');
+  } finally {
+    if (timeout != null) window.clearTimeout(timeout);
   }
 
   if (res.status === 204) return undefined as T;
