@@ -207,7 +207,21 @@ export default function Inventario() {
       <div className="tab-body">
         {tab === 'conteo' && <Conteo onGuardado={() => setTab('actual')} />}
         {tab === 'actual' && <InventarioActual />}
-        {tab === 'compras' && <Compras embebida />}
+        {tab === 'compras' && (
+          <>
+            <section className="card" aria-labelledby="lista-compras-heading">
+              <div className="page-title">
+                <Icono name="package" size={20} className="ttl-icon" />
+                <div>
+                  <h2 id="lista-compras-heading">Lista de compras</h2>
+                  <p className="muted">Faltantes calculados desde la existencia física actual y el mínimo operativo.</p>
+                </div>
+              </div>
+              <ListaDeCompras />
+            </section>
+            <Compras embebida />
+          </>
+        )}
       </div>
     </div>
   );
