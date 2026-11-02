@@ -1,3 +1,4 @@
+import { lazy, Suspense, useState, type JSX } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth, type Rol } from './auth';
 import Login from './screens/Login';
@@ -12,7 +13,6 @@ import SplashIntro from './brand/SplashIntro';
 import { ConfirmProvider } from './ui/ConfirmProvider';
 import { ToastProvider } from './ui/ToastProvider';
 import { Cargando } from './ui/Cargando';
-import { lazy, Suspense, useState, type JSX } from 'react';
 
 function SoloAdmin({ children, rol }: { children: JSX.Element; rol: Rol }) {
   const { usuario } = useAuth();
