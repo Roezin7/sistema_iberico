@@ -143,11 +143,13 @@ function fechaCivil(value: Date) {
 }
 
 /** Las ventas del mismo día que se capturaron después del conteo también
- * deben bajar el físico; el instante de alta evita repetir ventas históricas
- * que sólo se importaron después. */
-function movimientoPosteriorAlSnapshot(fechaEvento: Date, creadoAt: Date, snapshot: Date | null) {
+ * deben bajar el físico, salvo cuando el snapshot es un cierre oficial: en
+ * ese caso el día de cierre ya está incluido y una importación nocturna no
+ * debe volver a descontarlo. */
+function movimientoPosteriorAlSnapshot(fechaEvento: Date, creadoAt: Date, snapshot: Date | null, fechaCierre: string | null = null) {
   if (!snapshot) return true;
   const evento = fechaCivil(fechaEvento);
+  if (fechaCierre) return evento > fechaCierre;
   const corte = fechaCivil(snapshot);
   return evento > corte || (evento === corte && creadoAt > snapshot);
 }
@@ -155,9 +157,10 @@ function movimientoPosteriorAlSnapshot(fechaEvento: Date, creadoAt: Date, snapsh
 /** Variante para columnas PostgreSQL `date`: Prisma las materializa a
  * medianoche UTC, así que aquí se conserva el día civil almacenado sin
  * convertirlo a la zona de México. */
-function fechaDbPosteriorAlSnapshot(fechaDb: Date, creadoAt: Date, snapshot: Date | null) {
+function fechaDbPosteriorAlSnapshot(fechaDb: Date, creadoAt: Date, snapshot: Date | null, fechaCierre: string | null = null) {
   if (!snapshot) return true;
   const evento = fechaDb.toISOString().slice(0, 10);
+  if (fechaCierre) return evento > fechaCierre;
   const corte = fechaCivil(snapshot);
   return evento > corte || (evento === corte && creadoAt > snapshot);
 }
@@ -368,6 +371,25 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
   const fechaPorSnap = new Map(snaps.map((s) => [s.id.toString(), s.created_at]));
   const metadataPorSnap = new Map(snaps.map((s) => [s.id.toString(), { tipo: s.tipo, semana_id: s.semana_id }]));
   const snapIds = snaps.map((s) => s.id);
+  // Un cierre semanal es un corte físico de todos los días de la semana. Si
+  // Epos se importa después del cierre (por ejemplo, el domingo por la noche),
+  // esas ventas históricas no vuelven a descontarse del conteo ya congelado.
+  const fechaCierrePorSnapshot = new Map<string, string>();
+  if (snapIds.length) {
+    const cierres = await prisma.inventario_semanal.findMany({
+      where: { negocio_id: negocioId, cierre_snapshot_id: { in: snapIds } },
+      select: { cierre_snapshot_id: true, semana_id: true },
+    });
+    const semanaIdsCierre = [...new Set(cierres.map((c) => c.semana_id.toString()))].map((id) => BigInt(id));
+    const semanasCierre = semanaIdsCierre.length
+      ? await prisma.semanas.findMany({ where: { negocio_id: negocioId, id: { in: semanaIdsCierre } }, select: { id: true, fecha_fin: true } })
+      : [];
+    const finPorSemana = new Map(semanasCierre.map((semana) => [semana.id.toString(), semana.fecha_fin.toISOString().slice(0, 10)]));
+    for (const cierre of cierres) {
+      const fechaFin = finPorSemana.get(cierre.semana_id.toString());
+      if (fechaFin && cierre.cierre_snapshot_id != null) fechaCierrePorSnapshot.set(cierre.cierre_snapshot_id.toString(), fechaFin);
+    }
+  }
 
   // Determinar el último snapshot por fecha real, no por el ID. Los IDs no
   // garantizan orden cronológico cuando se importan/restauran datos o se
@@ -466,6 +488,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       snapIdActual = p.snapshot_id;
     }
   }
+  const fechaCierreActual = snapIdActual == null ? null : fechaCierrePorSnapshot.get(snapIdActual.toString()) ?? null;
 
   // El físico no puede depender de que FIFO haya alcanzado a costear la
   // venta. Construimos el consumo de las recetas validadas directamente desde
@@ -478,7 +501,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
     // Las ventas anteriores al último conteo no pueden afectar la existencia
     // actual. Evitar traerlas también reduce el payload y el trabajo de
     // resolución de recetas conforme crece el histórico.
-    const inicioVentas = new Date(`${fechaCivil(fechaActual)}T00:00:00Z`);
+    const inicioVentas = new Date(`${fechaCierreActual ?? fechaCivil(fechaActual)}T00:00:00Z`);
     const ventasPosteriores = await prisma.epos_ventas.findMany({
       where: {
         negocio_id: negocioId,
@@ -536,7 +559,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
     const menuPorId = new Map(menusFisicos.filter((m) => m.epos_product_id != null).map((m) => [m.epos_product_id!, m]));
     const menuPorNombre = new Map(menusFisicos.map((m) => [normalizarNombreEpos(m.nombre), m]));
     for (const venta of ventasPosteriores) {
-      if (!movimientoPosteriorAlSnapshot(venta.fecha, venta.creado_at, fechaActual)) continue;
+      if (!movimientoPosteriorAlSnapshot(venta.fecha, venta.creado_at, fechaActual, fechaCierreActual)) continue;
       const menu = (venta.epos_product_id == null ? null : menuPorId.get(venta.epos_product_id))
         ?? menuPorNombre.get(normalizarNombreEpos(venta.producto_nombre));
       const receta = menu?.recetas.find((candidate) => candidate.vigente_desde == null || candidate.vigente_desde <= venta.fecha);
@@ -558,7 +581,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
 
   const consumoFifoSinRecetaPorProducto = new Map<string, number>();
   for (const consumo of consumosPosteriores) {
-    if (consumo.epos_venta_id == null || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual)) continue;
+    if (consumo.epos_venta_id == null || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual, fechaCierreActual)) continue;
     const clave = `${consumo.epos_venta_id}:${consumo.product_id}`;
     // Una receta encontrada ya representa la salida física completa; no la
     // volvemos a sumar con su(s) lote(s) FIFO.
@@ -592,7 +615,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
   for (const consumo of consumosPosteriores) {
     if (consumo.epos_venta_id != null
       || esAjusteDelConteoVigente({ product_id: consumo.product_id, cantidad: consumo.cantidad, creado_at: consumo.creado_at, fuente: consumo.fuente })
-      || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual)) continue;
+      || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, fechaActual, fechaCierreActual)) continue;
     const key = consumo.product_id.toString();
     consumosAjustesPorProducto.set(key, (consumosAjustesPorProducto.get(key) ?? 0) + num0(consumo.cantidad));
   }
@@ -1016,6 +1039,8 @@ export type TipoSnapshotInventario = 'apertura' | 'cierre' | 'ajuste' | 'conteo_
 export interface MetadataSnapshotInventario {
   tipo: TipoSnapshotInventario;
   semana_id?: number | null;
+  /** ID del snapshot anterior cuando el conteo se guarda por zonas. */
+  continuar_snapshot_id?: number | null;
   motivo?: string | null;
   nota?: string | null;
   /** `operativa` recibe piezas físicas y convierte al formato histórico al guardar. */
@@ -1096,39 +1121,70 @@ export async function crearConteo(
   });
 
   const resultado = await prisma.$transaction(async (tx) => {
+    const semanaId = metadata.semana_id == null ? null : BigInt(metadata.semana_id);
+    const continuarSnapshotId = metadata.continuar_snapshot_id == null ? null : BigInt(metadata.continuar_snapshot_id);
+    const snapshotAnterior = continuarSnapshotId == null
+      ? null
+      : await tx.inventory_snapshot.findFirst({
+          where: {
+            id: continuarSnapshotId,
+            negocio_id: negocioId,
+            tipo: metadata.tipo,
+            semana_id: semanaId,
+          },
+          select: { id: true, motivo: true, nota: true },
+        });
+    if (continuarSnapshotId != null && snapshotAnterior == null) {
+      throw new HttpError(409, 'El conteo anterior no existe o no pertenece a la misma semana y tipo.');
+    }
+
     // Una semana sólo puede tener una apertura y un cierre oficiales. Si el
-    // usuario necesita corregirlos, debe usar un ajuste documentado; de esa
-    // forma nunca queda ambiguo qué conteo alimenta el FIFO de la semana.
+    // usuario continúa otra zona, el puntero debe seguir apuntando al snapshot
+    // que se está completando; de esa forma Bodega y Local quedan en un único
+    // conteo oficial sin permitir dos aperturas/cierres independientes.
+    let semanal: { apertura_snapshot_id: bigint | null; cierre_snapshot_id: bigint | null } | null = null;
     if (metadata.semana_id != null && (metadata.tipo === 'apertura' || metadata.tipo === 'cierre')) {
-      const semanal = await tx.inventario_semanal.findFirst({
+      semanal = await tx.inventario_semanal.findFirst({
         where: { semana_id: BigInt(metadata.semana_id), negocio_id: negocioId },
         select: { apertura_snapshot_id: true, cierre_snapshot_id: true },
       });
       const existente = metadata.tipo === 'apertura' ? semanal?.apertura_snapshot_id : semanal?.cierre_snapshot_id;
-      if (existente != null) {
+      if (existente != null && existente !== continuarSnapshotId) {
         const nombre = metadata.tipo === 'apertura' ? 'apertura' : 'cierre';
         throw new HttpError(409, `La semana ya tiene un ${nombre} oficial (snapshot ${existente.toString()}). Usa "Ajuste documentado" para corregirlo sin romper la cadena.`);
       }
     }
+    const lineasAnteriores = continuarSnapshotId == null
+      ? []
+      : await tx.inventory_lines.findMany({
+          where: { snapshot_id: continuarSnapshotId },
+          select: { product_id: true, zona_id: true, qty_captura: true, factor: true },
+        });
+    const reemplazos = new Set(lineasPersistidas.map((linea) => `${linea.product_id}:${linea.zona_id}`));
+    const lineasConsolidadas = [
+      ...lineasAnteriores.filter((linea) => !reemplazos.has(`${linea.product_id}:${linea.zona_id}`)),
+      ...lineasPersistidas,
+    ];
     const snap = await tx.inventory_snapshot.create({ data: {
       negocio_id: negocioId,
       tipo: metadata.tipo,
-      semana_id: metadata.semana_id == null ? null : BigInt(metadata.semana_id),
-      motivo: metadata.motivo?.trim() || null,
-      nota: metadata.nota?.trim() || null,
+      semana_id: semanaId,
+      motivo: metadata.motivo?.trim() || snapshotAnterior?.motivo || null,
+      nota: metadata.nota?.trim() || snapshotAnterior?.nota || null,
     } });
     await tx.inventory_lines.createMany({
-      data: lineasPersistidas.map((l) => ({
+      data: lineasConsolidadas.map((l) => ({
         snapshot_id: snap.id,
         product_id: BigInt(l.product_id),
         zona_id: BigInt(l.zona_id),
         qty_captura: l.qty_captura,
-        factor: factorDe(l.product_id, l.zona_id),
+        factor: 'factor' in l ? l.factor : factorDe(l.product_id, l.zona_id),
       })),
     });
     return {
       snapshot_id: Number(snap.id),
       lineas: lineasInput.length,
+      lineas_consolidadas: lineasConsolidadas.length,
       tipo: metadata.tipo,
       semana_id: metadata.semana_id ?? null,
     };
@@ -1147,7 +1203,9 @@ export async function crearConteo(
       where: {
         negocio_id: negocioId,
         semana_id: BigInt(metadata.semana_id),
-        ...(metadata.tipo === 'apertura' ? { apertura_snapshot_id: null } : { cierre_snapshot_id: null }),
+        ...(metadata.tipo === 'apertura'
+          ? { apertura_snapshot_id: metadata.continuar_snapshot_id == null ? null : BigInt(metadata.continuar_snapshot_id) }
+          : { cierre_snapshot_id: metadata.continuar_snapshot_id == null ? null : BigInt(metadata.continuar_snapshot_id) }),
       },
       data,
     });
@@ -1155,6 +1213,6 @@ export async function crearConteo(
       throw new HttpError(409, `La semana no tiene un ciclo de inventario disponible para vincular el ${metadata.tipo} oficial`);
     }
   }
-  await registrarAuditoria({ negocioId, usuarioId: metadata.usuario_id, entidad: 'snapshot_inventario', entidadId: resultado.snapshot_id, accion: 'crear', despues: { tipo: metadata.tipo, semana_id: metadata.semana_id ?? null, lineas: lineasInput.length, motivo: metadata.motivo ?? null } });
+  await registrarAuditoria({ negocioId, usuarioId: metadata.usuario_id, entidad: 'snapshot_inventario', entidadId: resultado.snapshot_id, accion: 'crear', despues: { tipo: metadata.tipo, semana_id: metadata.semana_id ?? null, continuar_snapshot_id: metadata.continuar_snapshot_id ?? null, lineas: lineasInput.length, lineas_consolidadas: resultado.lineas_consolidadas, motivo: metadata.motivo ?? null } });
   return resultado;
 }

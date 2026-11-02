@@ -224,6 +224,11 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [filtro, setFiltro] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState('');
+  // Un conteo oficial puede capturarse por zonas. El servidor conserva cada
+  // versión como snapshot inmutable y el siguiente guardado continúa el
+  // snapshot anterior para que Bodega y Local queden asociados.
+  const [continuarSnapshotId, setContinuarSnapshotId] = useState<number | null>(null);
+  const [zonasGuardadas, setZonasGuardadas] = useState<number[]>([]);
   // Durante la operación no se capturan conteos. El flujo válido es abrir,
   // cerrar o documentar un ajuste puntual.
   const [tipo, setTipo] = useState<TipoCaptura>(cierreGuiado ? 'cierre' : 'apertura');
@@ -299,12 +304,17 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
     setValores((prev) => ({ ...prev, [`${pid}:${zid}`]: v }));
 
   async function guardar() {
+    if (zonaActiva == null) {
+      setMsg('Selecciona una zona para guardar el inventario.');
+      return;
+    }
     const lineas = Object.entries(valores)
       .filter(([, v]) => v !== '' && !Number.isNaN(Number(v)))
       .map(([k, v]) => {
         const [product_id, zona_id] = k.split(':').map(Number);
         return { product_id, zona_id, qty_captura: Number(v) };
-      });
+      })
+      .filter((linea) => linea.zona_id === zonaActiva);
     if (lineas.length === 0) {
       setMsg('Captura al menos un producto.');
       return;
@@ -324,13 +334,32 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         setMsg('Describe el motivo del ajuste (mínimo 5 caracteres).');
         return;
       }
-      await api('/inventario/snapshots', {
+      const resultado = await api<{ snapshot_id: number }>('/inventario/snapshots', {
         method: 'POST',
-        body: { lineas, tipo, semana_id: semanaGuardar, motivo: motivo.trim() || null, unidad_conteo: 'operativa' },
+        body: {
+          lineas,
+          tipo,
+          semana_id: semanaGuardar,
+          motivo: motivo.trim() || null,
+          unidad_conteo: 'operativa',
+          continuar_snapshot_id: continuarSnapshotId,
+        },
       });
-      setValores({});
-      if (cierreGuiado && regresarFinanzas && semanaGuardar != null) navigate(`/finanzas?semana=${semanaGuardar}&tab=cuadre`);
-      else onGuardado();
+      setContinuarSnapshotId(resultado.snapshot_id);
+      setZonasGuardadas((prev) => (prev.includes(zonaActiva) ? prev : [...prev, zonaActiva]));
+      // Sólo limpia la zona que acaba de guardarse; así una segunda zona no
+      // borra lo que el operador todavía estaba revisando en la primera.
+      setValores((prev) => Object.fromEntries(
+        Object.entries(prev).filter(([key]) => Number(key.split(':')[1]) !== zonaActiva),
+      ));
+      const todasGuardadas = zonas.length > 0 && zonas.every((zona) => zona.id === zonaActiva || zonasGuardadas.includes(zona.id));
+      if (todasGuardadas) {
+        if (cierreGuiado && regresarFinanzas && semanaGuardar != null) navigate(`/finanzas?semana=${semanaGuardar}&tab=cuadre`);
+        else onGuardado();
+      } else {
+        const siguiente = zonas.find((zona) => zona.id !== zonaActiva && !zonasGuardadas.includes(zona.id));
+        setMsg(`${zonas.find((zona) => zona.id === zonaActiva)?.nombre ?? 'Zona'} guardada. Captura ${siguiente?.nombre ?? 'la siguiente zona'} y vuelve a guardar.`);
+      }
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Error al guardar');
     } finally {
@@ -354,7 +383,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
             ['cierre', 'Cierre de semana'],
             ['ajuste', 'Ajuste documentado'],
           ] as const).map(([value, label]) => (
-            <button key={value} type="button" className={tipo === value ? 'pill pill--on' : 'pill'} onClick={() => setTipo(value)}>{label}</button>
+            <button key={value} type="button" className={tipo === value ? 'pill pill--on' : 'pill'} onClick={() => { setTipo(value); setContinuarSnapshotId(null); setZonasGuardadas([]); setMsg(''); }}>{label}</button>
           ))}
         </div>}
         <div className="form-grid form-grid--two">
@@ -362,7 +391,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
             compact
             semanas={semanas}
             value={semanaId}
-            onChange={(id) => { setSemanaId(id); setMsg(''); }}
+            onChange={(id) => { setSemanaId(id); setContinuarSnapshotId(null); setZonasGuardadas([]); setMsg(''); }}
             label="Semana del conteo"
             description="Apertura o cierre que vas a registrar."
             ariaLabel="Semana del conteo"
@@ -434,7 +463,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           Limpiar
         </button>
         <button className="btn-primary" onClick={guardar} disabled={guardando}>
-          {guardando ? 'Guardando…' : cierreGuiado ? 'Confirmar inventario de cierre' : 'Guardar conteo'}
+          {guardando ? 'Guardando…' : cierreGuiado ? `Guardar ${zonas.find((zona) => zona.id === zonaActiva)?.nombre ?? 'zona'} y continuar` : `Guardar ${zonas.find((zona) => zona.id === zonaActiva)?.nombre ?? 'zona'}`}
         </button>
       </div>
     </>

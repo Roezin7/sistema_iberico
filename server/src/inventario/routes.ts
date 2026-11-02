@@ -59,6 +59,8 @@ const conteoSchema = z.object({
   tipo: z.enum(['apertura', 'cierre', 'ajuste']),
   unidad_conteo: z.enum(['captura', 'operativa']).default('captura'),
   semana_id: z.coerce.number().int().positive().nullable().optional(),
+  /** Continúa un snapshot oficial capturado previamente en otra zona. */
+  continuar_snapshot_id: z.coerce.number().int().positive().nullable().optional(),
   motivo: z.string().trim().max(500).nullable().optional(),
   nota: z.string().trim().max(1000).nullable().optional(),
   lineas: z
@@ -87,6 +89,7 @@ inventarioRouter.post(
       tipo: body.tipo,
       unidad_conteo: body.unidad_conteo,
       semana_id: body.semana_id ?? null,
+      continuar_snapshot_id: body.continuar_snapshot_id ?? null,
       motivo: body.motivo,
       nota: body.nota,
       usuario_id: req.auth!.usuarioId,
