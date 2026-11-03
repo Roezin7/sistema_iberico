@@ -98,6 +98,9 @@
 .entry-secondary__form { padding: 0 1rem .25rem; }
 .tab--audit { color: var(--ink-3); border-left: 1px solid var(--border); margin-left: .25rem; }
 .field-block { margin-top: 0.8rem; }
+.inventory-time-field { min-width: 0; margin-bottom: .8rem; }
+.inventory-time-field input { width: 100%; min-width: 0; }
+.inventory-time-field small { font-weight: 400; line-height: 1.5; }
 .field-block textarea { min-height: 72px; resize: vertical; }
 .form-actions { display: flex; align-items: end; gap: 0.5rem; flex-wrap: wrap; }
 .config-intro { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem; align-items: start; border-color: color-mix(in srgb, var(--brand) 38%, var(--border)); }

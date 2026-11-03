@@ -437,7 +437,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         {cargandoConteo && <Cargando etiqueta="Recuperando conteo guardado…" />}
         <div className="section-heading"><div><strong>¿Qué estás contando?</strong><p className="muted">Elige el tipo de conteo.</p></div></div>
         {cierreGuiado ? <div className="info-box info-box--compact">
-          <strong>Confirmación de cierre de {semanaId ? `la semana ${semanaId}` : 'la semana actual'}</strong>
+          <strong style={{ display: 'block' }}>Confirmación de cierre · {semanas.find(s => s.id === semanaId)?.etiqueta ?? 'Semana actual'}</strong>
           <span>El sistema calcula apertura + compras + ajustes − consumo teórico. Revisa el físico y cambia sólo las cantidades que no coincidan; esas diferencias quedarán como alerta de merma o receta.</span>
           {cierrePreview && <span><b>{cierrePreview.productos} productos con movimiento</b> · consumo teórico {formatoCantidad(cierrePreview.consumo_teorico_base)} base · valor esperado {mxn(cierrePreview.valor_esperado)}</span>}
         </div> : <div className="pill-row">
@@ -470,7 +470,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           </button>
         ))}
       </div>
-      {zonaActiva != null && <label>Momento del conteo (México)<input type="datetime-local" value={horasZona[zonaActiva] ?? ''} disabled={zonasGuardadas.includes(zonaActiva) || guardando || cargandoConteo} onChange={e => setHorasZona(prev => ({ ...prev, [zonaActiva]: e.target.value }))} /><small className="muted">Si lo dejas vacío, se usa la hora de guardar esta zona. Las ventas anteriores ya están incluidas; las posteriores sí se descuentan.</small></label>}
+      {zonaActiva != null && <label className="field-block inventory-time-field">Momento del conteo (México)<input type="datetime-local" value={horasZona[zonaActiva] ?? ''} disabled={zonasGuardadas.includes(zonaActiva) || guardando || cargandoConteo} onChange={e => setHorasZona(prev => ({ ...prev, [zonaActiva]: e.target.value }))} /><small className="muted">Si lo dejas vacío, se usa la hora de guardar esta zona. Las ventas anteriores ya están incluidas; las posteriores sí se descuentan.</small></label>}
       {zonaActiva != null && zonasGuardadas.includes(zonaActiva) && tipo !== 'ajuste' && <p className="info-box">Esta zona ya está guardada. Para corregirla, elige Ajuste documentado.</p>}
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
         <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>

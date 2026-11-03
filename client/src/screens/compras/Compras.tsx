@@ -318,7 +318,7 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
       <label>Proveedor<input value={proveedor} onChange={(e) => setProveedor(e.target.value)} placeholder="Ej. La Comer" /></label>
       <label>Se pagó con<select value={origen} onChange={(e) => setOrigen(e.target.value)} disabled={cargandoRefs}><option value="">Seleccionar…</option>{refs?.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}</select></label>
     </div>
-    <details className="entry-secondary"><summary>¿Cuándo llegó a Bodega?</summary><label>Llegada real a Bodega (México)<input type="datetime-local" value={recibida} onChange={(e) => setRecibida(e.target.value)} /><small>Opcional. Sin hora confirmada se conserva sólo el día; no se usa la hora de captura.</small></label></details>
+    <details className="entry-secondary"><summary>¿Cuándo llegó a Bodega?</summary><label className="field-block inventory-time-field">Llegada real a Bodega (México)<input type="datetime-local" value={recibida} onChange={(e) => setRecibida(e.target.value)} /><small>Opcional. Sin hora confirmada se conserva sólo el día; no se usa la hora de captura.</small></label></details>
     <div className="quick-lines">{lineas.map((l, i) => <LineaCompra key={i} linea={l} productos={refs?.productos ?? []} numero={i + 1} editar={(campo, valor) => editar(i, campo, valor)} quitar={lineas.length > 1 ? () => setLineas((v) => v.filter((_, idx) => idx !== i)) : undefined} />)}</div>
     <button className="btn-secondary" disabled={guardando || leyendo} onClick={() => setLineas((v) => [...v, nuevaLineaCompra()])}>+ Agregar artículo</button>
     <details className="purchase-item__details"><summary>Folio, notas u orden incompleta</summary><div className="form-grid form-grid--three">
@@ -634,7 +634,7 @@ function HoraRecepcion({ purchaseId, valor, editable = true }: { purchaseId: num
     finally { setGuardando(false); }
   }
   return <details className="entry-secondary"><summary>{guardada ? 'Llegada a Bodega: ' + inputHoraMexico(guardada).replace('T', ' ') + ' · México' : 'Llegada a Bodega: hora sin confirmar'}</summary>
-    {editable && <><label>Llegada real a Bodega (México)<input type="datetime-local" value={hora} onChange={e => setHora(e.target.value)} /><small>No cambia el pago ni la fecha del ticket. Deja vacío si no conoces la hora.</small></label><button className="btn-secondary" disabled={guardando || hora === inputHoraMexico(guardada)} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Guardar hora de recepción'}</button></>}
+    {editable && <><label className="field-block inventory-time-field">Llegada real a Bodega (México)<input type="datetime-local" value={hora} onChange={e => setHora(e.target.value)} /><small>No cambia el pago ni la fecha del ticket. Deja vacío si no conoces la hora.</small></label><button className="btn-secondary" disabled={guardando || hora === inputHoraMexico(guardada)} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Guardar hora de recepción'}</button></>}
     {mensaje && <p role="status">{mensaje}</p>}
   </details>;
 }
