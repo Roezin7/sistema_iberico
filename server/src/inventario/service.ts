@@ -1,4 +1,6 @@
+import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import { prisma } from '../db.js';
+import { cargarLibroFisico, proyectarProducto, efectivaLote, q4 } from './libro-fisico.js';
 import { valorSnapshotHistorico } from './costos-historicos.js';
 import { instanteReal, referenciaDiaMexico, reconstruirZonas, type EventoFisico } from './cronologia.js';
 import { Prisma, type Prisma as PrismaTypes } from '@prisma/client';
@@ -89,6 +91,7 @@ export interface ProductoActual {
 export interface InventarioActual {
   calculado_at?: string;
   recepciones_sin_hora?: number[];
+  movimientos_pendientes?: { referencia: string; mensaje: string }[];
   snapshot_id: number | null;
   fecha: string | null;
   tipo: string | null;
@@ -289,7 +292,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       where: {
         negocio_id: negocioId,
       },
-      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchase_id: true, zona_id: true, estado: true, creado_at: true,
+      select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchase_id: true, zona_id: true, estado: true, creado_at: true, disponible_desde: true,
         purchases: { select: { recibida_at: true } },
         transferencias: { orderBy: [{ fecha: 'asc' }, { id: 'asc' }], select: { zona_origen_id: true, zona_destino_id: true, cantidad: true, fecha: true, efectiva_at: true } },
       },
@@ -320,7 +323,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
     }),
   ]);
 
-  const lotes = lotesTodos.filter((lote) => lote.estado === 'abierto' && num0(lote.cantidad_restante) > 0 && (!options.hasta || (lote.purchases?.recibida_at ?? referenciaDiaMexico(lote.recibido_at)) <= options.hasta));
+  const lotes = lotesTodos.filter((lote) => lote.estado === 'abierto' && num0(lote.cantidad_restante) > 0 && (!options.hasta || efectivaLote(lote) <= options.hasta));
   const zonaBodegaGlobal = zonasInventario.find((zona) => zona.nombre.trim().toLowerCase() === 'bodega') ?? null;
 
   // El precio de compra sugerido debe ser el último precio realmente recibido
@@ -352,7 +355,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
   }
   for (const [key, lista] of lotesPorProducto) {
     const operativos = lista.filter((l) => l.fuente !== 'historico_prueba');
-    if (operativos.length) lotesPorProducto.set(key, operativos);
+    lotesPorProducto.set(key, operativos);
   }
 
   const metadataPorSnap = new Map(snaps.map((s) => [s.id.toString(), { tipo: s.tipo, semana_id: s.semana_id }]));
@@ -455,133 +458,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
     }
   }
   const corteInicial = pares.length ? new Date(Math.min(...pares.map(p => p.created_at.getTime()))) : null;
-  const eventosPorProducto = new Map<string, EventoFisico[]>();
-  const agregarEvento = (productId: bigint, evento: EventoFisico) => {
-    if (options.hasta && evento.fecha > options.hasta) return;
-    const key = productId.toString(); const eventos = eventosPorProducto.get(key) ?? [];
-    eventos.push(evento); eventosPorProducto.set(key, eventos);
-  };
-
-  // El físico no puede depender de que FIFO haya alcanzado a costear la
-  // venta. Construimos el consumo de las recetas validadas directamente desde
-  // Epos; si una venta está en excepción por falta de lote, aun así ya salió
-  // físicamente del Local y después de la Bodega. El libro FIFO se conserva
-  // como auditoría y sólo se usa como respaldo cuando no hay receta utilizable.
-  const consumoVentaPorClave = new Map<string, number>();
-  if (corteInicial != null) {
-    // Las ventas anteriores al último conteo no pueden afectar la existencia
-    // actual. Evitar traerlas también reduce el payload y el trabajo de
-    // resolución de recetas conforme crece el histórico.
-    const inicioVentas = corteInicial;
-    const ventasPosteriores = await prisma.epos_ventas.findMany({
-      where: {
-        negocio_id: negocioId,
-        fecha: { gte: inicioVentas, ...(options.hasta ? { lte: options.hasta } : {}) },
-      },
-      select: { id: true, fecha: true, creado_at: true, epos_product_id: true, producto_nombre: true, cantidad: true },
-    });
-    // La relación anidada de recetas es costosa en Prisma. Primero resolvemos
-    // sólo el catálogo ligero y luego pedimos recetas para los menús que
-    // realmente aparecen en las ventas desde el último snapshot.
-    const menusBase = await prisma.productos_menu.findMany({
-      where: { negocio_id: negocioId, activo: true },
-      select: { id: true, nombre: true, epos_product_id: true },
-    });
-    const idsEpos = new Set(ventasPosteriores.map((venta) => venta.epos_product_id).filter((id): id is number => id != null));
-    const nombresEpos = new Set(ventasPosteriores.map((venta) => normalizarNombreEpos(venta.producto_nombre)));
-    const menusRelevantes = menusBase.filter((menu) => (menu.epos_product_id != null && idsEpos.has(menu.epos_product_id)) || nombresEpos.has(normalizarNombreEpos(menu.nombre)));
-    const recetaLineas = menusRelevantes.length
-      ? await prisma.$queryRaw<Array<{
-          producto_menu_id: bigint;
-          version: number;
-          vigente_desde: Date | null;
-          product_id: bigint;
-          cantidad: PrismaTypes.Decimal | number;
-          unidad: string;
-          unidad_base: string | null;
-        }>>(Prisma.sql`
-          SELECT r.producto_menu_id, r.version, r.vigente_desde,
-                 rl.product_id, rl.cantidad, rl.unidad, p.unidad_base
-          FROM recetas r
-          JOIN receta_lineas rl ON rl.receta_id = r.id
-          JOIN products p ON p.id = rl.product_id
-          WHERE r.estado = 'validada'
-            AND r.producto_menu_id IN (${Prisma.join(menusRelevantes.map((menu) => menu.id))})
-          ORDER BY r.producto_menu_id, r.version DESC
-        `)
-      : [];
-    const recetasPorMenu = new Map<string, Array<{
-      version: number;
-      vigente_desde: Date | null;
-      lineas: Array<{ product_id: bigint; cantidad: PrismaTypes.Decimal | number; unidad: string; products: { unidad_base: string | null } }>;
-    }>>();
-    for (const linea of recetaLineas) {
-      const key = linea.producto_menu_id.toString();
-      const recetas = recetasPorMenu.get(key) ?? [];
-      let receta = recetas.find((item) => item.version === linea.version);
-      if (!receta) {
-        receta = { version: linea.version, vigente_desde: linea.vigente_desde, lineas: [] };
-        recetas.push(receta);
-      }
-      receta.lineas.push({ product_id: linea.product_id, cantidad: linea.cantidad, unidad: linea.unidad, products: { unidad_base: linea.unidad_base } });
-      recetasPorMenu.set(key, recetas);
-    }
-    const menusFisicos = menusRelevantes.map((menu) => ({ ...menu, recetas: recetasPorMenu.get(menu.id.toString()) ?? [] }));
-    const menuPorId = new Map(menusFisicos.filter((m) => m.epos_product_id != null).map((m) => [m.epos_product_id!, m]));
-    const menuPorNombre = new Map(menusFisicos.map((m) => [normalizarNombreEpos(m.nombre), m]));
-    for (const venta of ventasPosteriores) {
-      if (!movimientoPosteriorAlSnapshot(venta.fecha, venta.creado_at, corteInicial)) continue;
-      const menu = (venta.epos_product_id == null ? null : menuPorId.get(venta.epos_product_id))
-        ?? menuPorNombre.get(normalizarNombreEpos(venta.producto_nombre));
-      const receta = menu?.recetas.find((candidate) => candidate.vigente_desde == null || candidate.vigente_desde.toISOString().slice(0, 10) <= fechaCivil(venta.fecha));
-      if (!receta) continue;
-      const cantidadVendida = Number(venta.cantidad);
-      if (!Number.isFinite(cantidadVendida) || cantidadVendida <= 0) continue;
-      for (const linea of receta.lineas) {
-        const cantidadBase = linea.products.unidad_base == null
-          ? null
-          : convertirCantidad(Number(linea.cantidad) * cantidadVendida, linea.unidad, linea.products.unidad_base);
-        if (cantidadBase == null || cantidadBase <= 0) continue;
-        const clave = `${venta.id}:${linea.product_id}`;
-        consumoVentaPorClave.set(clave, (consumoVentaPorClave.get(clave) ?? 0) + cantidadBase);
-        agregarEvento(linea.product_id, { tipo: 'venta', fecha: venta.fecha, cantidad: cantidadBase });
-      }
-    }
-  }
-
-  for (const consumo of consumosPosteriores) {
-    if (consumo.epos_venta_id == null || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, corteInicial, null, consumo.epos_venta?.fecha ?? null)) continue;
-    const clave = `${consumo.epos_venta_id}:${consumo.product_id}`;
-    // Una receta encontrada ya representa la salida física completa; no la
-    // volvemos a sumar con su(s) lote(s) FIFO.
-    if (consumoVentaPorClave.has(clave)) continue;
-    agregarEvento(consumo.product_id, { tipo: 'venta', fecha: consumo.epos_venta?.fecha ?? referenciaDiaMexico(consumo.fecha), cantidad: num0(consumo.cantidad) });
-  }
-
-  // Agrupar una sola vez. Antes cada producto recorría todos los lotes y todos
-  // los consumos para calcular sus entradas/salidas; con el histórico en
-  // crecimiento eso convertía la lectura en O(productos × movimientos).
-  for (const lote of lotesTodos) {
-    if (lote.estado === 'cancelado') continue;
-    for (const transferencia of lote.transferencias) {
-      agregarEvento(lote.product_id, { tipo: 'transferencia', fecha: transferencia.efectiva_at ?? referenciaDiaMexico(transferencia.fecha), cantidad: num0(transferencia.cantidad), origen: Number(transferencia.zona_origen_id ?? zonaBodegaGlobal?.id), destino: Number(transferencia.zona_destino_id) });
-    }
-    if (lote.purchase_id == null && lote.fuente !== 'ajuste_inventario'
-      || esAjusteDelConteoVigente({ product_id: lote.product_id, cantidad: lote.cantidad_inicial, creado_at: lote.creado_at, fuente: lote.fuente })) continue;
-    const origen = lote.transferencias[0] ? lote.transferencias[0].zona_origen_id ?? zonaBodegaGlobal?.id : lote.zona_id ?? zonaBodegaGlobal?.id;
-    // Un rebase FIFO puede capturarse semanas después de su fecha efectiva.
-    // `creado_at` nunca convierte ese ajuste contable en una recepción nueva.
-    if (origen != null) agregarEvento(lote.product_id, { tipo: 'entrada', fecha: lote.purchases?.recibida_at ?? referenciaDiaMexico(lote.recibido_at), cantidad: num0(lote.cantidad_inicial), zonaId: Number(origen) });
-  }
-  for (const consumo of consumosPosteriores) {
-    if (consumo.epos_venta_id != null
-      || esAjusteDelConteoVigente({ product_id: consumo.product_id, cantidad: consumo.cantidad, creado_at: consumo.creado_at, fuente: consumo.fuente })
-      || !fechaDbPosteriorAlSnapshot(consumo.fecha, consumo.creado_at, corteInicial, null, consumo.epos_venta?.fecha ?? null)) continue;
-    const ajuste = ajustesInventario.find(a => a.product_id === consumo.product_id && Math.abs(a.creado_at.getTime() - consumo.creado_at.getTime()) <= 10_000);
-    const zonaSalida = ajuste?.zona_id ?? consumo.lote.zona_id ?? zonaBodegaGlobal?.id;
-    if (zonaSalida != null) agregarEvento(consumo.product_id, { tipo: 'salida', fecha: consumo.creado_at, cantidad: num0(consumo.cantidad), zonaId: Number(zonaSalida) });
-  }
-
+  const libro = await cargarLibroFisico(prisma, negocioId, options.hasta!, corteInicial ?? undefined);
   // Agrupar líneas por producto.
   const lineasPorProducto = new Map<string, typeof lineas>();
   for (const l of lineas) {
@@ -600,7 +477,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       corte: ultimoPorZona.get(z.id.toString())?.created_at ?? null,
       cantidad: ls.filter(l => l.zona_id === z.id).reduce((sum, l) => sum + num0(l.qty_captura) * num0(l.factor), 0),
     }));
-    const reconstruido = reconstruirZonas(anclas, eventosPorProducto.get(p.id.toString()) ?? []);
+    const reconstruido = proyectarProducto(anclas, libro.eventos, p.id, options.hasta!, new Set(pares.map(p => p.snapshot_id)));
     const entradasPosterioresBase = reconstruido.entradas;
     const consumosPosterioresBase = reconstruido.consumos;
     const totalBase = reconstruido.total;
@@ -629,8 +506,8 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
     // El físico operativo parte del conteo y aplica las entradas/consumos
     // registrados. FIFO sigue siendo el libro de lotes y una auditoría, no una
     // segunda existencia que se sume por separado.
-    const existenciaFisicaBase = redondear(totalBase);
-    const existenciaFifoBase = lotesProducto.length ? redondear(cantidadesLotes) : null;
+    const existenciaFisicaBase = q4(totalBase);
+    const existenciaFifoBase = lotesProducto.length ? q4(cantidadesLotes) : null;
     const cantidadFifoOperativa = lotesProducto.length
       ? cantidadOperativaInventario({
           totalBase: cantidadesLotes,
@@ -696,13 +573,13 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
         unidadBase: p.unidad_base,
         contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
       }),
-      conteo_fisico_base: redondear(conteoFisicoBase),
-      entradas_posteriores_base: redondear(entradasPosterioresBase),
-      consumos_posteriores_base: redondear(consumosPosterioresBase),
-      movimientos_no_cubiertos_base: redondear(reconstruido.noCubierto),
+      conteo_fisico_base: q4(conteoFisicoBase),
+      entradas_posteriores_base: q4(entradasPosterioresBase),
+      consumos_posteriores_base: q4(consumosPosterioresBase),
+      movimientos_no_cubiertos_base: q4(reconstruido.noCubierto),
       existencia_fifo_base: existenciaFifoBase,
       existencia_fifo_operativa: cantidadFifoOperativa,
-      diferencia_fifo_vs_fisico_base: existenciaFifoBase == null ? null : redondear(existenciaFifoBase - existenciaFisicaBase),
+      diferencia_fifo_vs_fisico_base: existenciaFifoBase == null ? null : q4(existenciaFifoBase - existenciaFisicaBase),
       existencia_actual_base: existenciaFisicaBase,
       existencia_actual_operativa: cantidadOperativaInventario({
         totalBase: existenciaFisicaBase,
@@ -742,6 +619,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
   return {
     calculado_at: options.hasta!.toISOString(),
     recepciones_sin_hora: recepcionesSinHora,
+    movimientos_pendientes: libro.errores,
     snapshot_id: snapIdActual != null ? Number(snapIdActual) : null,
     fecha: fechaActual ? fechaActual.toISOString() : null,
     tipo: snapIdActual != null ? metadataPorSnap.get(snapIdActual.toString())?.tipo ?? null : null,
@@ -806,107 +684,22 @@ export interface CierreInventarioPreviewLinea {
  * independiente que se contrasta contra el conteo físico del cierre.
  */
 export async function cierreInventarioPreview(negocioId: bigint, semanaId: bigint) {
-  const semana = await prisma.semanas.findFirst({
-    where: { id: semanaId, negocio_id: negocioId },
-    select: { id: true, fecha_inicio: true, fecha_fin: true },
+  const semana = await prisma.semanas.findFirst({ where: { negocio_id: negocioId, id: semanaId } });
+  const ciclo = await prisma.inventario_semanal.findFirst({ where: { negocio_id: negocioId, semana_id: semanaId } });
+  if (!semana || !ciclo?.apertura_snapshot_id) throw new HttpError(409, 'La semana todavía no tiene inventario de apertura');
+  const apertura = await prisma.inventory_snapshot.findUniqueOrThrow({ where: { id: ciclo.apertura_snapshot_id }, include: { inventory_lines: true } });
+  const fin = new Date(semana.fecha_fin); fin.setUTCDate(fin.getUTCDate() + 1);
+  const hasta = new Date(Math.min(Date.now(), new Date(`${fin.toISOString().slice(0,10)}T00:00:00-06:00`).getTime()));
+  const limiteLegado = new Date(new Date(`${semana.fecha_inicio.toISOString().slice(0,10)}T00:00:00-06:00`).getTime()-1);
+  const desde = new Date(Math.min(...apertura.inventory_lines.map(l => (l.contado_at ?? (apertura.semana_id !== semanaId ? limiteLegado : apertura.created_at)).getTime())));
+  const [libro, productos] = await Promise.all([cargarLibroFisico(prisma, negocioId, hasta, desde), prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, orderBy: { name: 'asc' } })]);
+  const lineas = productos.map(p => {
+    const anclas = libro.zonas.map(z => ({ zonaId: Number(z.id), nombre: z.nombre, corte: apertura.inventory_lines.find(l => l.zona_id === z.id)?.contado_at ?? (apertura.semana_id !== semanaId ? limiteLegado : apertura.created_at), cantidad: apertura.inventory_lines.filter(l => l.product_id === p.id && l.zona_id === z.id).reduce((s,l) => s + Number(l.qty_captura)*Number(l.factor),0) }));
+    const saldo = proyectarProducto(anclas, libro.eventos, p.id, hasta, new Set([apertura.id]));
+    const costo = costoUnitarioBase(p);
+    return { product_id: Number(p.id), producto: p.name, unidad_base: p.unidad_base, unidad_operativa: unidadOperativaInventario(p.unidad_base, p.unidad_compra), apertura_base: anclas.reduce((s,a) => s+a.cantidad,0), compras_base: saldo.entradas, ajustes_base: 0, consumo_teorico_base: saldo.consumos, esperado_base: saldo.total, esperado_operativo: cantidadOperativaInventario({ totalBase: saldo.total, unidadBase: p.unidad_base, contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra) }), costo_unitario_base: costo, valor_esperado: costo == null ? null : saldo.total*costo };
   });
-  if (!semana) throw new HttpError(404, 'Semana no encontrada');
-  const ciclo = await prisma.inventario_semanal.findUnique({
-    where: { semana_id: semanaId },
-    select: { apertura_snapshot_id: true, cierre_snapshot_id: true },
-  });
-  if (!ciclo?.apertura_snapshot_id) {
-    throw new HttpError(409, 'La semana todavía no tiene inventario de apertura');
-  }
-
-  const limite = new Date(`${semana.fecha_fin.toISOString().slice(0, 10)}T23:59:59.999Z`);
-  const [productos, aperturaLineas, entradas, consumos, ajustesConsumo] = await Promise.all([
-    prisma.products.findMany({
-      where: { negocio_id: negocioId, active: true },
-      select: { id: true, name: true, unidad_base: true, unidad_compra: true, contenido_compra: true, unit_cost: true },
-      orderBy: { name: 'asc' },
-    }),
-    prisma.inventory_lines.findMany({
-      where: { snapshot_id: ciclo.apertura_snapshot_id },
-      select: { product_id: true, qty_captura: true, factor: true },
-    }),
-    prisma.inventory_lots.findMany({
-      where: {
-        negocio_id: negocioId,
-        recibido_at: { gte: semana.fecha_inicio, lte: limite },
-        OR: [{ purchase_id: { not: null } }, { fuente: 'ajuste_inventario' }],
-      },
-      select: { product_id: true, cantidad_inicial: true, fuente: true },
-    }),
-    prisma.inventory_consumptions.findMany({
-      where: {
-        negocio_id: negocioId,
-        fecha: { gte: semana.fecha_inicio, lte: limite },
-        ...filtroConsumoFifoActivo(),
-      },
-      select: { product_id: true, cantidad: true },
-    }),
-    prisma.inventory_consumptions.findMany({
-      where: {
-        negocio_id: negocioId,
-        fecha: { gte: semana.fecha_inicio, lte: limite },
-        fuente: 'ajuste_inventario',
-      },
-      select: { product_id: true, cantidad: true },
-    }),
-  ]);
-
-  const redondearCantidad = (n: number) => Math.round((n + Number.EPSILON) * 10_000) / 10_000;
-  const sumar = (mapa: Map<string, number>, productId: bigint, cantidad: number) => {
-    const key = productId.toString();
-    mapa.set(key, redondearCantidad((mapa.get(key) ?? 0) + cantidad));
-  };
-  const apertura = new Map<string, number>();
-  for (const linea of aperturaLineas) sumar(apertura, linea.product_id, num0(linea.qty_captura) * num0(linea.factor));
-  const compras = new Map<string, number>();
-  const ajustes = new Map<string, number>();
-  for (const entrada of entradas) {
-    if (entrada.fuente === 'ajuste_inventario') sumar(ajustes, entrada.product_id, num0(entrada.cantidad_inicial));
-    else sumar(compras, entrada.product_id, num0(entrada.cantidad_inicial));
-  }
-  for (const ajuste of ajustesConsumo) sumar(ajustes, ajuste.product_id, -num0(ajuste.cantidad));
-  const consumo = new Map<string, number>();
-  for (const fila of consumos) sumar(consumo, fila.product_id, num0(fila.cantidad));
-
-  const lineas = productos.map((producto) => {
-    const key = producto.id.toString();
-    const aperturaBase = redondearCantidad(apertura.get(key) ?? 0);
-    const comprasBase = redondearCantidad(compras.get(key) ?? 0);
-    const ajustesBase = redondearCantidad(ajustes.get(key) ?? 0);
-    const consumoBase = redondearCantidad(consumo.get(key) ?? 0);
-    const esperadoBase = redondearCantidad(Math.max(0, aperturaBase + comprasBase + ajustesBase - consumoBase));
-    const costo = costoUnitarioBase(producto);
-    return {
-      product_id: Number(producto.id),
-      producto: producto.name,
-      unidad_base: producto.unidad_base,
-      unidad_operativa: unidadOperativaInventario(producto.unidad_base, producto.unidad_compra),
-      apertura_base: aperturaBase,
-      compras_base: comprasBase,
-      ajustes_base: ajustesBase,
-      consumo_teorico_base: consumoBase,
-      esperado_base: esperadoBase,
-      esperado_operativo: cantidadOperativaInventario({ totalBase: esperadoBase, unidadBase: producto.unidad_base, contenidoCompra: producto.contenido_compra == null ? null : num0(producto.contenido_compra) }),
-      costo_unitario_base: costo,
-      valor_esperado: costo == null ? null : redondearCantidad(esperadoBase * costo),
-    } satisfies CierreInventarioPreviewLinea;
-  }).filter((linea) => linea.apertura_base > 0 || linea.compras_base > 0 || linea.ajustes_base !== 0 || linea.consumo_teorico_base > 0);
-
-  return {
-    semana_id: Number(semanaId),
-    apertura_snapshot_id: Number(ciclo.apertura_snapshot_id),
-    cierre_snapshot_id: ciclo.cierre_snapshot_id == null ? null : Number(ciclo.cierre_snapshot_id),
-    formula: 'apertura + compras + ajustes − consumo teórico',
-    lineas,
-    productos: lineas.length,
-    consumo_teorico_base: redondearCantidad(lineas.reduce((suma, linea) => suma + linea.consumo_teorico_base, 0)),
-    valor_esperado: redondearCantidad(lineas.reduce((suma, linea) => suma + (linea.valor_esperado ?? 0), 0)),
-  };
+  return { semana_id: Number(semanaId), apertura_snapshot_id: Number(apertura.id), cierre_snapshot_id: ciclo.cierre_snapshot_id == null ? null : Number(ciclo.cierre_snapshot_id), corte_at: hasta.toISOString(), formula: 'físico inicial + entradas − ventas por receta − salidas operativas, por hora y zona', lineas, productos: lineas.length, consumo_teorico_base: lineas.reduce((s,l)=>s+l.consumo_teorico_base,0), valor_esperado: lineas.reduce((s,l)=>s+(l.valor_esperado??0),0), valor_estimado: true, advertencias: libro.errores };
 }
 
 /** Lista de compras: faltantes contra el inventario físico, agrupados por tienda.
@@ -1083,7 +876,10 @@ export async function crearConteo(
     .map((z) => ({ product_id: BigInt(p.product_id), zona_id: BigInt(z.zona_id), qty_captura: z.qty_captura, factor: z.factor }))) ?? [];
 
   const resultado = await prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
+    await exigirPeriodoMutable(tx, negocioId, contadoAt);
     const semanaId = metadata.semana_id == null ? null : BigInt(metadata.semana_id);
+    if (semanaId && metadata.tipo !== 'ajuste' && await tx.inventory_control_closures.findFirst({ where: { negocio_id: negocioId, semana_id: semanaId } })) throw new HttpError(409, 'El inventario de esta semana ya fue conciliado');
     if (semanaId != null) {
       await tx.$queryRaw`SELECT id FROM semanas WHERE id = ${semanaId} AND negocio_id = ${negocioId} FOR UPDATE`;
       const semana = await tx.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId }, select: { estado: true } });

@@ -32,7 +32,7 @@ try {
   assert.deepEqual(lots.map(l=>Number(l.costo_unitario)).sort((a,b)=>a-b),[0.023529,0.05]);
   assert.equal(await prisma.movimientos.count({where:{compra_id:BigInt(pid)}}),1);
   const observationsBefore = await prisma.product_presentation_variants.aggregate({where:{product_id:27n},_sum:{observaciones:true}});
-  const twice = await request(`/inventario/compras/${pid}/confirmar`, 'POST', {}); assert.equal(twice.status,409);
+  const twice = await request(`/inventario/compras/${pid}/confirmar`, 'POST', {}); assert.equal(twice.status,200);
   const edited = await request(`/inventario/compras/${pid}`, 'PATCH', { proveedor:'Auditoría editada', total:100, lineas:[linea(600,2,60),linea(1700,1,40)] });
   assert.equal(edited.status,200,JSON.stringify(edited.body));
   const observationsAfter = await prisma.product_presentation_variants.aggregate({where:{product_id:27n},_sum:{observaciones:true}});

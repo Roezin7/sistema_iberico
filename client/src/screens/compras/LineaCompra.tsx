@@ -9,6 +9,8 @@ export interface CamposLineaCompra {
   unidad_fuente: string | null;
   unidad_compra: string | null;
   contenido_compra: string | number | null;
+  contenido_presentacion?: string | number | null;
+  unidad_presentacion?: string | null;
   cantidad_base: string | number | null;
   importe: string | number;
 }
@@ -53,6 +55,9 @@ export function LineaCompra({ linea, productos, numero, editar, quitar }: {
       {cantidad != null && cantidad > 0 && <p className="purchase-item__result">Entran <strong>{formatoCantidad(cantidad)} {producto.unidad_base}</strong> a bodega{costo != null && ` · ${money(costo)} por ${producto.unidad_base}`}</p>}
       <details className="purchase-item__details"><summary>{porLote ? 'Unidad de compra y detalle del ticket' : 'Presentación y detalle del ticket'}</summary>
         <div className="purchase-item__fields">
+          <label>Tamaño del envase individual (opcional)<input type="number" min="0" step="any" value={linea.contenido_presentacion ?? ''} placeholder="Ej. 600; no el total del paquete" onChange={e=>editar('contenido_presentacion', e.target.value)} /></label>
+          <label>Unidad del envase individual<select value={linea.unidad_presentacion ?? ''} onChange={e=>editar('unidad_presentacion', e.target.value || null)}><option value="">Sin evidencia</option><option value="ml">ml</option><option value="g">g</option><option value="pieza">pieza</option></select></label>
+          <small className="muted">Para servicios de tamaño exacto. No cambia la cantidad base recibida. Déjalo vacío si no conoces la presentación.</small>
           <label>Texto original del ticket<input value={linea.descripcion_fuente} onChange={(e) => editar('descripcion_fuente', e.target.value)} /></label>
           {!variable && <label>Unidad de compra<input value={linea.unidad_fuente || linea.unidad_compra || ''} placeholder="botella, paquete, kg…" onChange={(e) => { editar('unidad_fuente', e.target.value); editar('unidad_compra', e.target.value); }} /></label>}
           {!porLote && !variable && <label>Contenido por unidad ({producto.unidad_base})<input type="number" min="0" step="any" value={linea.contenido_compra ?? ''} onChange={(e) => editar('contenido_compra', e.target.value)} /></label>}

@@ -1,3 +1,5 @@
+import { envaseCompra } from './envase-compra.js';
+import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -13,6 +15,7 @@ export interface LineaCompraInput {
   cantidad_base: number;
   unidad_compra?: string | null;
   contenido_compra?: number | null;
+  contenido_presentacion?:number|null;unidad_presentacion?:string|null;
   costo_unitario_base: number;
   importe?: number | null;
 }
@@ -51,6 +54,8 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
   const fecha = fechaUTC(input.fecha_recepcion);
   const ticketRef = input.ticket_ref?.trim() || null;
   const resultado = await prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
+    await exigirPeriodoMutable(tx, negocioId, instanteReal(input.recibida_at) ?? new Date(`${input.fecha_recepcion}T00:00:00-06:00`));
     const semana = await tx.semanas.findFirst({
       where: {
         negocio_id: negocioId,
@@ -142,7 +147,7 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
           product_id: linea.product_id,
           purchase_id: compra.id,
           zona_id: bodega.id,
-          recibido_at: fecha,
+          recibido_at: fecha, ...envaseCompra(linea,productos.find(p=>p.id===linea.product_id)),
           cantidad_inicial: linea.cantidad_base,
           cantidad_restante: linea.cantidad_base,
           costo_unitario: costoBase,

@@ -1,3 +1,4 @@
+import { todayMexico } from '../../operating';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { api } from '../../api';
@@ -229,6 +230,7 @@ function ListaEditable({
 //  RECETAS Y COSTEO: cantidades editables, versionadas y separadas de ventas
 // ===========================================================================
 interface RecetaLinea {
+  contenido_requerido?:number|null;unidad_requerida?:string|null;envases_completos?:boolean;
   product_id: number;
   producto: string | null;
   cantidad: number;
@@ -257,7 +259,7 @@ interface InsumoReceta {
   unidad_compra: string | null;
   rendimiento_util: number | null;
 }
-interface DraftLinea { product_id: string; cantidad: string; unidad: string; nota: string }
+interface DraftLinea { product_id: string; cantidad: string; unidad: string; nota: string; contenido_requerido?:string;unidad_requerida?:string;envases_completos?:boolean }
 
 function RecetasCfg() {
   const [menu, setMenu] = useState<MenuReceta[]>([]);
@@ -265,7 +267,8 @@ function RecetasCfg() {
   const [nombre, setNombre] = useState('');
   const [eposId, setEposId] = useState('');
   const [precio, setPrecio] = useState('');
-  const [fuente, setFuente] = useState('Screenshots de costeo 2026-08-12');
+  const [fuente, setFuente] = useState('');
+  const [vigenteDesde,setVigenteDesde]=useState(todayMexico());
   const [estado, setEstado] = useState<'borrador' | 'validada'>('borrador');
   const [lineas, setLineas] = useState<DraftLinea[]>([]);
   const [filtroMenu, setFiltroMenu] = useState('');
@@ -297,9 +300,9 @@ function RecetasCfg() {
         nombre: nombre.trim(),
         epos_product_id: eposId ? Number(eposId) : null,
         precio_venta: precio ? Number(precio) : null,
-        estado,
+        estado, vigente_desde:vigenteDesde,
         fuente: fuente.trim() || null,
-        lineas: lineas.map((l) => ({ product_id: Number(l.product_id), cantidad: Number(l.cantidad), unidad: l.unidad.trim(), nota: l.nota.trim() || null })),
+        lineas: lineas.map((l) => ({ product_id: Number(l.product_id), cantidad: Number(l.cantidad), unidad: l.unidad.trim(), nota: l.nota.trim() || null,contenido_requerido:l.contenido_requerido?Number(l.contenido_requerido):null,unidad_requerida:l.unidad_requerida||null,envases_completos:l.envases_completos??false })),
       } });
       setNombre(''); setEposId(''); setPrecio(''); setLineas([]); setEstado('borrador');
       await cargar();
@@ -313,7 +316,7 @@ function RecetasCfg() {
     if (!r) return;
     setNombre(p.nombre); setEposId(p.epos_product_id?.toString() ?? ''); setPrecio(p.precio_venta?.toString() ?? '');
     setFuente(r.fuente ?? ''); setEstado('borrador');
-    setLineas(r.lineas.map((l) => ({ product_id: String(l.product_id), cantidad: String(l.cantidad), unidad: l.unidad, nota: l.nota ?? '' })));
+    setLineas(r.lineas.map((l) => ({ product_id: String(l.product_id), cantidad: String(l.cantidad), unidad: l.unidad, nota: l.nota ?? '',contenido_requerido:l.contenido_requerido?.toString()??'',unidad_requerida:l.unidad_requerida??'',envases_completos:l.envases_completos??false })));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -338,10 +341,12 @@ function RecetasCfg() {
           </select>
           <button className="btn-secondary" onClick={agregarLinea}>+ Ingrediente</button>
         </div>
+        <label>Aplicar esta versión desde (México)<input type="date" value={vigenteDesde} onChange={e=>setVigenteDesde(e.target.value)}/><small className="muted">Las ventas anteriores conservan su receta histórica. No retrocedas la fecha sin evidencia.</small></label>
         {lineas.length > 0 && <ul className="conteo-list list-flat">
           {lineas.map((l, idx) => <li key={`${l.product_id}-${idx}`} className="conteo-row">
             <span style={{ flex: 1 }}>{insumos.find((i) => String(i.id) === l.product_id)?.nombre ?? 'Ingrediente'}</span>
             <span>{l.cantidad} {l.unidad}</span>
+            <details><summary>Presentación requerida</summary><label>Tamaño exacto del envase (opcional)<input type="number" min="0" step="any" value={l.contenido_requerido??''} onChange={e=>setLineas(v=>v.map((x,i)=>i===idx?{...x,contenido_requerido:e.target.value}:x))}/></label><label>Unidad<select value={l.unidad_requerida??''} onChange={e=>setLineas(v=>v.map((x,i)=>i===idx?{...x,unidad_requerida:e.target.value}:x))}><option value="">Sin restricción</option><option value="ml">ml</option><option value="g">g</option><option value="pieza">pieza</option></select></label><label><input type="checkbox" checked={l.envases_completos??false} onChange={e=>setLineas(v=>v.map((x,i)=>i===idx?{...x,envases_completos:e.target.checked}:x))}/> Sólo envases completos (servicios)</label></details>
             <button className="link-btn" onClick={() => setLineas((v) => v.filter((_, i) => i !== idx))}>Quitar</button>
           </li>)}
         </ul>}

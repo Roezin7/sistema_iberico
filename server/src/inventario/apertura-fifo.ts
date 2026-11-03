@@ -1,3 +1,4 @@
+import { bloquearLibro } from './control-cierre.js';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -89,6 +90,7 @@ export async function prepararAperturaFifo(input: {
   if (criterio !== 'catalogo') throw new HttpError(400, 'Criterio de costo de apertura no soportado');
 
   return prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, input.negocioId);
     const semana = await tx.semanas.findFirst({
       where: { id: input.semanaId, negocio_id: input.negocioId },
       include: { inventario_semanal: true },
@@ -98,6 +100,7 @@ export async function prepararAperturaFifo(input: {
       throw new HttpError(409, 'La semana no tiene snapshot de inventario de apertura');
     }
 
+    if (semana.inventario_semanal.apertura_origen === 'cierre_conciliado_con_costos_conservados') throw new HttpError(409, 'La apertura ya tiene capas conciliadas; no generes lotes de catálogo adicionales');
     const referencia = modo === 'historico_prueba'
       ? `APERTURA-FIFO-HISTORICO-${semana.id}`
       : `APERTURA-FIFO-${semana.id}`;
@@ -213,7 +216,7 @@ export async function prepararAperturaFifo(input: {
       // contenido_compra inflaría el lote (p. ej. 1 paquete × 400 g termina
       // erróneamente en 160,000 g). El contenido sólo se usa para convertir
       // el costo de la presentación a costo por unidad base.
-      const contenidoHistorico = CONTENIDO_HISTORICO_CONFIRMADO[key] ?? (producto?.contenido_compra == null ? null : Number(producto.contenido_compra));
+      const contenidoHistorico = (modo === 'historico_prueba' ? CONTENIDO_HISTORICO_CONFIRMADO[key] : null) ?? (producto?.contenido_compra == null ? null : Number(producto.contenido_compra));
       const contenido = producto?.unidad_base && contenidoHistorico != null ? contenidoHistorico : 1;
       if (!Number.isFinite(contenido) || contenido <= 0) {
         faltantesCosto.push({ product_id: Number(key), producto: producto?.name ?? `Producto ${key}`, cantidad });

@@ -23,37 +23,37 @@ model negocios {
   zona_horaria String   @default("America/Mexico_City")
   creado_at    DateTime @default(now()) @db.Timestamptz(6)
 
-  usuarios               usuarios[]
-  socios                 socios[]
-  stores                 stores[]
-  products               products[]
-  inventory_snapshot     inventory_snapshot[]
-  purchases              purchases[]
-  zonas_inventario       zonas_inventario[]
-  categorias_inventario  categorias_inventario[]
-  ubicaciones_fondos     ubicaciones_fondos[]
-  categorias_gasto       categorias_gasto[]
-  semanas                semanas[]
-  inventario_semanal     inventario_semanal[]
-  conciliaciones_diarias conciliaciones_diarias[]
-  epos_importaciones     epos_importaciones[]
-  epos_ventas            epos_ventas[]
-  movimientos            movimientos[]
-  arqueos                arqueos[]
-  saldos_iniciales       saldos_iniciales[]
-  pasivos                pasivos[]
-  snapshots_patrimonio   snapshots_patrimonio[]
-  checklists             checklists[]
-  silvia_mensajes        silvia_mensajes[]
-  silvia_memoria         silvia_memoria[]
-  productos_menu         productos_menu[]
-  inventory_lots         inventory_lots[]
-  inventory_lot_transfers inventory_lot_transfers[]
-  facturas               facturas[]
-  inventory_consumptions inventory_consumptions[]
+  usuarios                       usuarios[]
+  socios                         socios[]
+  stores                         stores[]
+  products                       products[]
+  inventory_snapshot             inventory_snapshot[]
+  purchases                      purchases[]
+  zonas_inventario               zonas_inventario[]
+  categorias_inventario          categorias_inventario[]
+  ubicaciones_fondos             ubicaciones_fondos[]
+  categorias_gasto               categorias_gasto[]
+  semanas                        semanas[]
+  inventario_semanal             inventario_semanal[]
+  conciliaciones_diarias         conciliaciones_diarias[]
+  epos_importaciones             epos_importaciones[]
+  epos_ventas                    epos_ventas[]
+  movimientos                    movimientos[]
+  arqueos                        arqueos[]
+  saldos_iniciales               saldos_iniciales[]
+  pasivos                        pasivos[]
+  snapshots_patrimonio           snapshots_patrimonio[]
+  checklists                     checklists[]
+  silvia_mensajes                silvia_mensajes[]
+  silvia_memoria                 silvia_memoria[]
+  productos_menu                 productos_menu[]
+  inventory_lots                 inventory_lots[]
+  inventory_lot_transfers        inventory_lot_transfers[]
+  facturas                       facturas[]
+  inventory_consumptions         inventory_consumptions[]
   inventory_fifo_reconciliations inventory_fifo_reconciliations[]
-  inventory_adjustments  inventory_adjustments[]
-  auditoria_eventos      auditoria_eventos[]
+  inventory_adjustments          inventory_adjustments[]
+  auditoria_eventos              auditoria_eventos[]
 }
 
 model usuarios {
@@ -77,6 +77,90 @@ model usuarios {
   @@index([negocio_id])
 }
 
+model inventory_control_closures {
+  id                    BigInt   @id @default(autoincrement())
+  negocio_id            BigInt
+  semana_id             BigInt   @unique
+  snapshot_id           BigInt
+  apertura_snapshot_id  BigInt
+  siguiente_snapshot_id BigInt?
+  corte_at              DateTime @db.Timestamptz(6)
+  solicitud_id          String
+  usuario_id            BigInt
+  resumen               Json
+  creado_at             DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([negocio_id, solicitud_id])
+}
+
+model inventory_variance_cases {
+  id             BigInt   @id @default(autoincrement())
+  negocio_id     BigInt
+  cierre_id      BigInt
+  semana_id      BigInt
+  product_id     BigInt
+  origen         String
+  esperado       Decimal  @db.Decimal(14, 4)
+  contado        Decimal  @db.Decimal(14, 4)
+  diferencia     Decimal  @db.Decimal(14, 4)
+  costo_unitario Decimal? @db.Decimal(14, 6)
+  costo_estimado Boolean  @default(false)
+  causa          String   @default("sin_explicar")
+  estado         String   @default("abierta")
+  responsable    String?
+  evidencia      String?
+  nota           String?
+  version        Int      @default(1)
+  creado_at      DateTime @default(now()) @db.Timestamptz(6)
+  actualizado_at DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([cierre_id, product_id, origen])
+  @@index([negocio_id, semana_id], map: "inventory_variance_cases_negocio_semana_idx")
+  @@index([negocio_id, product_id], map: "inventory_variance_cases_negocio_producto_idx")
+}
+
+model inventory_operations {
+  id             BigInt   @id @default(autoincrement())
+  negocio_id     BigInt
+  semana_id      BigInt
+  tipo           String
+  efectiva_at    DateTime @db.Timestamptz(6)
+  motivo         String
+  responsable    String
+  solicitud_id   String
+  solicitud_hash String
+  usuario_id     BigInt
+  epos_venta_id  BigInt?  @unique
+  creado_at      DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([negocio_id, solicitud_id])
+  @@index([negocio_id, efectiva_at], map: "inventory_operations_negocio_fecha_idx")
+}
+
+model inventory_operation_lines {
+  id                     BigInt   @id @default(autoincrement())
+  operacion_id           BigInt
+  product_id             BigInt
+  zona_id                BigInt
+  cantidad               Decimal  @db.Decimal(14, 4)
+  costo_total            Decimal? @db.Decimal(14, 4)
+  pendiente_cantidad     Decimal  @default(0) @db.Decimal(14, 4)
+  costo_estimado         Boolean  @default(false)
+  contenido_presentacion Decimal? @db.Decimal(14, 4)
+  unidad_presentacion    String?
+}
+
+model inventory_count_formats {
+  snapshot_id BigInt
+  product_id  BigInt
+  zona_id     BigInt
+  contenido   Decimal @db.Decimal(14, 4)
+  unidad      String
+  envases     Decimal @db.Decimal(14, 4)
+
+  @@id([snapshot_id, product_id, zona_id, contenido, unidad])
+}
+
 model socios {
   id                 BigInt               @id @default(autoincrement())
   negocio_id         BigInt
@@ -92,18 +176,18 @@ model socios {
 /// Bitácora transversal de cambios operativos. Conserva el contexto antes y
 /// después sin reemplazar las tablas de dominio ni sus restricciones.
 model auditoria_eventos {
-  id          BigInt    @id @default(autoincrement())
-  negocio_id  BigInt
-  usuario_id  BigInt?
-  entidad     String
-  entidad_id  String?
-  accion      String
-  antes       String?   @db.Text
-  despues     String?   @db.Text
-  metadata    String?   @db.Text
-  creado_at   DateTime  @default(now()) @db.Timestamptz(6)
-  negocios    negocios  @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
-  usuarios    usuarios? @relation(fields: [usuario_id], references: [id], onDelete: SetNull)
+  id         BigInt    @id @default(autoincrement())
+  negocio_id BigInt
+  usuario_id BigInt?
+  entidad    String
+  entidad_id String?
+  accion     String
+  antes      String?   @db.Text
+  despues    String?   @db.Text
+  metadata   String?   @db.Text
+  creado_at  DateTime  @default(now()) @db.Timestamptz(6)
+  negocios   negocios  @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
+  usuarios   usuarios? @relation(fields: [usuario_id], references: [id], onDelete: SetNull)
 
   @@index([negocio_id, creado_at])
   @@index([negocio_id, entidad, entidad_id])
@@ -129,7 +213,7 @@ model inventory_lines {
   snapshot_id        BigInt
   product_id         BigInt
   zona_id            BigInt
-  qty_captura        Decimal            @default(0) @db.Decimal(12, 2)
+  qty_captura        Decimal            @default(0) @db.Decimal(14, 4)
   // Factor aplicado AL MOMENTO de capturar (snapshot de product_zone_units.factor).
   // Histórico = 1 (los datos viejos ya estaban en unidad base). total_base = qty_captura * factor.
   factor             Decimal            @default(1) @db.Decimal(12, 4)
@@ -154,10 +238,10 @@ model zonas_inventario {
   orden      Int      @default(0)
   negocios   negocios @relation(fields: [negocio_id], references: [id])
 
-  inventory_lines       inventory_lines[]
-  product_zone_units    product_zone_units[]
-  inventory_adjustments inventory_adjustments[]
-  inventory_lots       inventory_lots[]
+  inventory_lines              inventory_lines[]
+  product_zone_units           product_zone_units[]
+  inventory_adjustments        inventory_adjustments[]
+  inventory_lots               inventory_lots[]
   transferencias_lotes_origen  inventory_lot_transfers[] @relation("TransferZonaOrigen")
   transferencias_lotes_destino inventory_lot_transfers[] @relation("TransferZonaDestino")
 
@@ -179,15 +263,15 @@ model product_zone_units {
 }
 
 model producto_costos_historicos {
-  id         BigInt   @id @default(autoincrement())
-  product_id BigInt
-  fecha      DateTime @db.Date
-  costo      Decimal? @db.Decimal(12, 2)
-  contenido_compra Decimal? @db.Decimal(14, 4)
-  unidad_base String?
-  vigente_desde DateTime? @db.Timestamptz(6)
-  fuente String?
-  products   products @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  id               BigInt    @id @default(autoincrement())
+  product_id       BigInt
+  fecha            DateTime  @db.Date
+  costo            Decimal?  @db.Decimal(12, 2)
+  contenido_compra Decimal?  @db.Decimal(14, 4)
+  unidad_base      String?
+  vigente_desde    DateTime? @db.Timestamptz(6)
+  fuente           String?
+  products         products  @relation(fields: [product_id], references: [id], onDelete: Cascade)
 
   @@index([product_id])
   @@index([product_id, vigente_desde])
@@ -226,41 +310,41 @@ model product_aliases {
 }
 
 model products {
-  id                         BigInt                       @id @default(autoincrement())
-  negocio_id                 BigInt
-  name                       String
-  store_id                   BigInt
-  base_qty                   Decimal                      @default(0) @db.Decimal(12, 2)
-  active                     Boolean                      @default(true)
-  unit_cost                  Decimal?                     @db.Decimal(12, 2)
+  id                             BigInt                           @id @default(autoincrement())
+  negocio_id                     BigInt
+  name                           String
+  store_id                       BigInt
+  base_qty                       Decimal                          @default(0) @db.Decimal(12, 2)
+  active                         Boolean                          @default(true)
+  unit_cost                      Decimal?                         @db.Decimal(12, 2)
   // Presentación de compra y unidad real para recetas (ml, g o pieza).
   // Se dejan opcionales para no invalidar el catálogo histórico mientras se
   // completa la matriz de costeo.
-  unidad_base                String?
-  contenido_compra           Decimal?                     @db.Decimal(14, 4)
-  unidad_compra              String?
-  rendimiento_util           Decimal                      @default(1) @db.Decimal(8, 4)
+  unidad_base                    String?
+  contenido_compra               Decimal?                         @db.Decimal(14, 4)
+  unidad_compra                  String?
+  rendimiento_util               Decimal                          @default(1) @db.Decimal(8, 4)
   // exacta = el catálogo puede convertir por defecto; por_lote = la compra
   // debe conservar la presentación observada; variable = requiere captura
   // explícita porque el contenido no es estable.
-  presentacion_modo          String                       @default("exacta")
-  presentacion_nota          String?
-  categoria_id               BigInt?
-  inventory_lines            inventory_lines[]
-  product_aliases            product_aliases[]
-  stores                     stores                       @relation(fields: [store_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  negocios                   negocios                     @relation(fields: [negocio_id], references: [id])
-  categorias_inventario      categorias_inventario?       @relation(fields: [categoria_id], references: [id])
-  purchase_lines             purchase_lines[]
-  purchase_capture_lines     purchase_capture_lines[]
-  inventory_lots             inventory_lots[]
-  inventory_consumptions     inventory_consumptions[]
+  presentacion_modo              String                           @default("exacta")
+  presentacion_nota              String?
+  categoria_id                   BigInt?
+  inventory_lines                inventory_lines[]
+  product_aliases                product_aliases[]
+  stores                         stores                           @relation(fields: [store_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  negocios                       negocios                         @relation(fields: [negocio_id], references: [id])
+  categorias_inventario          categorias_inventario?           @relation(fields: [categoria_id], references: [id])
+  purchase_lines                 purchase_lines[]
+  purchase_capture_lines         purchase_capture_lines[]
+  inventory_lots                 inventory_lots[]
+  inventory_consumptions         inventory_consumptions[]
   inventory_fifo_reconciliations inventory_fifo_reconciliations[]
-  inventory_adjustments      inventory_adjustments[]
-  product_zone_units         product_zone_units[]
-  producto_costos_historicos producto_costos_historicos[]
-  presentaciones_observadas  product_presentation_variants[]
-  receta_lineas              receta_lineas[]
+  inventory_adjustments          inventory_adjustments[]
+  product_zone_units             product_zone_units[]
+  producto_costos_historicos     producto_costos_historicos[]
+  presentaciones_observadas      product_presentation_variants[]
+  receta_lineas                  receta_lineas[]
 
   @@unique([negocio_id, name])
   @@index([negocio_id])
@@ -271,19 +355,19 @@ model products {
 /// FIFO: documenta tamaños reales para no asumir que todos los proveedores
 /// venden la misma presentación.
 model product_presentation_variants {
-  id                BigInt    @id @default(autoincrement())
-  product_id        BigInt
-  unidad_compra     String
-  contenido_compra  Decimal?  @db.Decimal(14, 4)
-  unidad_base       String?
-  observaciones     Int       @default(0)
-  costo_base_medio  Decimal?  @db.Decimal(14, 6)
-  primera_fecha     DateTime? @db.Date
-  ultima_fecha      DateTime? @db.Date
-  proveedores       String?
-  es_canonica       Boolean   @default(false)
-  notas             String?
-  products          products  @relation(fields: [product_id], references: [id], onDelete: Cascade)
+  id               BigInt    @id @default(autoincrement())
+  product_id       BigInt
+  unidad_compra    String
+  contenido_compra Decimal?  @db.Decimal(14, 4)
+  unidad_base      String?
+  observaciones    Int       @default(0)
+  costo_base_medio Decimal?  @db.Decimal(14, 6)
+  primera_fecha    DateTime? @db.Date
+  ultima_fecha     DateTime? @db.Date
+  proveedores      String?
+  es_canonica      Boolean   @default(false)
+  notas            String?
+  products         products  @relation(fields: [product_id], references: [id], onDelete: Cascade)
 
   @@unique([product_id, unidad_compra, contenido_compra, unidad_base], map: "product_presentation_variants_unique")
   @@index([product_id])
@@ -321,6 +405,8 @@ model purchases {
   negocio_id             BigInt
   fecha_recepcion        DateTime                 @db.Date
   recibida_at            DateTime?                @db.Timestamptz(6)
+  solicitud_id           String?
+  solicitud_hash         String?
   proveedor              String?
   ticket_ref             String?
   total                  Decimal?                 @db.Decimal(14, 4)
@@ -348,6 +434,7 @@ model purchases {
   confirmada_por_usuario usuarios?                @relation("CompraConfirmadaPor", fields: [confirmada_por], references: [id], onDelete: SetNull)
 
   @@unique([negocio_id, ticket_ref])
+  @@unique([negocio_id, solicitud_id])
   @@unique([negocio_id, foto_hash])
   @@index([negocio_id])
   @@index([negocio_id, estado, fecha_recepcion])
@@ -359,20 +446,20 @@ model purchases {
 /// La compra sigue siendo la fuente contable; esta tabla sólo organiza el
 /// seguimiento fiscal y conserva el comprobante recibido.
 model facturas {
-  id                  BigInt   @id @default(autoincrement())
-  negocio_id          BigInt
-  compra_id           BigInt
-  mes                 DateTime @db.Date
-  estado              String   @default("no_facturado")
-  comprobante_data    String?  @db.Text
-  comprobante_mime    String?
-  comprobante_nombre  String?
-  comprobante_hash    String?
-  notas               String?
-  creado_at           DateTime @default(now()) @db.Timestamptz(6)
-  actualizado_at      DateTime @updatedAt @db.Timestamptz(6)
-  negocios            negocios @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
-  purchases           purchases @relation(fields: [compra_id], references: [id], onDelete: Cascade)
+  id                 BigInt    @id @default(autoincrement())
+  negocio_id         BigInt
+  compra_id          BigInt
+  mes                DateTime  @db.Date
+  estado             String    @default("no_facturado")
+  comprobante_data   String?   @db.Text
+  comprobante_mime   String?
+  comprobante_nombre String?
+  comprobante_hash   String?
+  notas              String?
+  creado_at          DateTime  @default(now()) @db.Timestamptz(6)
+  actualizado_at     DateTime  @updatedAt @db.Timestamptz(6)
+  negocios           negocios  @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
+  purchases          purchases @relation(fields: [compra_id], references: [id], onDelete: Cascade)
 
   @@unique([negocio_id, compra_id])
   @@index([negocio_id, mes, estado])
@@ -381,23 +468,25 @@ model facturas {
 /// Líneas capturadas desde un ticket. Se revisan antes de convertirse en
 /// líneas FIFO o gastos operativos.
 model purchase_capture_lines {
-  id                 BigInt    @id @default(autoincrement())
-  purchase_id        BigInt
-  product_id         BigInt?
-  tipo_linea         String    @default("pendiente")
-  descripcion_fuente String
+  id                     BigInt    @id @default(autoincrement())
+  purchase_id            BigInt
+  product_id             BigInt?
+  tipo_linea             String    @default("pendiente")
+  descripcion_fuente     String
   // Valores tal como aparecen en la fuente (especialmente ordenes manuscritas).
-  cantidad_fuente    Decimal?  @db.Decimal(14, 4)
-  unidad_fuente      String?
-  cantidad_base      Decimal?  @db.Decimal(14, 4)
-  unidad_compra      String?
-  contenido_compra   Decimal?  @db.Decimal(14, 4)
-  costo_unitario     Decimal?  @db.Decimal(14, 6)
-  importe            Decimal   @db.Decimal(14, 4)
-  confianza          Decimal?  @db.Decimal(5, 4)
-  notas              String?
-  purchases          purchases @relation(fields: [purchase_id], references: [id], onDelete: Cascade)
-  products           products? @relation(fields: [product_id], references: [id], onDelete: SetNull)
+  cantidad_fuente        Decimal?  @db.Decimal(14, 4)
+  unidad_fuente          String?
+  cantidad_base          Decimal?  @db.Decimal(14, 4)
+  unidad_compra          String?
+  contenido_compra       Decimal?  @db.Decimal(14, 4)
+  contenido_presentacion Decimal?  @db.Decimal(14, 4)
+  unidad_presentacion    String?
+  costo_unitario         Decimal?  @db.Decimal(14, 6)
+  importe                Decimal   @db.Decimal(14, 4)
+  confianza              Decimal?  @db.Decimal(5, 4)
+  notas                  String?
+  purchases              purchases @relation(fields: [purchase_id], references: [id], onDelete: Cascade)
+  products               products? @relation(fields: [product_id], references: [id], onDelete: SetNull)
 
   @@index([purchase_id])
   @@index([product_id])
@@ -412,29 +501,37 @@ enum EstadoLoteInventario {
 /// Entrada física de inventario con costo propio. No reemplaza todavía el
 /// costo del catálogo: conserva el costo histórico para FIFO.
 model inventory_lots {
-  id                BigInt                   @id @default(autoincrement())
-  negocio_id        BigInt
-  product_id        BigInt
-  purchase_id       BigInt?
+  id                     BigInt                    @id @default(autoincrement())
+  negocio_id             BigInt
+  product_id             BigInt
+  purchase_id            BigInt?
   // Ubicación física persistida del lote. Las compras nuevas entran a Bodega;
   // puede quedar nula en lotes históricos aún no ubicados.
-  zona_id           BigInt?
-  recibido_at       DateTime                 @db.Date
-  cantidad_inicial  Decimal                  @db.Decimal(14, 4)
-  cantidad_restante Decimal                  @db.Decimal(14, 4)
-  costo_unitario    Decimal                  @db.Decimal(14, 6)
-  moneda            String                   @default("MXN")
-  estado            EstadoLoteInventario     @default(abierto)
-  fuente            String                   @default("manual")
-  ticket_ref        String?
-  notas             String?
-  creado_at         DateTime                 @default(now()) @db.Timestamptz(6)
-  negocios          negocios                 @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
-  products          products                 @relation(fields: [product_id], references: [id], onDelete: Restrict)
-  purchases         purchases?               @relation(fields: [purchase_id], references: [id], onDelete: SetNull)
-  zona              zonas_inventario?        @relation(fields: [zona_id], references: [id], onDelete: Restrict)
-  consumptions      inventory_consumptions[]
-  transferencias    inventory_lot_transfers[]
+  zona_id                BigInt?
+  recibido_at            DateTime                  @db.Date
+  cantidad_inicial       Decimal                   @db.Decimal(14, 4)
+  cantidad_restante      Decimal                   @db.Decimal(14, 4)
+  costo_unitario         Decimal                   @db.Decimal(14, 6)
+  moneda                 String                    @default("MXN")
+  estado                 EstadoLoteInventario      @default(abierto)
+  fuente                 String                    @default("manual")
+  ticket_ref             String?
+  notas                  String?
+  creado_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  disponible_desde       DateTime?                 @db.Timestamptz(6)
+  orden_fifo_at          DateTime?                 @db.Timestamptz(6)
+  contenido_presentacion Decimal?                  @db.Decimal(14, 4)
+  unidad_presentacion    String?
+  costo_estimado         Boolean                   @default(false)
+  lote_origen_id         BigInt?
+  cierre_control_id      BigInt?
+  operacion_linea_id     BigInt?
+  negocios               negocios                  @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
+  products               products                  @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  purchases              purchases?                @relation(fields: [purchase_id], references: [id], onDelete: SetNull)
+  zona                   zonas_inventario?         @relation(fields: [zona_id], references: [id], onDelete: Restrict)
+  consumptions           inventory_consumptions[]
+  transferencias         inventory_lot_transfers[]
 
   @@index([negocio_id, product_id, recibido_at, id])
   @@index([negocio_id, recibido_at])
@@ -448,22 +545,22 @@ model inventory_lots {
 /// existencias mientras no exista un balance por zona por lote, sólo se
 /// permiten transferencias del saldo completo del lote.
 model inventory_lot_transfers {
-  id             BigInt   @id @default(autoincrement())
-  negocio_id     BigInt
-  lote_id        BigInt
-  zona_origen_id BigInt?
+  id              BigInt    @id @default(autoincrement())
+  negocio_id      BigInt
+  lote_id         BigInt
+  zona_origen_id  BigInt?
   zona_destino_id BigInt
-  cantidad       Decimal  @db.Decimal(14, 4)
-  fecha          DateTime @db.Date
-  efectiva_at    DateTime? @db.Timestamptz(6)
-  motivo         String?
-  usuario_id     BigInt?
-  creado_at      DateTime @default(now()) @db.Timestamptz(6)
+  cantidad        Decimal   @db.Decimal(14, 4)
+  fecha           DateTime  @db.Date
+  efectiva_at     DateTime? @db.Timestamptz(6)
+  motivo          String?
+  usuario_id      BigInt?
+  creado_at       DateTime  @default(now()) @db.Timestamptz(6)
 
-  negocios      negocios         @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
-  lote          inventory_lots   @relation(fields: [lote_id], references: [id], onDelete: Cascade)
-  zona_origen   zonas_inventario? @relation("TransferZonaOrigen", fields: [zona_origen_id], references: [id], onDelete: Restrict)
-  zona_destino  zonas_inventario  @relation("TransferZonaDestino", fields: [zona_destino_id], references: [id], onDelete: Restrict)
+  negocios     negocios          @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
+  lote         inventory_lots    @relation(fields: [lote_id], references: [id], onDelete: Cascade)
+  zona_origen  zonas_inventario? @relation("TransferZonaOrigen", fields: [zona_origen_id], references: [id], onDelete: Restrict)
+  zona_destino zonas_inventario  @relation("TransferZonaDestino", fields: [zona_destino_id], references: [id], onDelete: Restrict)
 
   @@index([negocio_id, fecha])
   @@index([negocio_id, lote_id])
@@ -473,21 +570,24 @@ model inventory_lot_transfers {
 /// Libro inmutable de consumo de lotes. Cada fila explica qué lote pagó una
 /// parte del consumo teórico de una venta o de un ajuste.
 model inventory_consumptions {
-  id             BigInt         @id @default(autoincrement())
-  negocio_id     BigInt
-  product_id     BigInt
-  lote_id        BigInt
-  epos_venta_id  BigInt?
-  fecha          DateTime       @db.Date
-  cantidad       Decimal        @db.Decimal(14, 4)
-  costo_unitario Decimal        @db.Decimal(14, 6)
-  costo_total    Decimal        @db.Decimal(14, 4)
-  fuente         String         @default("venta_receta")
-  creado_at      DateTime       @default(now()) @db.Timestamptz(6)
-  negocios       negocios       @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
-  products       products       @relation(fields: [product_id], references: [id], onDelete: Restrict)
-  lote           inventory_lots @relation(fields: [lote_id], references: [id], onDelete: Restrict)
-  epos_venta     epos_ventas?   @relation(fields: [epos_venta_id], references: [id], onDelete: SetNull)
+  id                 BigInt         @id @default(autoincrement())
+  negocio_id         BigInt
+  product_id         BigInt
+  lote_id            BigInt
+  epos_venta_id      BigInt?
+  fecha              DateTime       @db.Date
+  cantidad           Decimal        @db.Decimal(14, 4)
+  costo_unitario     Decimal        @db.Decimal(14, 6)
+  costo_total        Decimal        @db.Decimal(14, 4)
+  fuente             String         @default("venta_receta")
+  creado_at          DateTime       @default(now()) @db.Timestamptz(6)
+  efectiva_at        DateTime?      @db.Timestamptz(6)
+  operacion_linea_id BigInt?
+  lote_original_id   BigInt?
+  negocios           negocios       @relation(fields: [negocio_id], references: [id], onDelete: Cascade)
+  products           products       @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  lote               inventory_lots @relation(fields: [lote_id], references: [id], onDelete: Restrict)
+  epos_venta         epos_ventas?   @relation(fields: [epos_venta_id], references: [id], onDelete: SetNull)
 
   // Una venta puede consumir el mismo producto desde varios lotes FIFO.
   // La unicidad debe conservar la trazabilidad por lote, no impedir el split.
@@ -618,13 +718,16 @@ model recetas {
 /// Ingrediente consumido por una receta. La unidad explícita evita mezclar ml,
 /// g, piezas y unidades de compra.
 model receta_lineas {
-  receta_id  BigInt
-  product_id BigInt
-  cantidad   Decimal  @db.Decimal(12, 4)
-  unidad     String
-  nota       String?
-  recetas    recetas  @relation(fields: [receta_id], references: [id], onDelete: Cascade)
-  products   products @relation(fields: [product_id], references: [id], onDelete: Restrict)
+  receta_id           BigInt
+  product_id          BigInt
+  cantidad            Decimal  @db.Decimal(12, 4)
+  unidad              String
+  nota                String?
+  contenido_requerido Decimal? @db.Decimal(14, 4)
+  unidad_requerida    String?
+  envases_completos   Boolean  @default(false)
+  recetas             recetas  @relation(fields: [receta_id], references: [id], onDelete: Cascade)
+  products            products @relation(fields: [product_id], references: [id], onDelete: Restrict)
 
   @@id([receta_id, product_id])
   @@index([product_id])
@@ -691,21 +794,21 @@ model categorias_gasto {
 }
 
 model semanas {
-  id                     BigInt                   @id @default(autoincrement())
-  negocio_id             BigInt
-  etiqueta               String
-  fecha_inicio           DateTime                 @db.Date
-  fecha_fin              DateTime                 @db.Date
-  estado                 EstadoSemana             @default(abierta)
-  cerrada_at             DateTime?                @db.Timestamptz(6)
-  negocios               negocios                 @relation(fields: [negocio_id], references: [id])
-  movimientos            movimientos[]
-  arqueos                arqueos[]
-  cierres                cierres_semana[]
-  conciliaciones_diarias conciliaciones_diarias[]
-  inventario_semanal     inventario_semanal?
+  id                             BigInt                           @id @default(autoincrement())
+  negocio_id                     BigInt
+  etiqueta                       String
+  fecha_inicio                   DateTime                         @db.Date
+  fecha_fin                      DateTime                         @db.Date
+  estado                         EstadoSemana                     @default(abierta)
+  cerrada_at                     DateTime?                        @db.Timestamptz(6)
+  negocios                       negocios                         @relation(fields: [negocio_id], references: [id])
+  movimientos                    movimientos[]
+  arqueos                        arqueos[]
+  cierres                        cierres_semana[]
+  conciliaciones_diarias         conciliaciones_diarias[]
+  inventario_semanal             inventario_semanal?
   inventory_fifo_reconciliations inventory_fifo_reconciliations[]
-  inventory_adjustments  inventory_adjustments[]
+  inventory_adjustments          inventory_adjustments[]
 
   @@unique([negocio_id, fecha_inicio])
   @@index([negocio_id])

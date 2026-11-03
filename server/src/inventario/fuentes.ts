@@ -19,7 +19,7 @@ export function esConsumoFifoActivo(
   if (!Number.isFinite(cantidad) || cantidad <= 0 || fuente.startsWith('reversion_')) return false;
   if (fuente.startsWith('venta_fifo_vivo')) return true;
   if ((FUENTES_FIFO_VENTA_ACTIVAS as readonly string[]).includes(fuente)) return true;
-  return Boolean(options.incluirAjustes && fuente === 'ajuste_inventario');
+  return Boolean(options.incluirAjustes && ['ajuste_inventario', 'salida_operativa', 'conciliacion_faltante', 'traspaso_cierre'].includes(fuente));
 }
 
 /** Filtro Prisma único para cualquier consulta que reconstruya el libro FIFO. */
@@ -29,7 +29,7 @@ export function filtroConsumoFifoActivo(options: { incluirAjustes?: boolean } = 
     { fuente: 'venta_receta' },
     { fuente: 'venta_receta_historica' },
   ];
-  if (options.incluirAjustes) fuentes.push({ fuente: 'ajuste_inventario' });
+  if (options.incluirAjustes) fuentes.push({ fuente: { in: ['ajuste_inventario', 'salida_operativa', 'conciliacion_faltante', 'traspaso_cierre'] } });
   return { cantidad: { gt: 0 }, OR: fuentes };
 }
 

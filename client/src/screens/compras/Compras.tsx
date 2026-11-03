@@ -23,8 +23,8 @@ interface ConsumoResult { confirmar: boolean; ventas: number; costeadas: number;
 interface LiveStatus { lotes_abiertos: number; unidades_base_abiertas: number; valor_fifo_abierto: number; ventas_pendientes: number; ventas_excepcion: number; costeo: 'en_vivo' }
 interface ExceptionRow { venta_id: number; fecha: string; producto: string; cantidad: number; error: string }
 interface RefCompra { productos: Producto[]; ubicaciones: { id: number; nombre: string; tipo: string }[] }
-interface LineaRapida { product_id: number | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_fuente: string; unidad_fuente: string; cantidad_base: string; unidad_compra: string; contenido_compra: string; costo_unitario: string; importe: string; confianza: number | null; importe_auto?: boolean }
-interface Pendiente { recibida_at?: string | null; id: number; fecha_recepcion: string; proveedor: string | null; ticket_ref: string | null; total: number | null; fuente?: string; estado: string; foto: boolean; origen_pago_id: number | null; notas?: string | null; lineas: Array<{ id: number; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_fuente: number | null; unidad_fuente: string | null; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null; costo_unitario: number | null; importe: number; confianza: number | null; notas: string | null }> }
+interface LineaRapida { product_id: number | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_fuente: string; unidad_fuente: string; cantidad_base: string; unidad_compra: string; contenido_compra: string; contenido_presentacion?: string | null; unidad_presentacion?: string | null; costo_unitario: string; importe: string; confianza: number | null; importe_auto?: boolean }
+interface Pendiente { recibida_at?: string | null; id: number; fecha_recepcion: string; proveedor: string | null; ticket_ref: string | null; total: number | null; fuente?: string; estado: string; foto: boolean; origen_pago_id: number | null; notas?: string | null; lineas: Array<{ id: number; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente'; descripcion_fuente: string; cantidad_fuente: number | null; unidad_fuente: string | null; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null; contenido_presentacion?: number | string | null; unidad_presentacion?: string | null; costo_unitario: number | null; importe: number; confianza: number | null; notas: string | null }> }
 interface ValidacionCompra { valida: boolean; errores: Array<{ codigo: string; mensaje: string; linea?: number; producto?: string }>; advertencias: Array<{ codigo: string; mensaje: string; linea?: number; producto?: string }> }
 interface CompraDia { recibida_at?: string | null; id: number; fecha: string; proveedor: string | null; ticket_ref: string | null; total: number; fuente?: string; estado: string; foto?: boolean; origen_pago_id: number | null; origen_pago?: string | null; lineas: { tipo: string; producto: string; importe: number }[] }
 export interface Semana { id: number; etiqueta: string; fecha_inicio: string; fecha_fin: string; estado: 'abierta' | 'cerrada' }
@@ -203,6 +203,7 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
   const claveBorrador = `${usuario?.id}:${fechaInicial}`;
   const [refs, setRefs] = useState<RefCompra | null>(null);
   const [fecha, setFecha] = useState(fechaInicial);
+  const [solicitud, setSolicitud] = useState<string>(() => crypto.randomUUID());
   const [recibida, setRecibida] = useState('');
   const [proveedor, setProveedor] = useState('');
   const [ticket, setTicket] = useState('');
@@ -221,8 +222,9 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
 
   useEffect(() => {
     let activo = true;
-    void leerBorrador<{ recibida?: string; fecha: string; proveedor: string; ticket: string; modo: typeof modo; total: string; origen: string; notas: string; foto: typeof foto; lineas: LineaRapida[] }>(claveBorrador).then((b) => {
+    void leerBorrador<{ solicitud?: string; recibida?: string; fecha: string; proveedor: string; ticket: string; modo: typeof modo; total: string; origen: string; notas: string; foto: typeof foto; lineas: LineaRapida[] }>(claveBorrador).then((b) => {
       if (!activo || !b) return;
+      if (b.solicitud) setSolicitud(b.solicitud);
       setFecha(b.fecha); setRecibida(b.recibida ?? ''); setProveedor(b.proveedor); setTicket(b.ticket); setModo(b.modo); setTotal(b.total); setOrigen(b.origen); setNotas(b.notas); setFoto(b.foto); setLineas(b.lineas);
     }).catch(() => {}).finally(() => { if (activo) setBorradorListo(true); });
     return () => { activo = false; };
@@ -231,9 +233,9 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
   useEffect(() => {
     if (!borradorListo) return;
     const tieneDatos = !!(proveedor || ticket || total || notas || foto || lineas.some((l) => l.product_id || l.descripcion_fuente || l.importe));
-    const persistir = tieneDatos ? guardarBorrador(claveBorrador, { fecha, recibida, proveedor, ticket, modo, total, origen, notas, foto, lineas }) : borrarBorrador(claveBorrador);
+    const persistir = tieneDatos ? guardarBorrador(claveBorrador, { solicitud, fecha, recibida, proveedor, ticket, modo, total, origen, notas, foto, lineas }) : borrarBorrador(claveBorrador);
     void persistir.then(() => setBorradorGuardado(tieneDatos)).catch(() => setBorradorGuardado(false));
-  }, [borradorListo, claveBorrador, fecha, recibida, proveedor, ticket, modo, total, origen, notas, foto, lineas]);
+  }, [borradorListo, claveBorrador, solicitud, fecha, recibida, proveedor, ticket, modo, total, origen, notas, foto, lineas]);
 
   useEffect(() => {
     setCargandoRefs(true);
@@ -298,9 +300,9 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
     if (!fecha || (modo === 'ticket' && (!total.trim() || !origen || !Number.isFinite(Number(total)))) || !validas.length) { setMensaje(modo === 'orden_manuscrita' ? 'Completa fecha y al menos una línea. El total y el pago pueden definirse durante la revisión.' : 'Completa fecha, total, forma de pago y al menos una línea.'); return; }
     setGuardando(true); setMensaje('');
     try {
-      const respuesta = await api('/inventario/compras/rapidas', { method: 'POST', body: { fecha_recepcion: fecha, recibida_at: isoDesdeHoraMexico(recibida), proveedor: proveedor || null, ticket_ref: ticket || null, tipo_documento: modo, total: total.trim() ? Number(total) : null, origen_pago_id: origen ? Number(origen) : null, notas: notas || null, foto_data: foto?.data ?? null, foto_mime: foto?.mime ?? null, lineas: validas.map((l) => ({ product_id: l.product_id, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente, cantidad_fuente: l.cantidad_fuente ? Number(l.cantidad_fuente) : null, unidad_fuente: l.unidad_fuente || null, cantidad_base: l.cantidad_base ? Number(l.cantidad_base) : null, unidad_compra: l.unidad_compra || null, contenido_compra: l.contenido_compra ? Number(l.contenido_compra) : null, costo_unitario: l.costo_unitario ? Number(l.costo_unitario) : null, importe: Number(l.importe || 0), confianza: l.confianza })) } });
+      const respuesta = await api('/inventario/compras/rapidas', { method: 'POST', body: { solicitud_id: solicitud, fecha_recepcion: fecha, recibida_at: isoDesdeHoraMexico(recibida), proveedor: proveedor || null, ticket_ref: ticket || null, tipo_documento: modo, total: total.trim() ? Number(total) : null, origen_pago_id: origen ? Number(origen) : null, notas: notas || null, foto_data: foto?.data ?? null, foto_mime: foto?.mime ?? null, lineas: validas.map((l) => ({ product_id: l.product_id, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente, cantidad_fuente: l.cantidad_fuente ? Number(l.cantidad_fuente) : null, unidad_fuente: l.unidad_fuente || null, cantidad_base: l.cantidad_base ? Number(l.cantidad_base) : null, unidad_compra: l.unidad_compra || null, contenido_compra: l.contenido_compra ? Number(l.contenido_compra) : null, contenido_presentacion: l.contenido_presentacion ? Number(l.contenido_presentacion) : null, unidad_presentacion: l.unidad_presentacion || null, costo_unitario: l.costo_unitario ? Number(l.costo_unitario) : null, importe: Number(l.importe || 0), confianza: l.confianza })) } });
       await borrarBorrador(claveBorrador).catch(() => {});
-      setMensaje(fueEncolado(respuesta) ? 'Guardada en este dispositivo. Se enviará al recuperar conexión.' : 'Compra guardada para revisión.'); setProveedor(''); setRecibida(''); setTicket(''); setTotal(''); setNotas(''); setFoto(null); setLineas([nuevaLineaCompra()]); onSaved();
+      setMensaje(fueEncolado(respuesta) ? 'Guardada en este dispositivo. Se enviará al recuperar conexión.' : 'Compra guardada para revisión.'); setSolicitud(crypto.randomUUID()); setProveedor(''); setRecibida(''); setTicket(''); setTotal(''); setNotas(''); setFoto(null); setLineas([nuevaLineaCompra()]); onSaved();
     } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo guardar la compra.'); }
     finally { setGuardando(false); }
   }
@@ -449,7 +451,7 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
       if (campo === 'product_id') {
         const producto = productos.find((p) => p.id === Number(valor));
         if (producto) {
-          siguiente.cantidad_base = null;
+          siguiente.cantidad_base = null; siguiente.contenido_presentacion = null; siguiente.unidad_presentacion = null;
           if (!siguiente.descripcion_fuente.trim()) siguiente.descripcion_fuente = producto.nombre;
           siguiente.unidad_fuente = producto.unidad_compra ?? siguiente.unidad_fuente;
           siguiente.unidad_compra = producto.unidad_compra ?? siguiente.unidad_compra;
@@ -468,7 +470,7 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
   }
 
   function payloadLineas() {
-    return lineas.map((l) => ({ ...l, product_id: l.product_id ? Number(l.product_id) : null, cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente || null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) }));
+    return lineas.map((l) => ({ ...l, product_id: l.product_id ? Number(l.product_id) : null, cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente || null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), contenido_presentacion: l.contenido_presentacion ? Number(l.contenido_presentacion) : null, unidad_presentacion: l.unidad_presentacion || null, costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) }));
   }
 
   function totalParaValidar() {

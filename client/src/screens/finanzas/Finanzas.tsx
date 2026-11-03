@@ -1,3 +1,4 @@
+import { ControlCiclo } from '../inventario/ControlInventario';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
@@ -190,7 +191,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
   const abierta = semana.estado === 'abierta';
   const inventarioListo = resumen?.inventario.estado === 'cerrado' && resumen.inventario.cierre_snapshot_id != null;
   const costeoListo = resumen != null && resumen.ventas_epos_pendientes === 0 && resumen.excepciones_costeo.length === 0;
-  const puedeCerrar = abierta && inventarioListo && costeoListo;
+  const puedeCerrar = abierta && inventarioListo && resumen?.conciliacion_inventario.estado === 'calculada';
 
   return (
     <>
@@ -224,21 +225,22 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
       {tab === 'movs' && (
         <MovimientosView ref_={ref_} semana={semana} movs={movs} onChange={cargar} />
       )}
+      {tab === 'cuadre' && <ControlCiclo semanaId={semana.id} onCambio={cargar} />}
       {tab === 'cuadre' && (
         <CuadreView ref_={ref_} semana={semana} filas={cuadre} resumen={resumen} onChange={cargar} />
       )}
 
       {abierta && tab === 'cuadre' && (
         <>
-          {!puedeCerrar && <div className="info-box cierre-bloqueado" role="status"><strong>El cierre todavía está bloqueado</strong><span>{!inventarioListo ? 'Confirma el inventario físico de cierre. ' : ''}{!costeoListo ? 'Resuelve las excepciones o ventas Epos pendientes. ' : ''}El arqueo de caja se recomienda antes de confirmar.</span></div>}
+          {!puedeCerrar && <div className="info-box cierre-bloqueado" role="status"><strong>El cierre todavía está bloqueado</strong><span>{!inventarioListo ? 'Confirma el inventario físico de cierre. ' : ''}{!costeoListo ? 'El costo seguirá provisional hasta resolver las ventas pendientes. ' : ''}El arqueo de caja se recomienda antes de confirmar.</span></div>}
           <button className="btn-primary" style={{ marginTop: '1.5rem' }} disabled={!puedeCerrar} onClick={async () => {
           const ok = await confirmar({
-            message: '¿Cerrar la semana? Se generará la comisión de terminal y se congelarán los saldos.',
+            message: `¿Cerrar financieramente la semana? Se generará la comisión de terminal y se congelarán los saldos. ${!costeoListo ? 'Hay costos pendientes: aceptas conservar el resultado provisional, sin inventar costos.' : ''} Las diferencias físicas quedan documentadas; no son un bloqueo.`,
             confirmText: 'Cerrar semana',
           });
           if (!ok) return;
           try {
-            await finanzas.cerrar(semana.id); onCambio(); cargar();
+            await finanzas.cerrar(semana.id, { confirmar_excepciones: !costeoListo }); onCambio(); cargar();
           } catch (e) {
             error(e instanceof Error ? e.message : 'No se pudo cerrar la semana');
           }
@@ -672,6 +674,8 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
 
       <div className="vision-callout"><strong>Cómo leer la diferencia</strong><span className="muted">Si el flujo de caja es mayor que la utilidad FIFO, normalmente se compró inventario que todavía está en bodega. Esa diferencia no es pérdida: es inventario convertido en activo.</span>{Math.abs(diferenciaVentas) > 0.01 && <span className="vision-callout__warning">Epos y movimientos registrados difieren por {mxn(diferenciaVentas)}. Revisa el método mixto, propinas u otros antes de cerrar.</span>}<span className="muted">El cierre y las correcciones se realizan únicamente en la pestaña <strong>Cierre</strong>.</span></div>
 
+      {!!r.costos_sin_venta?.total && <p className="info-box">El resultado incluye {mxn(r.costos_sin_venta.total)} de salidas sin venta y diferencias semanales, sin duplicar costo de Epos ni generar egresos de Caja. Las brechas anteriores no se cargan como pérdida de esta semana.</p>}
+      {(!!r.costos_sin_venta?.pendientes || !!r.costos_fifo_estimados) && <p className="info-box">Hay costos sin evidencia completa. El resultado es provisional; cero técnico no significa producto gratis.</p>}
       <ExcepcionesCosteoCard excepciones={r.excepciones_costeo ?? []} />
 
       <div className="resumen-card patrimonio-card">

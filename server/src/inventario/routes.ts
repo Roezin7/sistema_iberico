@@ -10,11 +10,36 @@ import { consumirVentasEpos, costearVentasPendientesEnVivo, estadoFifoEnVivo } f
 import { actualizarBorradorLineas, cambiarOrigenPagoCompra, confirmarBorradorCompra, crearBorradorCompra, editarCompraConfirmada, listarBorradoresCompra, listarCompras, obtenerCompraConfirmada, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra, validarCapturaCompra } from './compras-rapidas.js';
 import { listarTransferencias, transferirLote } from './ubicacion-lotes.js';
 import { actualizarRecepcionReal } from './compras-rapidas.js';
+import { vistaPreviaControl, confirmarControlCierre, completarCierre } from './control-cierre.js';
+import { controlInventario, registrarOperacion, clasificarDiferencia, CAUSAS_INVENTARIO } from './operaciones.js';
 
 export const inventarioRouter = Router();
 
 // Inventario y tareas son accesibles para admin y empleado.
 inventarioRouter.use(requireAuth);
+
+inventarioRouter.get('/control', soloAdmin, asyncHandler(async (req, res) => {
+  res.json(await controlInventario(req.auth!.negocioId));
+}));
+inventarioRouter.get('/control/:semanaId', soloAdmin, asyncHandler(async (req, res) => {
+  res.json(await vistaPreviaControl(req.auth!.negocioId, BigInt(z.coerce.number().int().positive().parse(req.params.semanaId))));
+}));
+inventarioRouter.post('/control/:semanaId/completar-conteo', soloAdmin, asyncHandler(async(req,res)=>{
+  const body=z.object({snapshot_id:z.number().int().positive(),confirmar_mismo_conteo:z.literal(true),lineas:z.array(z.object({product_id:z.number().int().positive(),zona_id:z.number().int().positive(),cantidad_base:z.number().finite().nonnegative()})).min(1).max(500)}).parse(req.body);
+  res.json(await completarCierre(req.auth!.negocioId,req.auth!.usuarioId,BigInt(z.coerce.number().int().positive().parse(req.params.semanaId)),BigInt(body.snapshot_id),body.lineas));
+}));
+inventarioRouter.post('/control/:semanaId/confirmar', soloAdmin, asyncHandler(async (req, res) => {
+  const body = z.object({ snapshot_id: z.coerce.number().int().positive(), solicitud_id: z.string().uuid(), revision:z.string().regex(/^[a-f0-9]{64}$/),corte_at:z.string().datetime({offset:true}), confirmar_diferencias: z.literal(true) }).parse(req.body);
+  res.json(await confirmarControlCierre(req.auth!.negocioId, req.auth!.usuarioId, BigInt(z.coerce.number().int().positive().parse(req.params.semanaId)), BigInt(body.snapshot_id), body.solicitud_id, {hash:body.revision,corte_at:body.corte_at}));
+}));
+inventarioRouter.patch('/incidencias/:id', soloAdmin, asyncHandler(async (req, res) => {
+  const body = z.object({ version: z.number().int().positive(), causa: z.enum(CAUSAS_INVENTARIO), estado: z.enum(['abierta','investigando','documentada']), responsable: z.string().trim().min(1).max(150), evidencia: z.string().max(1000).optional(), nota: z.string().trim().min(5).max(2000) }).parse(req.body);
+  res.json(await clasificarDiferencia(req.auth!.negocioId, req.auth!.usuarioId, BigInt(z.coerce.number().int().positive().parse(req.params.id)), body));
+}));
+inventarioRouter.post('/operaciones', soloAdmin, asyncHandler(async (req, res) => {
+  const body = z.object({ tipo: z.enum(['merma','cortesia','consumo_interno','produccion']), efectiva_at: z.string().datetime({ offset: true }), motivo: z.string().trim().min(3).max(500), responsable: z.string().trim().min(1).max(150), solicitud_id: z.string().uuid(), epos_venta_id: z.coerce.number().int().positive().nullable().optional(), lineas: z.array(z.object({ product_id: z.coerce.number().int().positive(), zona_id: z.coerce.number().int().positive(), cantidad: z.number().finite().refine(n => n !== 0), contenido_presentacion: z.coerce.number().positive().nullable().optional(), unidad_presentacion: z.string().max(30).nullable().optional() })).min(1).max(100) }).parse(req.body);
+  res.status(201).json(await registrarOperacion(req.auth!.negocioId, req.auth!.usuarioId, body));
+}));
 
 /** GET /inventario/current — existencia física operativa y existencia FIFO actual.
  * `vista=fisica` es la vista canónica. El parámetro `vista=operativa` se
@@ -170,6 +195,8 @@ inventarioRouter.post(
         cantidad_base: z.coerce.number().positive(),
         unidad_compra: z.string().trim().min(1).max(30).optional().nullable(),
         contenido_compra: z.coerce.number().positive().optional().nullable(),
+      contenido_presentacion: z.coerce.number().positive().optional().nullable(),
+      unidad_presentacion: z.enum(['ml','g','pieza']).optional().nullable(),
         costo_unitario_base: z.coerce.number().nonnegative(),
         importe: z.coerce.number().nonnegative().optional().nullable(),
       })).min(1),
@@ -187,6 +214,7 @@ inventarioRouter.post(
 /** Captura rápida desde celular. Empleados pueden dejarla en revisión; no crea FIFO todavía. */
 inventarioRouter.post('/compras/rapidas', asyncHandler(async (req, res) => {
   const body = z.object({
+    solicitud_id: z.string().uuid().optional(),
     recibida_at: z.string().datetime({ offset: true }).nullable().optional(),
     fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     proveedor: z.string().trim().max(160).optional().nullable(),
@@ -207,6 +235,8 @@ inventarioRouter.post('/compras/rapidas', asyncHandler(async (req, res) => {
       cantidad_base: z.coerce.number().positive().optional().nullable(),
       unidad_compra: z.string().trim().max(30).optional().nullable(),
       contenido_compra: z.coerce.number().positive().optional().nullable(),
+      contenido_presentacion: z.coerce.number().positive().optional().nullable(),
+      unidad_presentacion: z.enum(['ml','g','pieza']).optional().nullable(),
       costo_unitario: z.coerce.number().nonnegative().optional().nullable(),
       importe: z.coerce.number().nonnegative(),
       confianza: z.coerce.number().min(0).max(1).optional().nullable(),
@@ -237,6 +267,8 @@ inventarioRouter.post('/compras/validar', asyncHandler(async (req, res) => {
       cantidad_base: z.coerce.number().positive().optional().nullable(),
       unidad_compra: z.string().trim().max(30).optional().nullable(),
       contenido_compra: z.coerce.number().positive().optional().nullable(),
+      contenido_presentacion: z.coerce.number().positive().optional().nullable(),
+      unidad_presentacion: z.enum(['ml','g','pieza']).optional().nullable(),
       costo_unitario: z.coerce.number().nonnegative().optional().nullable(),
       importe: z.coerce.number().nonnegative(),
     })).min(1),
@@ -291,6 +323,8 @@ inventarioRouter.patch('/compras/:id', soloAdmin, asyncHandler(async (req, res) 
       cantidad_base: z.coerce.number().positive().nullable().optional(),
       unidad_compra: z.string().trim().max(30).nullable().optional(),
       contenido_compra: z.coerce.number().positive().nullable().optional(),
+      contenido_presentacion: z.coerce.number().positive().nullable().optional(),
+      unidad_presentacion: z.enum(['ml','g','pieza']).nullable().optional(),
       costo_unitario: z.coerce.number().nonnegative().nullable().optional(),
       importe: z.coerce.number().nonnegative(),
       confianza: z.coerce.number().min(0).max(1).nullable().optional(),
@@ -312,7 +346,9 @@ inventarioRouter.put('/compras/:id/lineas', soloAdmin, asyncHandler(async (req, 
       descripcion_fuente: z.string().trim().min(1).max(240),
       cantidad_fuente: z.coerce.number().nonnegative().optional().nullable(), unidad_fuente: z.string().trim().max(30).optional().nullable(),
       cantidad_base: z.coerce.number().positive().optional().nullable(), unidad_compra: z.string().trim().max(30).optional().nullable(),
-    contenido_compra: z.coerce.number().positive().optional().nullable(), costo_unitario: z.coerce.number().nonnegative().optional().nullable(),
+    contenido_compra: z.coerce.number().positive().optional().nullable(),
+      contenido_presentacion: z.coerce.number().positive().optional().nullable(),
+      unidad_presentacion: z.enum(['ml','g','pieza']).optional().nullable(), costo_unitario: z.coerce.number().nonnegative().optional().nullable(),
     importe: z.coerce.number().nonnegative(), confianza: z.coerce.number().min(0).max(1).optional().nullable(), notas: z.string().trim().max(500).optional().nullable(),
   })).min(1) }).parse(req.body);
   res.json(await actualizarBorradorLineas(req.auth!.negocioId, id, body.lineas.map((l) => ({ ...l, product_id: l.product_id == null ? null : BigInt(l.product_id) })), body.total));

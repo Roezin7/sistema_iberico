@@ -1,3 +1,4 @@
+import ControlInventario from './ControlInventario';
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
@@ -696,13 +697,16 @@ function InventarioActual() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [historial, setHistorial] = useState<SnapshotHistorial[]>([]);
   useEffect(() => {
-    api<Actual>('/inventario/current?vista=fisica').then(setData);
+    const recargar = () => { void api<Actual>('/inventario/current?vista=fisica').then(setData); };
+    recargar();
+    window.addEventListener('iberico-inventario-cambio', recargar);
     api<Categoria[]>('/catalogo/categorias-inventario').then(setCategorias).catch(() => {});
     api<SnapshotHistorial[]>('/inventario/snapshots').then(setHistorial).catch(() => {});
+    return () => window.removeEventListener('iberico-inventario-cambio', recargar);
   }, []);
   if (!data) return <Cargando />;
   const grupos = agruparPorCategoria(data.productos, categorias);
-  const diferenciaFisicoFifo = Math.round((data.valor_fifo_actual_total - data.valor_total) * 100) / 100;
+  const diferenciasCantidad = data.productos.filter(p=>Math.abs((p.cantidad_fifo_base??0)-(p.existencia_fisica_base??p.total_base))>0.0001).length;
   const bajoMinimo = data.productos.filter((p) => existenciaOperativaProducto(p) < minimoOperativoProducto(p)).length;
   const sinExistencia = data.productos.filter((p) => existenciaOperativaProducto(p) <= 0).length;
   const entradasRegistradas = data.productos.filter((p) => (p.entradas_posteriores_base ?? 0) > 0).length;
@@ -721,14 +725,15 @@ function InventarioActual() {
           <div className={bajoMinimo ? 'inventory-overview__warn' : ''}><small>Bajo mínimo</small><strong>{bajoMinimo}</strong></div>
           <div className={sinExistencia ? 'inventory-overview__danger' : ''}><small>Sin existencia</small><strong>{sinExistencia}</strong></div>
           <div className={entradasRegistradas ? 'inventory-overview__pending' : ''}><small>Entradas recientes</small><strong>{entradasRegistradas}</strong></div>
-          <div><small>Brecha FIFO</small><strong className={diferenciaFisicoFifo === 0 ? '' : 'inventory-overview__warn'}>{mxn(diferenciaFisicoFifo)}</strong></div>
+          <div><small>Diferencias de cantidad FIFO</small><strong className={diferenciasCantidad === 0 ? '' : 'inventory-overview__warn'}>{diferenciasCantidad}</strong></div>
         </div>
         <small className="muted">
-          {data.fecha ? `Último registro: ${new Date(data.fecha).toLocaleString('es-MX')} · ${data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'histórico'}${data.semana_id ? ` · semana ${data.semana_id}` : ''}` : 'Sin registros aún'}
+          {data.fecha ? `Último registro: ${new Date(data.fecha).toLocaleString('es-MX',{timeZone:'America/Mexico_City'})} · ${data.tipo === 'apertura_conciliada' ? 'apertura conciliada (saldo derivado)' : data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'histórico'}` : 'Sin registros aún'}
         </small>
         <details><summary>Cortes por zona (México)</summary>{cortesZona.map(z => <p key={z.zona_id}>{z.zona}: {inputHoraMexico(z.contado_at).replace('T', ' ')}</p>)}</details>
-        <small className="muted">Parte del último conteo y aplica entradas confirmadas y consumos registrados. FIFO queda como auditoría.</small>
+        <small className="muted">Cantidades: último físico + entradas − consumos posteriores. El importe es referencia de catálogo, no costo FIFO confirmado. La diferencia entre precios de catálogo y capas no es merma.</small>
       </div>
+      <ControlInventario />
       {data.sin_costo.length > 0 && (
         <p className="aviso">
           <Icono name="alertTriangle" size={16} />

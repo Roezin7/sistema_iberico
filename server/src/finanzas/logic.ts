@@ -193,6 +193,7 @@ export interface FilaPnl {
   gastos_totales: number;
   propinas_pagadas: number;
   utilidad_operativa: number;
+  costo_salidas_no_venta?: number;
   margen_operativo: number;
   retiros_socios: number;
   facturado: { tarjeta: number; gastos: number; balance: number };
@@ -224,6 +225,7 @@ export function estadoResultadosMensual(
   movs: MovimientoPnl[],
   inventarioPorMes: Record<string, InventarioMes> = {},
   costoVentasFifoPorMes: Record<string, number | null> = {},
+  salidasSinVentaPorMes: Record<string, number> = {},
 ): FilaPnl[] {
   const porMes = new Map<string, MovimientoPnl[]>(meses.map((m) => [m, []]));
   for (const m of movs) {
@@ -272,7 +274,8 @@ export function estadoResultadosMensual(
     // Sólo las propinas capturadas como salida explícita son costo: las del flujo
     // normal ya vienen restadas de la venta en efectivo del día.
     const propinasPagadas = porTipo('propina_pagada');
-    const utilidadOperativa = redondear(utilidadBruta - sueldos - gastosTotales - propinasPagadas);
+    const costoSalidas = salidasSinVentaPorMes[mes] ?? 0;
+    const utilidadOperativa = redondear(utilidadBruta - sueldos - gastosTotales - propinasPagadas - costoSalidas);
 
     const facturadoTarjeta = redondear(tarjeta + propinas);
     const facturadoGastos = suma((m) => m.facturado);
@@ -292,7 +295,7 @@ export function estadoResultadosMensual(
       gastos_por_categoria: gastosPorCategoria,
       gastos_totales: gastosTotales,
       propinas_pagadas: propinasPagadas,
-      utilidad_operativa: utilidadOperativa,
+      utilidad_operativa: utilidadOperativa, costo_salidas_no_venta: costoSalidas,
       margen_operativo: margen(utilidadOperativa, ventasTotal),
       retiros_socios: porTipo('retiro_socio'),
       facturado: {

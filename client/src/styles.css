@@ -3042,3 +3042,21 @@ button, input, select, textarea { max-width: 100%; }
   .operation-metrics article, .home-metrics article { padding: .8rem .7rem; }
   .operation-metrics strong, .home-metrics strong { font-size: 1.05rem; }
 }
+
+/* Control del ciclo dentro de Abasto y Cierre, sin nuevas pantallas. */
+.inventory-control { margin-block: 1rem; min-width: 0; }
+.inventory-control h3 { margin: 0; }
+.inventory-control__head { display:flex; gap:1rem; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+.inventory-control summary { cursor:pointer; padding-block:.5rem; }
+.inventory-control summary small, .inventory-case summary small { display:block; margin-top:.4rem; }
+.inventory-control__form { display:grid; gap:1rem; margin-top:1rem; }
+.inventory-control label { display:grid; gap:.4rem; min-width:0; }
+.inventory-control input:not([type=checkbox]), .inventory-control select, .inventory-control textarea { width:100%; min-width:0; box-sizing:border-box; }
+.inventory-control textarea { min-height:5rem; }
+.inventory-control__line { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:.75rem; padding-block:.75rem; border-bottom:1px solid var(--border); }
+.inventory-control__table { overflow-x:auto; max-width:100%; }
+.inventory-control__table table { min-width:640px; width:100%; text-align:left; }
+.inventory-control__table th, .inventory-control__table td { padding:.6rem; }
+.inventory-case { padding-block:.6rem; border-bottom:1px solid var(--border); }
+.inventory-control .btn-primary { margin-top:.75rem; white-space:normal; }
+@media(max-width:600px) { .inventory-control__line { grid-template-columns:1fr; } }

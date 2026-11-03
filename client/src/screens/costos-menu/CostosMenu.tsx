@@ -14,7 +14,8 @@ type Linea = {
   costo_fifo: number | null;
   costo_fifo_aplicado: number | null;
   costo_fifo_referencia: number | null;
-  estado_fifo: 'disponible' | 'aplicado' | 'insuficiente' | 'sin_datos';
+  referencia_formato?:boolean;
+  estado_fifo: 'disponible' | 'referencia_formato' | 'aplicado' | 'insuficiente' | 'sin_datos';
   ultimo_costo_fifo_unitario: number | null;
   ultimo_costo_fifo_fecha: string | null;
   falta_fifo: string | null;
@@ -69,7 +70,7 @@ type FilaResultado = {
   utilidad_operativa: number; margen_operativo: number; sueldos: number; gastos_totales: number;
   variacion_inventario: number | null; sin_movimientos: boolean;
 };
-type RespuestaResultado = { meses: FilaResultado[]; total: Omit<FilaResultado, 'mes' | 'parcial' | 'sin_movimientos'> & { meses: number } };
+type RespuestaResultado = { resultado_provisional?:boolean; costos_sin_venta?:{total:number;pendientes:number;estimados:number}; meses: FilaResultado[]; total: Omit<FilaResultado, 'mes' | 'parcial' | 'sin_movimientos'> & { meses: number } };
 
 const money = (value: number | null) =>
   value == null ? '—' : value.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
@@ -183,7 +184,9 @@ export default function CostosMenu() {
 function ResultadoMensual({ data }: { data: RespuestaResultado }) {
   const total = data.total;
   return <section className="resultados-mensuales" aria-labelledby="resultados-mensuales-titulo">
-    <div className="section-heading"><div><span className="eyebrow">P&amp;L mensual</span><h2 id="resultados-mensuales-titulo">Rentabilidad histórica</h2><p className="muted">Últimos seis meses.</p></div><span className="chip chip--info">Costo: FIFO</span></div>
+    <div className="section-heading"><div><span className="eyebrow">P&amp;L mensual</span><h2 id="resultados-mensuales-titulo">Rentabilidad histórica</h2><p className="muted">Últimos seis meses.</p></div><span className="chip chip--info">Fuente indicada por mes</span></div>
+    {!!data.costos_sin_venta?.total && <p className="muted">Incluye {money(data.costos_sin_venta.total)} de salidas sin venta y faltantes semanales, sin doble costo de Epos ni egreso ficticio.</p>}
+    {data.resultado_provisional && <p className="info-box">Resultado provisional: hay diferencias por explicar o costos estimados. Las salidas sin venta se descuentan una vez y no representan pagos de Caja.</p>}
     <div className="resultados-mensuales__total"><div><small>Ventas acumuladas</small><strong>{money(total.ventas.total)}</strong></div><div><small>Utilidad operativa</small><strong>{money(total.utilidad_operativa)}</strong></div><div><small>Margen operativo</small><strong>{percent(total.margen_operativo * 100)}</strong></div></div>
     <div className="table-wrap"><table><thead><tr><th>Mes</th><th>Ventas</th><th>Costo ventas</th><th>Sueldos + gastos</th><th>Utilidad operativa</th><th>Margen</th></tr></thead><tbody>{data.meses.map((fila) => <tr key={fila.mes}><td><strong>{fila.mes}</strong>{fila.parcial && <small className="muted"> · parcial</small>}</td><td>{fila.sin_movimientos ? '—' : money(fila.ventas.total)}</td><td>{fila.sin_movimientos ? '—' : <>{money(fila.costo_ventas)} <small className="muted">· {fila.costo_ventas_metodo.toUpperCase()}</small></>}</td><td>{fila.sin_movimientos ? '—' : money(fila.sueldos + fila.gastos_totales)}</td><td className={fila.utilidad_operativa < 0 ? 'text-danger' : ''}>{fila.sin_movimientos ? '—' : money(fila.utilidad_operativa)}</td><td>{fila.sin_movimientos ? '—' : percent(fila.margen_operativo * 100)}</td></tr>)}</tbody></table></div>
   </section>;
@@ -198,7 +201,7 @@ function ProductCard({ product }: { product: ProductoCosto }) {
   const etiquetaCosto = product.costo_fifo_actual != null
     ? 'Costo FIFO disponible'
     : product.costo_fifo_referencia != null
-      ? 'Último costo FIFO aplicado'
+      ? product.lineas.some(l=>l.referencia_formato) ? 'Referencia de presentaciones documentadas' : 'Último costo FIFO aplicado'
       : 'Costo base de receta';
   const notaCosto = product.costo_fifo_actual != null
     ? 'saldo actual en lotes'
@@ -228,8 +231,9 @@ function ProductCard({ product }: { product: ProductoCosto }) {
             ))}
           </div>
         ) : <p className="muted">No hay receta vigente capturada.</p>}
-        {product.costo_fifo_actual == null && product.costo_fifo_referencia != null && product.completa && <div className="menu-costos-warning"><Icono name="alertCircle" size={15} /> No hay lote suficiente abierto para todos los ingredientes; se muestra el último costo FIFO aplicado.</div>}
+        {product.costo_fifo_actual == null && product.costo_fifo_referencia != null && product.completa && <div className="menu-costos-warning"><Icono name="alertCircle" size={15} /> No hay lote suficiente abierto para todos los ingredientes; se muestra una referencia de costo documentado, no disponibilidad de envases.</div>}
         {product.costo_fifo_actual == null && product.costo_fifo_referencia == null && product.completa && <div className="menu-costos-warning"><Icono name="alertTriangle" size={15} /> El costo FIFO no está disponible para todos los ingredientes; se muestra el costo base de receta.</div>}
+        {product.lineas.some(l=>l.falta_fifo) && <p className="muted">{[...new Set(product.lineas.map(l=>l.falta_fifo).filter(Boolean))].join(' · ')}</p>}
         {!product.completa && <div className="menu-costos-warning"><Icono name="alertTriangle" size={15} /> Configuración pendiente: {product.lineas.flatMap((line) => line.falta_configuracion).filter((value, index, list) => list.indexOf(value) === index).join(', ') || 'receta o insumos'}</div>}
       </details>
     </article>

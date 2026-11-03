@@ -1,3 +1,4 @@
+import { bloquearLibro } from '../inventario/control-cierre.js';
 import { createHash } from 'node:crypto';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -86,6 +87,7 @@ export async function importarVentasEpos(input: {
   });
 
   const result = await prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, input.negocioId);
     const existingImport = await tx.epos_importaciones.findUnique({
       where: { negocio_id_clave: { negocio_id: input.negocioId, clave: claveImportacion } },
     });

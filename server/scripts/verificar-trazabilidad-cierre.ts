@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import { prisma as db } from '../src/db.js';
+import { crearConteo, inventarioActual } from '../src/inventario/service.js';
+import { confirmarControlCierre, prepararControlCierre, vistaPreviaControl, completarCierre } from '../src/inventario/control-cierre.js';
+import { consumirVentasEpos, valorFifoAlCorte } from '../src/inventario/consumo-epos.js';
+const url=new URL(process.env.DATABASE_URL??'');
+assert(['localhost','127.0.0.1'].includes(url.hostname)&&/test|audit/.test(url.pathname),'Sólo base local aislada');
+const d=(day:string,hour='12:00')=>new Date(`${day}T${hour}:00-06:00`);
+const checks:string[]=[];
+try {
+  const n=await db.negocios.create({data:{nombre:`QA reservas ${Date.now()}`}}),id=n.id;
+  const u=await db.usuarios.create({data:{negocio_id:id,nombre:'QA',pin_hash:'sin-login',rol:'admin'}});
+  const store=await db.stores.create({data:{negocio_id:id,name:`QA reservas ${id}`}});
+  const zones=await Promise.all(['Local','Bodega'].map((nombre,orden)=>db.zonas_inventario.create({data:{negocio_id:id,nombre,orden}})));
+  const p=await db.products.create({data:{negocio_id:id,store_id:store.id,name:`Agua reservas ${id}`,unidad_base:'pieza',unit_cost:20,contenido_compra:1,unidad_compra:'botella'}});
+  const w=await db.semanas.create({data:{negocio_id:id,fecha_inicio:new Date('2026-10-19'),fecha_fin:new Date('2026-10-25'),etiqueta:'QA'}});
+  const line=(z:bigint,q:number)=>({product_id:Number(p.id),zona_id:Number(z),qty_captura:q});
+  await crearConteo(id,[line(zones[0]!.id,10),line(zones[1]!.id,0)],{tipo:'apertura',semana_id:Number(w.id),contado_at:d('2026-10-19','09:00').toISOString()});
+  const old=await db.inventory_lots.create({data:{negocio_id:id,product_id:p.id,recibido_at:new Date('2026-10-19'),cantidad_inicial:10,cantidad_restante:10,costo_unitario:20,fuente:'inventario_inicial'}});
+  const imp=await db.epos_importaciones.create({data:{negocio_id:id,clave:'qa',periodo_desde:d('2026-10-26','00:00'),periodo_hasta:d('2026-11-02','00:00')}});
+  await db.productos_menu.create({data:{negocio_id:id,nombre:'Agua QA',epos_product_id:98001,recetas:{create:{version:1,estado:'validada',lineas:{create:{product_id:p.id,cantidad:1,unidad:'pieza'}}}}}});
+  const sale=await db.epos_ventas.create({data:{negocio_id:id,importacion_id:imp.id,clave:'postcorte',fecha:d('2026-10-27'),epos_product_id:98001,producto_nombre:'Agua QA',cantidad:3,venta_bruta:100,metodo_pago:'Cash'}});
+  await consumirVentasEpos({negocioId:id,from:imp.periodo_desde.toISOString(),to:imp.periodo_hasta.toISOString(),confirmar:true});
+  const close=await crearConteo(id,[line(zones[0]!.id,2)],{tipo:'cierre',semana_id:Number(w.id),contado_at:d('2026-10-25','23:00').toISOString()});
+  const pending=await vistaPreviaControl(id,w.id) as {pendiente_conteo?:boolean;faltantes?:unknown[]};assert(pending.pendiente_conteo);assert.equal(pending.faltantes?.length,1);
+  const complete=await completarCierre(id,u.id,w.id,BigInt(close.snapshot_id),[{product_id:Number(p.id),zona_id:Number(zones[1]!.id),cantidad_base:0}]);
+  const beforeFailure=await db.inventory_lots.count({where:{negocio_id:id}});
+  await assert.rejects(()=>confirmarControlCierre(id,u.id,w.id,BigInt(complete.snapshot_id),crypto.randomUUID()),/posteriores/);
+  assert.equal(await db.inventory_control_closures.count({where:{negocio_id:id}}),0);assert.equal(await db.inventory_lots.count({where:{negocio_id:id}}),beforeFailure);
+  checks.push('No contado no se convierte en cero; contradicción de cronología revierte toda la transacción');
+  // Cambio sólo del fixture aislado para representar otro conteo observado.
+  await db.inventory_lines.update({where:{snapshot_id_product_id_zona_id:{snapshot_id:BigInt(complete.snapshot_id),product_id:p.id,zona_id:zones[0]!.id}},data:{qty_captura:8}});
+  const preview=await vistaPreviaControl(id,w.id) as {revision:string;corte_at:string};
+  await assert.rejects(()=>confirmarControlCierre(id,u.id,w.id,BigInt(complete.snapshot_id),crypto.randomUUID(),{hash:'0'.repeat(64),corte_at:preview.corte_at}),/cambiaron/);
+  const antes=(await inventarioActual(id)).productos[0]!.existencia_actual_base;assert.equal(antes,5);
+  const [r1,r2]=await Promise.all([1,2].map(()=>confirmarControlCierre(id,u.id,w.id,BigInt(complete.snapshot_id),crypto.randomUUID(),{hash:preview.revision,corte_at:preview.corte_at})));
+  assert.equal(r1.cierre_id,r2.cierre_id);assert([r1,r2].some(r=>r.repetida));assert.equal(await db.inventory_control_closures.count({where:{negocio_id:id}}),1);
+  const child=await db.inventory_lots.findFirstOrThrow({where:{negocio_id:id,lote_origen_id:old.id}});assert.equal(Number(child.cantidad_inicial),8);assert.equal(Number(child.cantidad_restante),5);assert.equal(Number(child.costo_unitario),20);
+  const consumption=await db.inventory_consumptions.findFirstOrThrow({where:{epos_venta_id:sale.id}});assert.equal(consumption.lote_id,child.id);assert.equal(consumption.lote_original_id,old.id);assert.equal(Number(consumption.costo_total),60);
+  assert.equal(Number((await db.epos_ventas.findUniqueOrThrow({where:{id:sale.id}})).costo_fifo),60);assert.equal((await inventarioActual(id)).productos[0]!.existencia_actual_base,antes);
+  assert.equal((await valorFifoAlCorte(id,d('2026-10-25','23:30'))).valor,200);assert.equal((await valorFifoAlCorte(id,d('2026-10-26','00:00'))).valor,160);
+  assert.equal(await db.movimientos.count({where:{negocio_id:id}}),0);
+  checks.push('Dos cierres simultáneos crean una apertura; venta posterior conserva cantidad/costo y origen; valoración histórica permanece al corte');
+  checks.push('Revisión obsoleta rechazada; siguiente físico 5 = lote inicial 8 − consumo posterior 3');
+  console.log(JSON.stringify({ok:true,checks,negocio_qa:Number(id),production_writes:0}));
+}finally{await db.$disconnect();}

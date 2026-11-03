@@ -1,3 +1,5 @@
+import { envaseCompra } from './envase-compra.js';
+import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
@@ -21,6 +23,8 @@ export type CapturaCompraLinea = {
   cantidad_base?: number | null;
   unidad_compra?: string | null;
   contenido_compra?: number | null;
+  contenido_presentacion?: number | null;
+  unidad_presentacion?: string | null;
   costo_unitario?: number | null;
   importe: number;
   confianza?: number | null;
@@ -28,6 +32,7 @@ export type CapturaCompraLinea = {
 };
 
 export type CapturaCompraInput = {
+  solicitud_id?: string;
   recibida_at?: string | null;
   fecha_recepcion: string;
   proveedor?: string | null;
@@ -87,6 +92,7 @@ export async function validarCapturaCompra(negocioId: bigint, total: number, lin
 export async function actualizarRecepcionReal(negocioId: bigint, usuarioId: bigint, purchaseId: bigint, valor: string | null) {
   const recibida = instanteReal(valor);
   return prisma.$transaction(async tx => {
+    await bloquearLibro(tx, negocioId);
     await tx.$queryRaw`SELECT id FROM purchases WHERE id = ${purchaseId} AND negocio_id = ${negocioId} FOR UPDATE`;
     const compra = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId } });
     if (!compra || !['revision', 'borrador', 'confirmada'].includes(compra.estado)) throw new HttpError(404, 'Compra editable no encontrada');
@@ -98,6 +104,8 @@ export async function actualizarRecepcionReal(negocioId: bigint, usuarioId: bigi
       if (trasladoAnterior) throw new HttpError(409, 'La hora indicada es posterior a un traslado de esta compra. Revisa el traslado antes de cambiar la recepción.');
     }
     if (compra.recibida_at?.getTime() === recibida?.getTime() || !compra.recibida_at && !recibida) return { purchase_id: Number(purchaseId), recibida_at: recibida?.toISOString() ?? null };
+    await exigirPeriodoMutable(tx, negocioId, compra.recibida_at ?? new Date(`${compra.fecha_recepcion.toISOString().slice(0,10)}T00:00:00-06:00`));
+    await exigirPeriodoMutable(tx, negocioId, recibida ?? new Date(`${compra.fecha_recepcion.toISOString().slice(0,10)}T00:00:00-06:00`));
     await tx.purchases.update({ where: { id: purchaseId }, data: { recibida_at: recibida } });
     await registrarAuditoria({ negocioId, usuarioId, entidad: 'compra', entidadId: purchaseId, accion: 'corregir_hora_recepcion', antes: { recibida_at: compra.recibida_at }, despues: { recibida_at: recibida }, metadata: { fecha_pago_sin_cambio: true, sin_recosteo_historico: true } }, tx);
     return { purchase_id: Number(purchaseId), recibida_at: recibida?.toISOString() ?? null };
@@ -130,7 +138,12 @@ async function validarOrigen(negocioId: bigint, origenPagoId?: bigint | null) {
   return origen;
 }
 
+function validarEnvases(lineas: CapturaCompraLinea[]) {
+  for (const l of lineas) if ((l.contenido_presentacion != null) !== !!l.unidad_presentacion || (l.contenido_presentacion != null && (!(l.contenido_presentacion > 0) || !['ml','g','pieza'].includes(l.unidad_presentacion!)))) throw new HttpError(400, 'El envase individual requiere tamaño y unidad juntos, o ambos vacíos si no hay evidencia');
+}
+
 export async function crearBorradorCompra(negocioId: bigint, usuarioId: bigint, input: CapturaCompraInput) {
+  validarEnvases(input.lineas);
   if (!input.lineas.length) throw new HttpError(400, 'El ticket debe tener al menos una línea');
   if ((input.total != null && input.total < 0) || input.lineas.some((l) => !l.descripcion_fuente.trim() || l.importe < 0)) {
     throw new HttpError(400, 'El total y las líneas deben tener valores válidos');
@@ -138,10 +151,16 @@ export async function crearBorradorCompra(negocioId: bigint, usuarioId: bigint, 
   const fecha = fechaUTC(input.fecha_recepcion);
   const recibidaAt = instanteReal(input.recibida_at);
   const ticket = input.ticket_ref?.trim() || null;
+  const hashSolicitud = crypto.createHash('sha256').update(JSON.stringify(input, (_,v) => typeof v === 'bigint' ? v.toString() : v)).digest('hex');
   const foto = validarFoto(input.foto_data, input.foto_mime);
   await validarOrigen(negocioId, input.origen_pago_id);
 
   return prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
+    if (input.solicitud_id) {
+      const previa = await tx.purchases.findFirst({ where: { negocio_id: negocioId, solicitud_id: input.solicitud_id } });
+      if (previa) { if (previa.solicitud_hash !== hashSolicitud) throw new HttpError(409, 'El reintento de compra contiene datos diferentes; revisa la compra guardada antes de crear otra'); return { purchase_id: Number(previa.id), estado: previa.estado, repetida: true }; }
+    }
     if (ticket || foto?.hash) {
       const repetida = await tx.purchases.findFirst({
         where: { negocio_id: negocioId, ...(ticket ? { ticket_ref: ticket } : { foto_hash: foto!.hash, fecha_recepcion: fecha }) },
@@ -156,14 +175,14 @@ export async function crearBorradorCompra(negocioId: bigint, usuarioId: bigint, 
         ticket_ref: ticket, total: input.total, moneda: input.moneda ?? 'MXN', fuente: input.tipo_documento === 'orden_manuscrita' ? 'orden_manuscrita' : 'ticket_movil',
         notas: input.notas?.trim() || null, estado: 'revision', foto_data: foto?.data ?? null,
         foto_mime: foto?.mime ?? null, foto_hash: foto?.hash ?? null, origen_pago_id: input.origen_pago_id ?? null,
-        capturada_por: usuarioId,
+        capturada_por: usuarioId, solicitud_id: input.solicitud_id, solicitud_hash: input.solicitud_id ? hashSolicitud : null,
       },
     });
     await tx.purchase_capture_lines.createMany({
       data: input.lineas.map((l) => ({
         purchase_id: compra.id, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea,
         descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null,
-        unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null,
+        unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, contenido_presentacion: l.contenido_presentacion ?? null, unidad_presentacion: l.unidad_presentacion ?? null,
         costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null,
         notas: l.notas?.trim() || null,
       })),
@@ -185,7 +204,7 @@ export async function listarBorradoresCompra(negocioId: bigint) {
     lineas: f.capture_lines.map((l) => ({ id: Number(l.id), product_id: l.product_id ? Number(l.product_id) : null,
       producto: l.products?.name ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente,
       cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), unidad_compra: l.unidad_compra,
-      contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe), confianza: l.confianza == null ? null : Number(l.confianza), notas: l.notas })),
+      contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), contenido_presentacion: l.contenido_presentacion == null ? null : Number(l.contenido_presentacion), unidad_presentacion: l.unidad_presentacion, costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe), confianza: l.confianza == null ? null : Number(l.confianza), notas: l.notas })),
   }));
 }
 
@@ -247,8 +266,8 @@ export async function obtenerCompraConfirmada(negocioId: bigint, purchaseId: big
     origen_pago_id: compra.origen_pago_id ? Number(compra.origen_pago_id) : null,
     origen_pago: compra.origen_pago?.nombre ?? null,
     lineas: compra.capture_lines.length
-      ? compra.capture_lines.map((l) => ({ id: Number(l.id), product_id: l.product_id ? Number(l.product_id) : null, producto: l.products?.name ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente, cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe), confianza: l.confianza == null ? null : Number(l.confianza), notas: l.notas }))
-      : compra.purchase_lines.map((l) => ({ id: null, product_id: Number(l.product_id), producto: l.products.name, tipo_linea: 'inventario', descripcion_fuente: l.products.name, cantidad_fuente: l.contenido_compra && Number(l.contenido_compra) > 0 ? Number(l.qty) / Number(l.contenido_compra) : null, unidad_fuente: l.unidad_compra, cantidad_base: Number(l.qty), unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), costo_unitario: Number(l.costo_unitario), importe: Number(l.importe ?? 0), confianza: 1, notas: null })),
+      ? compra.capture_lines.map((l) => ({ id: Number(l.id), product_id: l.product_id ? Number(l.product_id) : null, producto: l.products?.name ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente, cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), contenido_presentacion: l.contenido_presentacion == null ? null : Number(l.contenido_presentacion), unidad_presentacion: l.unidad_presentacion, costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe), confianza: l.confianza == null ? null : Number(l.confianza), notas: l.notas }))
+      : compra.purchase_lines.map((l) => ({ id: null, product_id: Number(l.product_id), producto: l.products.name, tipo_linea: 'inventario', descripcion_fuente: l.products.name, cantidad_fuente: l.contenido_compra && Number(l.contenido_compra) > 0 ? Number(l.qty) / Number(l.contenido_compra) : null, unidad_fuente: l.unidad_compra, cantidad_base: Number(l.qty), unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), contenido_presentacion: null, unidad_presentacion: null, costo_unitario: Number(l.costo_unitario), importe: Number(l.importe ?? 0), confianza: 1, notas: null })),
   };
 }
 
@@ -261,10 +280,14 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
   fecha_recepcion?: string; proveedor?: string | null; ticket_ref?: string | null; total?: number;
   origen_pago_id?: bigint | null; lineas: EditarCompraLinea[];
 }) {
+  validarEnvases(input.lineas);
   if (!input.lineas.length) throw new HttpError(400, 'La compra debe conservar al menos una línea');
   const resultado = await prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
     const actual = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId }, include: { inventory_lots: { include: { consumptions: { select: { id: true }, take: 1 } } }, capture_lines: true } });
     if (!actual) throw new HttpError(404, 'Compra no encontrada');
+    await exigirPeriodoMutable(tx, negocioId, actual.recibida_at ?? new Date(`${actual.fecha_recepcion.toISOString().slice(0,10)}T00:00:00-06:00`));
+    if (input.fecha_recepcion) await exigirPeriodoMutable(tx, negocioId, new Date(`${input.fecha_recepcion}T00:00:00-06:00`));
     if (actual.estado !== 'confirmada') throw new HttpError(409, 'Sólo se pueden editar compras confirmadas');
     if (actual.inventory_lots.some((l) => l.consumptions.length > 0)) throw new HttpError(409, 'El ticket ya tiene consumo FIFO; no se puede reescribir. Registra un ajuste para conservar la trazabilidad.');
     const fecha = input.fecha_recepcion ? fechaUTC(input.fecha_recepcion) : actual.fecha_recepcion;
@@ -295,7 +318,7 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     const bodega = await tx.zonas_inventario.findFirst({ where: { negocio_id: negocioId, nombre: 'Bodega' }, select: { id: true } });
     if (!bodega) throw new HttpError(409, 'El negocio no tiene configurada la zona Bodega');
     await tx.purchase_capture_lines.deleteMany({ where: { purchase_id: purchaseId } });
-    await tx.purchase_capture_lines.createMany({ data: input.lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
+    await tx.purchase_capture_lines.createMany({ data: input.lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, contenido_presentacion: l.contenido_presentacion ?? null, unidad_presentacion: l.unidad_presentacion ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
     await tx.purchase_lines.deleteMany({ where: { purchase_id: purchaseId } });
     await tx.inventory_lots.deleteMany({ where: { purchase_id: purchaseId } });
     const porProducto = new Map<string, { qty: number; importe: number; unidad: string | null; contenido: number | null }>();
@@ -303,7 +326,7 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
       const key = l.product_id!.toString(); const prev = porProducto.get(key); const qty = Number(l.cantidad_base); const importe = Number(l.importe);
       const misma = prev && prev.unidad === (l.unidad_compra ?? null) && prev.contenido === (l.contenido_compra ?? null);
       porProducto.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, unidad: misma ? prev.unidad : 'mixta', contenido: misma ? prev.contenido : null } : { qty, importe, unidad: l.unidad_compra ?? null, contenido: l.contenido_compra ?? null });
-      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: l.product_id!, purchase_id: purchaseId, zona_id: bodega.id, recibido_at: fecha, cantidad_inicial: qty, cantidad_restante: qty, costo_unitario: importe / qty, moneda: actual.moneda, fuente: actual.fuente, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref, notas: actual.notas } });
+      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: l.product_id!, purchase_id: purchaseId, zona_id: bodega.id, recibido_at: fecha, ...envaseCompra(l,reglas.find(p=>p.id===l.product_id)), cantidad_inicial: qty, cantidad_restante: qty, costo_unitario: importe / qty, moneda: actual.moneda, fuente: actual.fuente, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref, notas: actual.notas } });
     }
     for (const [productId, line] of porProducto) {
       const costo = line.importe / line.qty;
@@ -340,6 +363,7 @@ export async function cambiarOrigenPagoCompra(negocioId: bigint, purchaseId: big
   // El timeout interactivo por defecto (5 s) puede expirar antes de actualizar
   // el movimiento, dejando la compra intacta aunque la operación sea válida.
   return prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
     const origen = await tx.ubicaciones_fondos.findFirst({
       where: { id: origenPagoId, negocio_id: negocioId, activo: true },
       select: { id: true, tipo: true, nombre: true },
@@ -378,6 +402,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
   // negocios con histórico grande esa sincronización puede superar el timeout
   // interactivo predeterminado de Prisma aunque la operación sea válida.
   const resultado = await prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
     const claim = await tx.purchases.updateMany({
       where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } },
       data: { estado: 'confirmando' },
@@ -385,10 +410,12 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     if (claim.count !== 1) {
       const actual = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId }, select: { estado: true } });
       if (!actual) throw new HttpError(404, 'Compra no encontrada');
+      if (actual.estado === 'confirmada') return { purchase_id: Number(purchaseId), estado: 'confirmada', repetida: true };
       throw new HttpError(409, `La compra ya está ${actual.estado}`);
     }
     const compra = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId, estado: 'confirmando' }, include: { capture_lines: true } });
     if (!compra) throw new HttpError(409, 'No se pudo reservar la compra para confirmación');
+    await exigirPeriodoMutable(tx, negocioId, compra.recibida_at ?? new Date(`${compra.fecha_recepcion.toISOString().slice(0,10)}T00:00:00-06:00`));
     if (!compra.origen_pago_id) throw new HttpError(400, 'Selecciona de dónde salió el pago antes de confirmar');
     // Los tickets leídos por OCR pueden conservar el total vacío aunque sus líneas
     // ya estén completas. En ese caso el total verificable es la suma del recibo.
@@ -491,7 +518,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       const contenido = l.contenido_compra == null ? null : Number(l.contenido_compra);
       const misma = prev && prev.unidad === l.unidad_compra && prev.contenido === contenido;
       productos.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, costo: (prev.importe + importe) / (prev.qty + qty), unidad: misma ? prev.unidad : 'mixta', contenido: misma ? prev.contenido : null } : { qty, importe, costo, unidad: l.unidad_compra, contenido });
-      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: l.product_id!, purchase_id: compra.id, zona_id: bodega.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: qty, cantidad_restante: qty, costo_unitario: costo, moneda: compra.moneda, fuente: compra.fuente, ticket_ref: compra.ticket_ref, notas: notasCompra } });
+      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: l.product_id!, purchase_id: compra.id, zona_id: bodega.id, recibido_at: compra.fecha_recepcion, ...envaseCompra(l,reglasProductos.find(p=>p.id===l.product_id)), cantidad_inicial: qty, cantidad_restante: qty, costo_unitario: costo, moneda: compra.moneda, fuente: compra.fuente, ticket_ref: compra.ticket_ref, notas: notasCompra } });
     }
     for (const [productId, line] of productos) {
       const costo = line.costo;
@@ -516,14 +543,16 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
 }
 
 export async function actualizarBorradorLineas(negocioId: bigint, purchaseId: bigint, lineas: CapturaCompraLinea[], total?: number | null) {
+  validarEnvases(lineas);
   const compra = await prisma.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } }, select: { id: true, estado: true } });
   if (!compra) throw new HttpError(404, 'Compra pendiente no encontrada');
   if (!lineas.length) throw new HttpError(400, 'La compra debe conservar al menos una línea');
   await prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
     const reserva = await tx.purchases.updateMany({ where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } }, data: total !== undefined ? { total } : { estado: compra.estado } });
     if (!reserva.count) throw new HttpError(409, 'La compra cambió de estado; recarga antes de editarla');
     await tx.purchase_capture_lines.deleteMany({ where: { purchase_id: purchaseId } });
-      await tx.purchase_capture_lines.createMany({ data: lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
+      await tx.purchase_capture_lines.createMany({ data: lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, contenido_presentacion: l.contenido_presentacion ?? null, unidad_presentacion: l.unidad_presentacion ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
   });
   return { purchase_id: Number(purchaseId), actualizado: true, lineas: lineas.length };
 }

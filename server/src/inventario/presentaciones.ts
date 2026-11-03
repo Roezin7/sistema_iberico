@@ -43,3 +43,18 @@ export async function registrarPresentacionesObservadas(tx: Prisma.TransactionCl
       proveedores = EXCLUDED.proveedores, es_canonica = EXCLUDED.es_canonica;
   `;
 }
+
+/** El tamaño comercial es independiente de la unidad base: Coca puede
+ * consumirse por pieza y aun exigir una botella de 450 ml, no una de 2 L. */
+export function loteElegibleParaReceta(lote: { contenido_presentacion?: unknown; unidad_presentacion?: string | null; cantidad_restante: unknown }, linea: { contenido_requerido?: unknown; unidad_requerida?: string | null; envases_completos?: boolean }, unidadBase: string | null) {
+  if (!linea.envases_completos && linea.contenido_requerido == null) return true;
+  const contenido = Number(linea.contenido_requerido);
+  if (!(contenido > 0) || Number(lote.contenido_presentacion) !== contenido) return false;
+  if (linea.unidad_requerida && lote.unidad_presentacion !== linea.unidad_requerida) return false;
+  const baseEnvase = unidadBase === 'pieza' ? 1 : contenido;
+  return linea.envases_completos ? Number(lote.cantidad_restante) + 0.0001 >= baseEnvase : Number(lote.cantidad_restante)>0;
+}
+export function saldoEnvasesCompletos(cantidad: number, contenido: number, unidadBase: string | null) {
+  const base = unidadBase === 'pieza' ? 1 : contenido;
+  return Math.floor((cantidad + 0.00001) / base) * base;
+}

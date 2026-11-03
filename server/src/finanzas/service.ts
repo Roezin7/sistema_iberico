@@ -1,5 +1,9 @@
+import { controlInventario } from '../inventario/operaciones.js';
+import { costosSinVenta } from '../inventario/costo-no-venta.js';
 import { Prisma, type TipoMovimiento } from '@prisma/client';
 import { prisma } from '../db.js';
+import { prepararControlCierre, confirmarControlCierre } from '../inventario/control-cierre.js';
+import crypto from 'node:crypto';
 import { registrarAuditoria } from '../lib/auditoria.js';
 import { num0 } from '../lib/num.js';
 import { HttpError } from '../middleware/error.js';
@@ -395,7 +399,9 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
   // El valor FIFO al corte es una valuación del libro, no un conteo físico.
   // Nunca debe presentarse como cierre de inventario mientras la semana no
   // tenga un snapshot de cierre vinculado.
-  const cierreRegistrado = semanal.cierre_snapshot_id == null || semanal.cierre_valor == null
+  const controlFisico = await prisma.inventory_control_closures.findFirst({where:{negocio_id:negocioId,semana_id:semanaId}});
+  const valorConciliado = controlFisico ? Number((controlFisico.resumen as {valor_fifo?:number}).valor_fifo ?? 0) : null;
+  const cierreRegistrado = controlFisico ? valorConciliado : semanal.cierre_snapshot_id == null || semanal.cierre_valor == null
     ? null
     : num0(semanal.cierre_valor);
   const fisicoActual = inventarioFisico.snapshot_id == null ? null : redondear(inventarioFisico.valor_total);
@@ -521,6 +527,46 @@ export function conciliacionInventarioSemana(negocioId: bigint, semanaId: bigint
 }
 
 async function conciliacionInventarioSemanaCalculada(negocioId: bigint, semanaId: bigint) {
+  const ciclo = await asegurarInventarioSemanal(negocioId, semanaId);
+  const semana = await prisma.semanas.findFirst({ where: { negocio_id: negocioId, id: semanaId } });
+  const control = await prisma.inventory_control_closures.findFirst({ where: { negocio_id: negocioId, semana_id: semanaId } });
+  if (!ciclo.apertura_snapshot_id || !ciclo.cierre_snapshot_id || (semana?.estado === 'cerrada' && !control)) return conciliacionInventarioSemanaLegada(negocioId, semanaId);
+  type Fila = Awaited<ReturnType<typeof prepararControlCierre>>['filas'][number];
+  let base: { filas: Fila[]; advertencias: unknown[] };
+  try { base = control ? control.resumen as unknown as typeof base : await prepararControlCierre(prisma, negocioId, semanaId).then(p => ({ filas: p.filas, advertencias: p.libro.errores })); }
+  catch (error) {
+    if (!(error instanceof HttpError) || !String(error.message).includes('Falta')) throw error;
+    const legado = await conciliacionInventarioSemanaLegada(negocioId, semanaId);
+    return { ...legado, estado: 'pendiente_cierre' as const, reporte_independiente: false, alerta_independencia: error.message };
+  }
+  const filas: FilaConciliacionInventario[] = base.filas.map(f => ({
+    product_id: f.product_id, producto: f.producto, unidad_base: f.unidad, presentacion_apertura: [], presentacion_cierre: [],
+    inventario_inicial: f.apertura, fifo_apertura: f.fifo_apertura,
+    diferencia_apertura: f.arrastre_previo, diferencia_apertura_valor: f.costo_unitario == null ? null : redondear(f.arrastre_previo * f.costo_unitario),
+    compras_recibidas: f.compras, ajustes_inventario: f.entradas - f.compras - f.salidas_operativas, consumo_teorico: f.consumo_ventas, consumo_fifo_activo: f.consumo_fifo,
+    consumo_fisico_inferido: f.apertura + f.entradas - f.salidas_operativas - f.contado, diferencia_consumo: -f.diferencia,
+    diferencia_conversion: 0, diferencia_semana: f.diferencia, existencia_esperada_movimientos: f.esperado,
+    existencia_fifo_esperada: f.fifo_al_corte, inventario_fisico_final: f.contado,
+    diferencia_fifo: f.contado - f.fifo_al_corte, diferencia_fifo_valor: f.costo_unitario == null ? null : redondear((f.contado - f.fifo_al_corte) * f.costo_unitario),
+    diferencia_cantidad: f.diferencia, costo_fifo: f.costo_unitario, costo_fifo_apertura: f.costo_unitario,
+    diferencia_valor: f.costo_unitario == null ? null : redondear(f.diferencia * f.costo_unitario),
+    incidencia_tipo: Math.abs(f.diferencia) > 0.0001 || f.no_cubierto > 0 ? 'captura' : 'sin_diferencia',
+    incidencia: f.no_cubierto > 0 ? 'Consumo sin saldo físico suficiente en su momento; revisar evidencia' : Math.abs(f.diferencia) > 0.0001 ? 'Diferencia semanal pendiente de explicar; no se presume merma' : 'Sin diferencia semanal',
+  }));
+  return {
+    estado: 'calculada' as const, apertura_snapshot_id: Number(ciclo.apertura_snapshot_id), cierre_snapshot_id: Number(ciclo.cierre_snapshot_id), filas,
+    total_diferencia_valor: redondear(filas.reduce((s, f) => s + (f.diferencia_valor ?? 0), 0)),
+    productos_con_incidencia: filas.filter(f => f.incidencia_tipo !== 'sin_diferencia').length,
+    consumo_fifo_activo_filas: 0, reversiones_historial_filas: 0, productos_con_diferencia_consumo: filas.filter(f => Math.abs(f.diferencia_consumo) > 0.0001).length,
+    diferencia_apertura_valor: redondear(filas.reduce((s, f) => s + (f.diferencia_apertura_valor ?? 0), 0)), diferencia_conversion_valor: 0,
+    diferencia_semana_valor: redondear(filas.reduce((s, f) => s + (f.diferencia_valor ?? 0), 0)), conciliacion_apertura: null,
+    reporte_independiente: base.advertencias.length === 0 && base.filas.every(f => !f.costo_estimado && f.no_cubierto === 0),
+    alerta_independencia: base.advertencias.length ? 'Hay movimientos sin receta o conversión; resultado provisional, no inventario cero confirmado.' : 'Comparación al mismo corte; las diferencias se documentan y no bloquean el cierre.',
+    persistida: !!control, filas_persistidas: control ? filas.length : 0,
+  };
+}
+
+async function conciliacionInventarioSemanaLegada(negocioId: bigint, semanaId: bigint) {
   const semanal = await asegurarInventarioSemanal(negocioId, semanaId);
   const filasPersistidas = semanal.cierre_snapshot_id == null
     ? 0
@@ -1434,10 +1480,12 @@ async function resumenCalculado(negocioId: bigint, semanaId: bigint) {
     movs.filter((m) => m.tipo === 'gasto' || m.tipo === 'sueldo' || m.tipo === 'propina_pagada')
       .reduce((sum, m) => sum + num0(m.monto as never), 0),
   );
+  const salidasSinVenta = await costosSinVenta(negocioId, semanaId);
+  const costosEstimados = await prisma.inventory_consumptions.count({ where: { negocio_id: negocioId, epos_venta: { fecha: { gte: new Date(`${semana.fecha_inicio.toISOString().slice(0,10)}T00:00:00-06:00`), lt: new Date(new Date(`${semana.fecha_fin.toISOString().slice(0,10)}T00:00:00-06:00`).getTime()+86400000) } }, lote: { costo_estimado: true }, ...filtroConsumoFifoActivo() } });
   const resultadoOperativo = utilidadBruta == null
     ? null
-    : redondear(utilidadBruta - comisionTerminal(ventaTarjeta, propinaTarjeta) - gastosOperativos);
-  const resultadoIndependiente = Boolean(conciliacion_inventario.reporte_independiente && (inventario.control_fifo?.reporte_independiente ?? false) && eposPendientes._count._all === 0);
+    : redondear(utilidadBruta - comisionTerminal(ventaTarjeta, propinaTarjeta) - gastosOperativos - salidasSinVenta.total);
+  const resultadoIndependiente = salidasSinVenta.pendientes === 0 && salidasSinVenta.estimados === 0 && costosEstimados === 0 && Boolean(conciliacion_inventario.reporte_independiente && (inventario.control_fifo?.reporte_independiente ?? false) && eposPendientes._count._all === 0);
   // El patrimonio representa activos físicos comprobados, no el valor bruto
   // del ledger FIFO. Si la semana sigue abierta sin conteo, se deja pendiente
   // para no mostrar una cifra inflada como si fuera patrimonio real.
@@ -1482,6 +1530,7 @@ async function resumenCalculado(negocioId: bigint, semanaId: bigint) {
     resultado_operativo: resultadoOperativo,
     resultado_operativo_estado: resultadoOperativo == null ? 'pendiente' : resultadoIndependiente ? 'verificado' : 'provisional_fifo',
     costo_ventas_fifo_activo: inventario.costo_ventas,
+    costos_sin_venta: salidasSinVenta, costos_fifo_estimados: costosEstimados,
     ventas_epos_pendientes: eposPendientes._count._all,
     importe_ventas_epos_pendientes: redondear(num0(eposPendientes._sum.venta_neta ?? eposPendientes._sum.venta_bruta)),
     excepciones_costeo,
@@ -1608,6 +1657,8 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
     lista.push({ producto: fila.products.name, incidencia: fila.notas ?? fila.tipo_incidencia, tipo: fila.tipo_incidencia });
     incidenciasPorSemana.set(key, lista);
   }
+  const costosSinVentaTablero = await costosSinVenta(negocioId);
+  const controlActual = await controlInventario(negocioId);
   const filas = ordenadas.map((semana) => {
     const key = semana.id.toString();
     const agregado = agregados.get(key) ?? nuevoAgregado();
@@ -1616,7 +1667,7 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
     const costo = agregado.filasConsumo > 0 ? redondear(agregado.costoFifo) : null;
     const foodCost = ventas > 0 && costo != null ? redondear((costo / ventas) * 100) : null;
     const resultado = agregado.tieneEpos && costo != null
-      ? redondear(ventas - costo - comisionTerminal(agregado.ventasTarjeta, agregado.propinasTarjeta) - agregado.gastos)
+      ? redondear(ventas - costo - comisionTerminal(agregado.ventasTarjeta, agregado.propinasTarjeta) - agregado.gastos - (costosSinVentaTablero.por_semana[key]??0))
       : null;
     const margen = ventas > 0 && resultado != null ? redondear((resultado / ventas) * 100) : null;
     const inventarioInicial = inventario?.apertura_valor == null ? null : num0(inventario.apertura_valor);
@@ -1654,7 +1705,7 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
       incidencias.push({
         id: `costeo-${fila.semana_id}`,
         semana_id: fila.semana_id, semana: fila.etiqueta, tipo: 'costeo', responsable: 'Administración',
-        fecha_limite: fila.fecha_fin, accion: 'Resolver mapeo, receta o existencia antes de cerrar',
+        fecha_limite: fila.fecha_fin, accion: 'Resolver costo provisional; no bloquea el cierre físico',
         detalle: `${fila.excepciones_costeo} excepción(es) FIFO · ${fila.ventas_epos_pendientes} venta(s) Epos pendiente(s)`,
       });
     }
@@ -1676,11 +1727,7 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
   if (ultima?.cobertura_semanas != null && ultima.cobertura_semanas >= 4) {
     alertas.push({ tipo: 'baja_rotacion', severidad: 'media', semana_id: ultima.semana_id, mensaje: `El inventario cubre aproximadamente ${ultima.cobertura_semanas} semanas de costo`, valor: ultima.cobertura_semanas, referencia: 4 });
   }
-  const repetidas = new Map<string, number>();
-  filasOperativas.forEach((fila) => fila.incidencias_inventario.forEach((inc) => repetidas.set(inc.producto, (repetidas.get(inc.producto) ?? 0) + 1)));
-  repetidas.forEach((veces, producto) => {
-    if (veces >= 2 && ultima) alertas.push({ tipo: 'diferencia_recurrente', severidad: 'alta', semana_id: ultima.semana_id, mensaje: `${producto} presenta diferencias en ${veces} semanas`, valor: veces, referencia: 2 });
-  });
+  for (const aviso of controlActual.alertas) if(ultima) alertas.push({tipo:'diferencia_recurrente',severidad:'alta',semana_id:ultima.semana_id,mensaje:aviso.mensaje,valor:aviso.valor,referencia:2});
   const conBloqueador = filas.filter((f) => f.excepciones_costeo > 0 || f.ventas_epos_pendientes > 0 || f.incidencias_inventario.length > 0).length;
   return {
     generado_at: new Date().toISOString(), semanas: filas, incidencias: incidencias.slice(0, 80), alertas,
@@ -1737,9 +1784,13 @@ export async function saludOperativa(negocioId: bigint) {
     ...(sinZona ? [`${sinZona} producto(s) activo(s) sin zona de conteo`] : []),
     ...(menuSinEpos ? [`${menuSinEpos} producto(s) de menú sin vínculo Epos`] : []),
     ...(menuSinReceta ? [`${menuSinReceta} producto(s) de menú sin receta completada`] : []),
-    ...(ventasPendientes ? [`${ventasPendientes} venta(s) Epos pendientes o con excepción`] : []),
+
   ];
+  const controlFisico = await controlInventario(negocioId);
   const advertencias = [
+    ...controlFisico.alertas.map(a=>a.mensaje),
+    ...controlFisico.ventas_tardias.map(v=>`${v.ventas} venta(s) importada(s) después de conciliar la semana ${v.semana_id}; no se volvió a descontar el físico, revisar su explicación/costo`),
+    ...(ventasPendientes ? [`${ventasPendientes} venta(s) Epos con costo pendiente; alerta, no bloqueo del inventario físico`] : []),
     ...(menuSinPrecio ? [`${menuSinPrecio} producto(s) del menú sin precio de referencia; margen no verificable`] : []),
     ...(semanaOperativa && iso(semanaOperativa.fecha_fin) < iso(fechaOperativaHoy()) ? ['La semana abierta ya terminó; revisa su cierre antes de operar la siguiente'] : []),
     ...(sinCategoria ? [`${sinCategoria} producto(s) activo(s) sin categoría`] : []),
@@ -1834,7 +1885,8 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
   // semana. El ledger FIFO se conserva como control independiente y nunca
   // sustituye al inventario contado; hacerlo inflaría patrimonio y cierre
   // cuando existan lotes abiertos de semanas anteriores.
-  const valorInventario = await valorSnapshot(negocioId, cierreSnapshotId);
+  const controlFisico = await confirmarControlCierre(negocioId, usuarioId, semanaId, cierreSnapshotId, crypto.randomUUID());
+  const valorInventario = redondear(Number((controlFisico as unknown as {valor_fifo:number}).valor_fifo));
 
   // La evidencia de inventario se recalcula antes de congelar la caja. Esto
   // deja una instantánea auditable incluso si el usuario sólo consulta el
@@ -1962,7 +2014,7 @@ export async function reabrirSemana(negocioId: bigint, semanaId: bigint) {
     await tx.movimientos.deleteMany({ where: { negocio_id: negocioId, semana_id: semanaId, tipo: 'comision_terminal' } });
     // El snapshot de patrimonio del cierre está identificado por (negocio, fecha_fin).
     await tx.snapshots_patrimonio.deleteMany({ where: { negocio_id: negocioId, fecha: semana.fecha_fin } });
-    await tx.inventario_semanal.updateMany({
+    if (!await tx.inventory_control_closures.findFirst({ where:{negocio_id:negocioId,semana_id:semanaId} })) await tx.inventario_semanal.updateMany({
       where: { semana_id: semanaId, negocio_id: negocioId },
       data: { cierre_snapshot_id: null, cierre_valor: null },
     });
@@ -2149,6 +2201,8 @@ export async function estadoResultados(negocioId: bigint, meses = 6) {
     costoVentasFifoPorMes[mes] = redondear((costoVentasFifoPorMes[mes] ?? 0) + num0(consumo.costo_total));
   }
 
+  const salidasSinVentaMes = await costosSinVenta(negocioId);
+  const [ventasPendientesMes,consumosEstimadosMes]=await Promise.all([prisma.epos_ventas.count({where:{negocio_id:negocioId,fecha:{gte:desde,lte:new Date(hasta.getTime()+86400000)},costeo_estado:{in:['pendiente','excepcion']}}}),prisma.inventory_consumptions.count({where:{negocio_id:negocioId,fecha:{gte:desde,lte:hasta},lote:{costo_estimado:true},...filtroConsumoFifoActivo()}})]);
   const filas = estadoResultadosMensual(
     listaMeses,
     movs.map((m) => ({
@@ -2159,7 +2213,7 @@ export async function estadoResultados(negocioId: bigint, meses = 6) {
       facturado: m.facturado,
     })),
     inventarioPorMes(listaMeses, snapshots),
-    costoVentasFifoPorMes,
+    costoVentasFifoPorMes, salidasSinVentaMes.por_mes,
   );
 
   const mesEnCurso = iso(new Date()).slice(0, 7);
@@ -2167,6 +2221,7 @@ export async function estadoResultados(negocioId: bigint, meses = 6) {
     desde: iso(desde),
     hasta: iso(hasta),
     mes_en_curso: mesEnCurso,
+    costos_sin_venta: salidasSinVentaMes, ventas_pendientes:ventasPendientesMes,consumos_estimados:consumosEstimadosMes,resultado_provisional: ventasPendientesMes>0 || consumosEstimadosMes>0 || salidasSinVentaMes.pendientes > 0 || salidasSinVentaMes.estimados > 0 || filas.some(f=>!f.sin_movimientos&&f.costo_ventas_metodo!=='fifo'),
     meses: filas.map((f) => ({ ...f, parcial: f.mes === mesEnCurso })),
     total: totalizarPnl(filas),
   };

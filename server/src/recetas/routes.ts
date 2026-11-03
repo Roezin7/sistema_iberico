@@ -1,3 +1,7 @@
+import { bloquearLibro } from '../inventario/control-cierre.js';
+import { fechaMexico } from '../inventario/libro-fisico.js';
+import { efectivaLote, ordenLote } from '../inventario/libro-fisico.js';
+import { loteElegibleParaReceta, saldoEnvasesCompletos } from '../inventario/presentaciones.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { prisma } from '../db.js';
@@ -17,6 +21,9 @@ const linea = z.object({
   cantidad: z.coerce.number().positive(),
   unidad: z.string().min(1).max(30),
   nota: z.string().max(250).nullable().optional(),
+  contenido_requerido: z.coerce.number().positive().nullable().optional(),
+  unidad_requerida: z.string().max(30).nullable().optional(),
+  envases_completos: z.boolean().default(false),
 });
 
 const recetaBody = z.object({
@@ -60,6 +67,7 @@ function serialize(p: any) {
           cantidad,
           unidad: l.unidad,
           nota: l.nota,
+          contenido_requerido: num(l.contenido_requerido), unidad_requerida: l.unidad_requerida, envases_completos: l.envases_completos,
           costo_unitario: costeo.costoUnitarioBase,
           costo_estimado: costeo.costoEstimado,
           cantidad_base: costeo.cantidadBase,
@@ -127,10 +135,11 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
       cantidad_restante: { gt: 0 },
     },
     orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
-    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true },
+    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, contenido_presentacion:true, unidad_presentacion:true, costo_estimado:true, disponible_desde:true, orden_fifo_at:true, purchases:{select:{recibida_at:true}} },
   }) : [];
+  const referenciasFormato = productIds.length ? await prisma.inventory_lots.findMany({where:{negocio_id:req.auth!.negocioId,product_id:{in:productIds},estado:{not:'cancelado'},fuente:{not:'historico_prueba'},costo_estimado:false,contenido_presentacion:{not:null}},orderBy:[{recibido_at:'desc'},{id:'desc'}],select:{product_id:true,contenido_presentacion:true,unidad_presentacion:true,costo_unitario:true}}) : [];
   const lotesPorProducto = new Map<string, typeof lotes>();
-  for (const lote of lotes) {
+  for (const lote of lotes.filter(l=>efectivaLote(l)<=new Date())) {
     const lista = lotesPorProducto.get(lote.product_id.toString()) ?? [];
     lista.push(lote);
     lotesPorProducto.set(lote.product_id.toString(), lista);
@@ -163,29 +172,33 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
     const lineas = receta?.lineas.map((l) => {
       const costeo = costoLinea(Number(l.cantidad), l.unidad, { unitCost: num(l.products.unit_cost), unidadBase: l.products.unidad_base, contenidoCompra: num(l.products.contenido_compra), rendimientoUtil: num(l.products.rendimiento_util) });
       const cantidadBase = costeo.cantidadBase;
-      const lotesProducto = lotesPorProducto.get(l.product_id.toString()) ?? [];
+      const lotesProducto = (lotesPorProducto.get(l.product_id.toString()) ?? []).filter(lote=>loteElegibleParaReceta(lote,l,costeo.unidadBase));
       const fifo = cantidadBase != null && costeo.unidadBase
         ? consumirFIFO(lotesProducto.map((lote) => ({
-          id: Number(lote.id), recibidoAt: lote.recibido_at.toISOString().slice(0, 10),
-          cantidadRestante: Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
+          id: Number(lote.id), recibidoAt: ordenLote(lote).toISOString(),
+          cantidadRestante: l.envases_completos ? saldoEnvasesCompletos(Number(lote.cantidad_restante),Number(l.contenido_requerido),costeo.unidadBase) : Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
         })), cantidadBase)
         : null;
-      const fifoDisponible = fifo != null && fifo.faltante <= 0.0001;
+      const estimado = fifo?.consumos.some(c=>lotesProducto.find(lote=>Number(lote.id)===c.loteId)?.costo_estimado) ?? false;
+      const fifoDisponible = fifo != null && fifo.faltante <= 0.0001 && !estimado;
+      const formato = l.contenido_requerido ? referenciasFormato.find(r=>r.product_id===l.product_id && Number(r.contenido_presentacion)===Number(l.contenido_requerido) && (!l.unidad_requerida||r.unidad_presentacion===l.unidad_requerida)) : null;
+      const costoFormato = formato && cantidadBase!=null ? cantidadBase*Number(formato.costo_unitario) : null;
       const ultimoCosto = ultimoCostoPorProducto.get(l.product_id.toString());
-      const costoFifoAplicado = !fifoDisponible && cantidadBase != null && ultimoCosto
+      const costoFifoAplicado = !fifoDisponible && !estimado && !l.contenido_requerido && cantidadBase != null && ultimoCosto
         ? cantidadBase * ultimoCosto.costo
         : null;
       return {
-        producto: l.products.name, cantidad: Number(l.cantidad), unidad: l.unidad,
+        producto: l.products.name, cantidad: Number(l.cantidad), unidad: l.unidad, contenido_requerido:num(l.contenido_requerido),unidad_requerida:l.unidad_requerida,envases_completos:l.envases_completos,costo_estimado_capa:estimado,
         cantidad_base: cantidadBase, unidad_base: costeo.unidadBase,
-        costo_unitario_base: costeo.costoUnitarioBase, costo: costeo.costoEstimado,
+        costo_unitario_base: formato?Number(formato.costo_unitario):costeo.costoUnitarioBase, costo: l.contenido_requerido ? costoFormato : costeo.costoEstimado,
         costo_fifo: fifoDisponible ? fifo.costoTotal : null,
         costo_fifo_aplicado: costoFifoAplicado,
-        costo_fifo_referencia: fifoDisponible ? fifo?.costoTotal ?? null : costoFifoAplicado,
-        estado_fifo: fifoDisponible ? 'disponible' : costoFifoAplicado != null ? 'aplicado' : fifo ? 'insuficiente' : 'sin_datos',
+        costo_fifo_referencia: fifoDisponible ? fifo?.costoTotal ?? null : costoFormato ?? costoFifoAplicado,
+        referencia_formato: costoFormato!=null,
+        estado_fifo: fifoDisponible ? 'disponible' : costoFormato!=null ? 'referencia_formato' : costoFifoAplicado != null ? 'aplicado' : fifo ? 'insuficiente' : 'sin_datos',
         ultimo_costo_fifo_unitario: ultimoCosto?.costo ?? null,
         ultimo_costo_fifo_fecha: ultimoCosto?.fecha ?? null,
-        falta_fifo: fifo && !fifoDisponible ? `Inventario FIFO insuficiente: faltan ${fifo.faltante} ${costeo.unidadBase ?? ''}`.trim() : null,
+        falta_fifo: estimado ? 'Costo de capa estimado, pendiente de evidencia; no es costo cero confirmado' : fifo && !fifoDisponible ? `Inventario FIFO insuficiente: faltan ${fifo.faltante} ${costeo.unidadBase ?? ''}`.trim() : null,
         falta_configuracion: costeo.faltaConfiguracion, nota: l.nota,
       };
     }) ?? [];
@@ -270,10 +283,13 @@ recetasRouter.post('/', soloAdmin, asyncHandler(async (req, res) => {
   const b = recetaBody.parse(req.body);
   const negocioId = req.auth!.negocioId;
   const ids = [...new Set(b.lineas.map((l) => l.product_id))];
+  if(ids.length!==b.lineas.length) throw new HttpError(400,'Agrupa cada ingrediente en una sola línea para no duplicar consumo');
+  if(b.lineas.some(l=>l.envases_completos&&(!l.contenido_requerido||!l.unidad_requerida)))throw new HttpError(400,'Los envases completos requieren tamaño y unidad explícitos');
   const insumos = await prisma.products.findMany({ where: { id: { in: ids.map(BigInt) }, negocio_id: negocioId, active: true }, select: { id: true } });
   if (insumos.length !== ids.length) throw new HttpError(400, 'Una o más líneas no pertenecen al catálogo activo de Ibérico.');
 
   const producto = await prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
     let menu = b.producto_menu_id == null
       ? await tx.productos_menu.findFirst({ where: { negocio_id: negocioId, nombre: b.nombre } })
       : await tx.productos_menu.findFirst({ where: { id: BigInt(b.producto_menu_id), negocio_id: negocioId } });
@@ -298,8 +314,8 @@ recetasRouter.post('/', soloAdmin, asyncHandler(async (req, res) => {
       estado: b.estado,
       fuente: b.fuente ?? null,
       notas: b.notas ?? null,
-      vigente_desde: b.vigente_desde ? new Date(`${b.vigente_desde}T00:00:00.000Z`) : null,
-      lineas: { create: b.lineas.map((l) => ({ product_id: BigInt(l.product_id), cantidad: l.cantidad, unidad: l.unidad, nota: l.nota ?? null })) },
+      vigente_desde: new Date(`${b.vigente_desde ?? fechaMexico(new Date())}T00:00:00.000Z`),
+      lineas: { create: b.lineas.map((l) => ({ product_id: BigInt(l.product_id), cantidad: l.cantidad, unidad: l.unidad, nota: l.nota ?? null, contenido_requerido: l.contenido_requerido ?? null, unidad_requerida: l.unidad_requerida ?? null, envases_completos: l.envases_completos })) },
     } });
     return { menu, receta };
   });

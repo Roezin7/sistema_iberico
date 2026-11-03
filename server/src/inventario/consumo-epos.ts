@@ -6,6 +6,9 @@ import { consumirFIFO } from './fifo.js';
 import { normalizarNombreEpos } from '../epos/mapeo-menu.js';
 import { filtroConsumoFifoActivo } from './fuentes.js';
 import { referenciaDiaMexico } from './cronologia.js';
+import { efectivaLote, ordenLote } from './libro-fisico.js';
+import { bloquearLibro } from './control-cierre.js';
+import { loteElegibleParaReceta, saldoEnvasesCompletos } from './presentaciones.js';
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
@@ -24,6 +27,9 @@ type CachedMenu = {
     vigente_desde: Date | null;
     lineas: {
       product_id: bigint;
+      contenido_requerido?: Prisma.Decimal | null;
+      unidad_requerida?: string | null;
+      envases_completos?: boolean;
       cantidad: Prisma.Decimal;
       unidad: string;
       products: { name: string; unidad_base: string | null };
@@ -33,6 +39,10 @@ type CachedMenu = {
 
 type CachedLot = {
   purchases?: { recibida_at: Date | null } | null;
+  disponible_desde?: Date | null;
+  orden_fifo_at?: Date | null;
+  contenido_presentacion?: Prisma.Decimal | null;
+  unidad_presentacion?: string | null;
   id: bigint;
   product_id?: bigint;
   recibido_at: Date;
@@ -45,20 +55,21 @@ type PlanContext = {
   menus: CachedMenu[];
   lotsByProduct: Map<string, CachedLot[]>;
   consumedVentaIds: Set<string>;
+  asignadoPorVentaProducto: Map<string,number>;
+  costoPorVenta: Map<string,number>;
 };
 
 type ModoCosteo = 'normal' | 'historico_prueba';
 
 /**
  * El modo histórico limita deliberadamente el costeo al libro del piloto.
- * En modo normal, si existe un lote operativo para el producto se usa ese
- * libro; si no, se conserva el saldo histórico para no crear faltantes
- * artificiales cuando el snapshot omitió una línea.
+ * En modo normal nunca se usa el libro de pruebas: agotarlo o conciliarlo
+ * no puede resucitar existencias históricas como si fueran stock actual.
  */
 function seleccionarLotesOperativos<T extends { fuente: string }>(lotes: T[], modo: ModoCosteo = 'normal') {
   if (modo === 'historico_prueba') return lotes.filter((lote) => lote.fuente === 'historico_prueba');
   const vivos = lotes.filter((lote) => lote.fuente !== 'historico_prueba');
-  return vivos.length ? vivos : lotes;
+  return vivos;
 }
 
 const ZONA_OPERATIVA = 'America/Mexico_City';
@@ -100,7 +111,7 @@ function finDelDia(value: Date) {
 }
 
 function disponibleParaVenta(lote: CachedLot, venta: Date) {
-  return lote.purchases?.recibida_at ? lote.purchases.recibida_at <= venta : lote.recibido_at <= finDelDia(venta);
+  return lote.disponible_desde ? lote.disponible_desde <= venta : lote.purchases?.recibida_at ? lote.purchases.recibida_at <= venta : lote.recibido_at <= finDelDia(venta);
 }
 
 async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date }, context?: PlanContext): Promise<PlanConsumo> {
@@ -128,8 +139,8 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
   // permite el respaldo por nombre exacto; un OR podía elegir otro menú de
   // forma no determinista cuando el nombre coincidía.
   const menuPorId = context
-    ? (venta.epos_product_id == null ? null : context.menus.find((candidate) => candidate.epos_product_id === venta.epos_product_id) ?? null)
-    : venta.epos_product_id == null ? null : await client.productos_menu.findFirst({
+    ? (!(Number(venta.epos_product_id)>0) ? null : context.menus.find((candidate) => candidate.epos_product_id === venta.epos_product_id) ?? null)
+    : !(Number(venta.epos_product_id)>0) ? null : await client.productos_menu.findFirst({
       where: { negocio_id: negocioId, activo: true, epos_product_id: venta.epos_product_id },
       include: includeReceta,
     });
@@ -148,40 +159,45 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
   // excepción operativa. Las excepciones deben reservarse para un mapeo
   // inexistente o una existencia FIFO realmente insuficiente.
   if (!receta) return { estado: 'pendiente', error: `Receta validada pendiente: ${menu.nombre}`, costoTotal: 0, consumos: [] };
+  if (new Set(receta.lineas.map(l=>String(l.product_id))).size!==receta.lineas.length) return {estado:'pendiente',error:'Receta con ingrediente duplicado; agrupa cantidades antes de costear',costoTotal:0,consumos:[]};
   if (!receta.lineas.length) return { estado: 'pendiente', error: `Receta sin ingredientes: ${menu.nombre}`, costoTotal: 0, consumos: [] };
 
   const cantidadVendida = Number(venta.cantidad);
   if (!Number.isFinite(cantidadVendida) || cantidadVendida <= 0) return { estado: 'excepcion', error: `Cantidad inválida en venta: ${menu.nombre}`, costoTotal: 0, consumos: [] };
 
   const consumos: PlanConsumo['consumos'] = [];
+  const errores:string[]=[];
   for (const linea of receta.lineas) {
     const unidadBase = linea.products.unidad_base;
-    const cantidadBase = unidadBase ? convertirCantidad(Number(linea.cantidad) * cantidadVendida, linea.unidad, unidadBase) : null;
-    if (cantidadBase == null) {
-      return { estado: 'pendiente', error: `Unidad pendiente en ${menu.nombre}: ${linea.products.name} (${linea.unidad} → ${unidadBase ?? 'sin unidad'})`, costoTotal: 0, consumos: [] };
-    }
+    const objetivo = unidadBase ? convertirCantidad(Number(linea.cantidad) * cantidadVendida, linea.unidad, unidadBase) : null;
+    const asignado = context?.asignadoPorVentaProducto.get(`${venta.id}:${linea.product_id}`) ?? 0;
+    const cantidadBase = objetivo == null ? null : redondearCantidad(Math.max(0,objetivo-asignado));
+    if (cantidadBase == null) { errores.push(`Conversión pendiente: ${linea.products.name}`); continue; }
+    if (cantidadBase <= 0.0001) continue;
     // Un lote sólo puede cubrir ventas posteriores a su recepción. Esto evita
     // que una compra capturada con fecha futura tape artificialmente un faltante
     // histórico cuando el costeo se reintenta en vivo.
     const lotes = context
-      ? seleccionarLotesOperativos((context.lotsByProduct.get(linea.product_id.toString()) ?? []).filter((lote) => disponibleParaVenta(lote, venta.fecha)))
+      ? seleccionarLotesOperativos((context.lotsByProduct.get(linea.product_id.toString()) ?? []).filter((lote) => disponibleParaVenta(lote, venta.fecha) && loteElegibleParaReceta(lote, linea, unidadBase)))
       : seleccionarLotesOperativos((await client.inventory_lots.findMany({
         where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 } },
         orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
-        select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchases: { select: { recibida_at: true } } },
-      })).filter(lote => disponibleParaVenta(lote, venta.fecha)));
+        select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true, disponible_desde: true, orden_fifo_at: true, contenido_presentacion: true, unidad_presentacion: true, purchases: { select: { recibida_at: true } } },
+      })).filter(lote => disponibleParaVenta(lote, venta.fecha) && loteElegibleParaReceta(lote, linea, unidadBase)));
+    const baseEnvase = unidadBase === 'pieza' ? 1 : Number(linea.contenido_requerido);
+    if (linea.envases_completos && (!(baseEnvase > 0) || Math.abs(cantidadBase / baseEnvase - Math.round(cantidadBase / baseEnvase)) > 0.0001)) { errores.push(`La receta de ${menu.nombre} requiere envases completos; revisa cantidad y presentación de ${linea.products.name}`); continue; }
     const resultado = consumirFIFO(lotes.map((lote) => ({
-      id: Number(lote.id), recibidoAt: (lote.purchases?.recibida_at ?? referenciaDiaMexico(lote.recibido_at)).toISOString(), cantidadRestante: Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
+      id: Number(lote.id), recibidoAt: ordenLote(lote).toISOString(), cantidadRestante: linea.envases_completos ? saldoEnvasesCompletos(Number(lote.cantidad_restante), Number(linea.contenido_requerido), unidadBase) : Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
     })), cantidadBase);
     if (resultado.faltante > 0.0001) {
-      return { estado: 'excepcion', error: `Inventario insuficiente: ${linea.products.name}; faltan ${resultado.faltante} ${unidadBase}`, costoTotal: 0, consumos: [] };
+      errores.push(`Inventario insuficiente: ${linea.products.name}; faltan ${resultado.faltante} ${unidadBase}`);
     }
     consumos.push(...resultado.consumos.map((c) => ({ productId: linea.product_id, loteId: BigInt(c.loteId), cantidad: c.cantidad, costoUnitario: c.costoUnitario, costoTotal: c.costoTotal })));
   }
-  return { estado: 'costeable', costoTotal: Number(consumos.reduce((sum, c) => sum + c.costoTotal, 0).toFixed(4)), consumos };
+  return { estado: errores.length ? 'excepcion' : 'costeable', error:errores.length?errores.join(' · '):undefined, costoTotal: Number((consumos.reduce((sum, c) => sum + c.costoTotal, 0)+(context?.costoPorVenta.get(String(venta.id))??0)).toFixed(4)), consumos };
 }
 
-async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id: bigint }[], modo: ModoCosteo = 'normal'): Promise<PlanContext> {
+async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id: bigint; costeo_estado:string }[], modo: ModoCosteo = 'normal'): Promise<PlanContext> {
   const menus = await client.productos_menu.findMany({
     where: { negocio_id: negocioId, activo: true },
     select: {
@@ -189,7 +205,7 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
       recetas: {
         where: { estado: 'validada' },
         orderBy: { version: 'desc' },
-        select: { vigente_desde: true, lineas: { select: { product_id: true, cantidad: true, unidad: true, products: { select: { name: true, unidad_base: true } } } } },
+        select: { vigente_desde: true, lineas: { select: { contenido_requerido: true, unidad_requerida: true, envases_completos: true, product_id: true, cantidad: true, unidad: true, products: { select: { name: true, unidad_base: true } } } } },
       },
     },
   }) as CachedMenu[];
@@ -202,7 +218,7 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
       cantidad_restante: { gt: 0 },
     },
     orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
-    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchases: { select: { recibida_at: true } } },
+    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true, disponible_desde: true, orden_fifo_at: true, contenido_presentacion: true, unidad_presentacion: true, purchases: { select: { recibida_at: true } } },
   }) : [];
   const consumed = await client.inventory_consumptions.findMany({
     where: {
@@ -210,7 +226,7 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
       epos_venta_id: { in: ventas.map((venta) => venta.id) },
       ...filtroConsumoFifoActivo(),
     },
-    select: { epos_venta_id: true },
+    select: { epos_venta_id: true, product_id:true,cantidad:true,costo_total:true },
   });
   const lotsByProduct = new Map<string, CachedLot[]>();
   for (const lot of lots) {
@@ -219,7 +235,9 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
     lotsByProduct.set(lot.product_id.toString(), list);
   }
   for (const [key, list] of lotsByProduct) lotsByProduct.set(key, seleccionarLotesOperativos(list, modo));
-  return { menus, lotsByProduct, consumedVentaIds: new Set(consumed.flatMap((row) => row.epos_venta_id == null ? [] : [row.epos_venta_id.toString()])) };
+  const asignadoPorVentaProducto=new Map<string,number>(), costoPorVenta=new Map<string,number>();
+  for(const c of consumed){const clave=`${c.epos_venta_id}:${c.product_id}`;asignadoPorVentaProducto.set(clave,(asignadoPorVentaProducto.get(clave)??0)+Number(c.cantidad));const v=String(c.epos_venta_id);costoPorVenta.set(v,(costoPorVenta.get(v)??0)+Number(c.costo_total));}
+  return { menus, lotsByProduct, asignadoPorVentaProducto,costoPorVenta, consumedVentaIds: new Set(consumed.flatMap((row) => row.epos_venta_id == null || !ventas.some(v=>v.id===row.epos_venta_id&&v.costeo_estado==='costeada') ? [] : [row.epos_venta_id.toString()])) };
 }
 
 function aplicarPlanEnMemoria(context: PlanContext, plan: PlanConsumo) {
@@ -231,17 +249,22 @@ function aplicarPlanEnMemoria(context: PlanContext, plan: PlanConsumo) {
 
 /** Calcula o aplica consumo FIFO para ventas Epos ya importadas. */
 export async function consumirVentasEpos(input: { negocioId: bigint; from: string; to: string; confirmar: boolean; modo?: ModoCosteo }) {
+  if(!input.confirmar) return consumirVentasEposEnLibro(input,prisma);
+  return prisma.$transaction(async tx=>{await bloquearLibro(tx,input.negocioId);return consumirVentasEposEnLibro(input,tx);},{maxWait:15000,timeout:300000});
+}
+
+async function consumirVentasEposEnLibro(input: { negocioId: bigint; from: string; to: string; confirmar: boolean; modo?: ModoCosteo }, client:DbClient) {
   const from = new Date(input.from);
   const to = new Date(input.to);
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) throw new HttpError(400, 'Periodo inválido');
   // Igual que el detalle de ventas, el costeo debe respetar el periodo
   // operativo de la importación. Así no se pierden tickets después de
   // medianoche que pertenecen al cierre del día anterior.
-  const importaciones = await prisma.epos_importaciones.findMany({
+  const importaciones = await client.epos_importaciones.findMany({
     where: { negocio_id: input.negocioId, periodo_desde: from, periodo_hasta: to },
     select: { id: true },
   });
-  const ventas = await prisma.epos_ventas.findMany({
+  const ventas = await client.epos_ventas.findMany({
     where: {
       negocio_id: input.negocioId,
       ...(importaciones.length ? { importacion_id: { in: importaciones.map((row) => row.id) } } : { fecha: { gte: from, lt: to } }),
@@ -250,43 +273,26 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
   });
   const resultado = { periodo: { from: input.from, to: input.to }, confirmar: input.confirmar, ventas: ventas.length, costeadas: 0, excepciones: 0, pendientes: 0, ya_costeadas: 0, costo_fifo: 0, detalle: [] as Record<string, unknown>[] };
   const modo = input.modo ?? 'normal';
-  const context = await cargarContexto(prisma, input.negocioId, ventas, modo);
+  const context = await cargarContexto(client, input.negocioId, ventas, modo);
   const planes = [] as { venta: typeof ventas[number]; plan: PlanConsumo }[];
   for (const venta of ventas) {
-    const plan = await planificar(prisma, input.negocioId, venta, context);
+    const plan = await planificar(client, input.negocioId, venta, context);
     planes.push({ venta, plan });
-      if (plan.estado === 'costeable') aplicarPlanEnMemoria(context, plan);
+      if (plan.consumos.length) aplicarPlanEnMemoria(context, plan);
   }
 
   if (input.confirmar) {
     const costeables = planes.filter(({ plan }) => plan.estado === 'costeable');
     const excepciones = planes.filter(({ plan }) => plan.estado === 'excepcion');
     const pendientes = planes.filter(({ plan }) => plan.estado === 'pendiente');
-    let costeablesNuevas = costeables;
+    const costeablesNuevas = planes.filter(({plan})=>plan.estado==='costeable'||plan.consumos.length>0);
     let consumos: Prisma.inventory_consumptionsCreateManyInput[] = [];
     let lotes = new Map<string, number>();
 
-    await prisma.$transaction(async (tx) => {
-      // Idempotencia fuerte: bloqueamos las ventas antes de volver a leer el
-      // ledger. Dos sincronizaciones concurrentes no pueden consumir dos veces
-      // los mismos lotes aunque ambas hayan planificado fuera de la transacción.
-      const idsVenta = costeables.map(({ venta }) => venta.id);
-      if (idsVenta.length) {
-        await tx.$queryRaw(Prisma.sql`SELECT id FROM epos_ventas WHERE negocio_id = ${input.negocioId} AND id IN (${Prisma.join(idsVenta)}) FOR UPDATE`);
-        const existentes = await tx.inventory_consumptions.findMany({
-          where: { negocio_id: input.negocioId, epos_venta_id: { in: idsVenta }, ...filtroConsumoFifoActivo() },
-          select: { epos_venta_id: true },
-        });
-        const yaCosteadas = new Set(existentes.flatMap((row) => row.epos_venta_id == null ? [] : [row.epos_venta_id.toString()]));
-        costeablesNuevas = costeables.filter(({ venta }) => !yaCosteadas.has(venta.id.toString()));
-        for (const { venta, plan } of costeables) {
-          if (yaCosteadas.has(venta.id.toString())) {
-            plan.estado = 'ya_costeada';
-            plan.costoTotal = 0;
-            plan.consumos = [];
-          }
-        }
-      }
+    const tx = client as Prisma.TransactionClient;
+    {
+      // El libro completo se planifica bajo lock. Un reintento sólo asigna
+      // ingredientes pendientes, nunca vuelve a tomar lo ya consumido.
       for (const { plan } of costeablesNuevas) {
         for (const consumo of plan.consumos) {
           const acumulado = (lotes.get(consumo.loteId.toString()) ?? 0) + consumo.cantidad;
@@ -299,6 +305,7 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
         lote_id: consumo.loteId,
         epos_venta_id: venta.id,
         fecha: fechaDb(venta.fecha),
+        efectiva_at: venta.fecha,
         cantidad: consumo.cantidad,
         costo_unitario: consumo.costoUnitario,
         costo_total: consumo.costoTotal,
@@ -320,9 +327,9 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
         await tx.$executeRawUnsafe(`UPDATE inventory_lots SET estado = 'agotado' WHERE negocio_id = $1::bigint AND id IN (${ids}) AND cantidad_restante <= 0`, input.negocioId.toString());
       }
       if (consumos.length) await tx.inventory_consumptions.createMany({ data: consumos });
-      if (costeablesNuevas.length) {
-        const params = costeablesNuevas.flatMap(({ venta, plan }) => [venta.id.toString(), plan.costoTotal]);
-        const values = costeablesNuevas.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::numeric)`).join(',');
+      if (costeables.length) {
+        const params = costeables.flatMap(({ venta, plan }) => [venta.id.toString(), plan.costoTotal]);
+        const values = costeables.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::numeric)`).join(',');
         await tx.$executeRawUnsafe(
           `UPDATE epos_ventas AS e SET costo_fifo = v.costo, costeo_estado = 'costeada', costeo_error = NULL, costeado_at = NOW()
            FROM (VALUES ${values}) AS v(id, costo) WHERE e.id = v.id AND e.negocio_id = $${params.length + 1}::bigint`,
@@ -349,7 +356,8 @@ export async function consumirVentasEpos(input: { negocioId: bigint; from: strin
           ...params, input.negocioId.toString(),
         );
       }
-    }, { maxWait: 60_000, timeout: 300_000 });
+      for(const {venta,plan} of planes.filter(({plan})=>plan.estado!=='ya_costeada'&&plan.estado!=='costeable')) await tx.epos_ventas.update({where:{id:venta.id},data:{costo_fifo:plan.costoTotal>0?plan.costoTotal:null}});
+    }
   }
 
   for (const { venta, plan } of planes) {
@@ -461,19 +469,19 @@ export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date, modo
       estado: { in: ['abierto', 'agotado'] },
       ...(modo === 'historico_prueba' ? { fuente: 'historico_prueba' as const } : {}),
     },
-    select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true, fuente: true, purchases: { select: { recibida_at: true } } },
+    select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true, fuente: true, disponible_desde: true, orden_fifo_at: true, contenido_presentacion: true, unidad_presentacion: true, purchases: { select: { recibida_at: true } } },
   });
-  const lotes = candidatos.filter(l => (l.purchases?.recibida_at ?? l.recibido_at) <= fechaCorte);
+  const lotes = candidatos.filter(l => efectivaLote(l) <= fechaCorte);
   const lotesSeleccionados = [...new Set(lotes.map((lote) => lote.product_id.toString()))]
     .flatMap((productId) => seleccionarLotesOperativos(lotes.filter((lote) => lote.product_id.toString() === productId), modo));
   if (!lotesSeleccionados.length) return { valor: 0, unidades: 0, lotes: 0 };
   const consumos = await prisma.inventory_consumptions.findMany({
     where: { negocio_id: negocioId, fecha: { lte: fechaCorte }, lote_id: { in: lotesSeleccionados.map((lote) => lote.id) }, ...filtroConsumoFifoActivo({ incluirAjustes: true }) },
-    select: { lote_id: true, cantidad: true, epos_venta: { select: { fecha: true } } },
+    select: { lote_id: true, cantidad: true, efectiva_at:true, fecha:true, epos_venta: { select: { fecha: true } } },
   });
   const consumido = new Map<string, number>();
   for (const consumo of consumos) {
-    if (consumo.epos_venta && consumo.epos_venta.fecha > fechaCorte) continue;
+    if ((consumo.epos_venta?.fecha ?? consumo.efectiva_at ?? referenciaDiaMexico(consumo.fecha)) > fechaCorte) continue;
     const key = consumo.lote_id.toString();
     consumido.set(key, (consumido.get(key) ?? 0) + Number(consumo.cantidad));
   }

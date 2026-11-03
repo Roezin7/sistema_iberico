@@ -39,6 +39,8 @@ export interface Resumen {
   resultado_operativo: number | null;
   resultado_operativo_estado: 'pendiente' | 'verificado' | 'provisional_fifo';
   costo_ventas_fifo_activo: number | null;
+  costos_sin_venta?: { total:number; pendientes:number; estimados:number };
+  costos_fifo_estimados?: number;
   ventas_epos_pendientes: number;
   importe_ventas_epos_pendientes: number;
   excepciones_costeo: ExcepcionCosteoSemana[];
@@ -259,6 +261,7 @@ export interface CorreccionInventario {
 export interface CompraDetalleLinea {
   id: number | null; product_id: number | null; producto: string | null; tipo_linea: 'inventario' | 'gasto' | 'pendiente';
   descripcion_fuente: string; cantidad_fuente?: number | null; unidad_fuente?: string | null; cantidad_base: number | null; unidad_compra: string | null; contenido_compra: number | null;
+  contenido_presentacion?: number | null; unidad_presentacion?: string | null;
   costo_unitario: number | null; importe: number; confianza: number | null; notas: string | null;
 }
 export interface CompraDetalle {

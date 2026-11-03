@@ -1,3 +1,5 @@
+import { q4 } from './libro-fisico.js';
+import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -78,11 +80,12 @@ async function valorSnapshotTx(tx: Prisma.TransactionClient, snapshotId: bigint)
  * el orden de recepción. La siguiente semana sólo se encadena si permanece abierta.
  */
 export async function crearCorreccionInventario(input: AjusteInput) {
-  const cantidadBase = redondear(Number(input.cantidadBase));
+  const cantidadBase = q4(Number(input.cantidadBase));
   if (!Number.isFinite(cantidadBase) || cantidadBase === 0) throw new HttpError(400, 'La corrección debe ser distinta de cero');
   if (!input.motivo.trim()) throw new HttpError(400, 'El motivo es obligatorio');
 
   return prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, input.negocioId);
     if (input.solicitudId) {
       const existente = await tx.inventory_adjustments.findFirst({ where: { negocio_id: input.negocioId, solicitud_id: input.solicitudId } });
       if (existente) return { id: Number(existente.id), repetida: true, ...await serializarAjuste(tx, existente.id) };
@@ -93,6 +96,8 @@ export async function crearCorreccionInventario(input: AjusteInput) {
     const semana = await tx.semanas.findFirst({ where: { id: input.semanaId, negocio_id: input.negocioId } });
     if (!semana) throw new HttpError(404, 'Semana no encontrada');
 
+    if (await tx.inventory_control_closures.findFirst({ where: { negocio_id: input.negocioId, semana_id: input.semanaId } })) throw new HttpError(409, 'Este cierre ya fue conciliado: clasifica la incidencia o registra un ajuste actual; no cambies el conteo histórico');
+    const snapshotBase = await tx.inventory_snapshot.findUniqueOrThrow({ where: { id: semanal.cierre_snapshot_id } });
     const siguiente = await tx.semanas.findFirst({
       where: { negocio_id: input.negocioId, fecha_inicio: { gt: semana.fecha_inicio } },
       orderBy: { fecha_inicio: 'asc' }, include: { inventario_semanal: true },
@@ -105,14 +110,14 @@ export async function crearCorreccionInventario(input: AjusteInput) {
       tx.products.findFirst({ where: { id: input.productId, negocio_id: input.negocioId, active: true }, select: { id: true, name: true, unit_cost: true, unidad_base: true, contenido_compra: true } }),
       tx.zonas_inventario.findFirst({ where: { id: input.zonaId, negocio_id: input.negocioId }, select: { id: true, nombre: true } }),
       tx.product_zone_units.findUnique({ where: { product_id_zona_id: { product_id: input.productId, zona_id: input.zonaId } }, select: { unidad_captura: true, factor: true } }),
-      tx.inventory_lines.findMany({ where: { snapshot_id: semanal.cierre_snapshot_id }, select: { product_id: true, zona_id: true, qty_captura: true, factor: true } }),
+      tx.inventory_lines.findMany({ where: { snapshot_id: semanal.cierre_snapshot_id }, select: { product_id: true, zona_id: true, qty_captura: true, factor: true, contado_at: true } }),
     ]);
     if (!producto) throw new HttpError(404, 'Producto no encontrado');
     if (!zona) throw new HttpError(404, 'Zona no encontrada');
     const existente = lineas.find((l) => l.product_id === input.productId && l.zona_id === input.zonaId);
     const factor = existente ? num0(existente.factor) : (pzu ? num0(pzu.factor) : 1);
     if (!factor || factor <= 0) throw new HttpError(409, 'El factor de captura del producto no es válido');
-    const deltaCaptura = redondear(cantidadBase / factor);
+    const deltaCaptura = q4(cantidadBase / factor);
     const qtyActual = existente ? num0(existente.qty_captura) : 0;
     if (qtyActual + deltaCaptura < -0.0001) throw new HttpError(409, 'La corrección dejaría inventario físico negativo en esa zona');
 
@@ -132,8 +137,8 @@ export async function crearCorreccionInventario(input: AjusteInput) {
       motivo: input.motivo.trim(),
       nota: input.nota?.trim() || null,
     } });
-    const nuevasLineas: { snapshot_id: bigint; product_id: bigint; zona_id: bigint; qty_captura: number; factor: number }[] = lineas.map((l) => ({ snapshot_id: nuevo.id, product_id: l.product_id, zona_id: l.zona_id, qty_captura: l.product_id === input.productId && l.zona_id === input.zonaId ? redondear(num0(l.qty_captura) + deltaCaptura) : num0(l.qty_captura), factor: num0(l.factor) }));
-    if (!existente && cantidadBase > 0) nuevasLineas.push({ snapshot_id: nuevo.id, product_id: input.productId, zona_id: input.zonaId, qty_captura: deltaCaptura, factor });
+    const nuevasLineas: { snapshot_id: bigint; product_id: bigint; zona_id: bigint; qty_captura: number; factor: number; contado_at: Date }[] = lineas.map((l) => ({ snapshot_id: nuevo.id, product_id: l.product_id, zona_id: l.zona_id, qty_captura: l.product_id === input.productId && l.zona_id === input.zonaId ? q4(num0(l.qty_captura)*num0(l.factor) + cantidadBase) : num0(l.qty_captura), factor: l.product_id === input.productId && l.zona_id === input.zonaId ? 1 : num0(l.factor), contado_at: l.contado_at ?? snapshotBase.created_at }));
+    if (!existente && cantidadBase > 0) nuevasLineas.push({ snapshot_id: nuevo.id, product_id: input.productId, zona_id: input.zonaId, qty_captura: cantidadBase, factor:1, contado_at: snapshotBase.created_at });
     if (nuevasLineas.length) await tx.inventory_lines.createMany({ data: nuevasLineas });
     const nuevoValor = await valorSnapshotTx(tx, nuevo.id);
 

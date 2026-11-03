@@ -34,4 +34,6 @@ jobs:
       - run: npm test
       - run: npx -w server prisma migrate deploy
       - run: npx tsx server/scripts/verificar-cronologia-zonas.ts
+      - run: npx tsx server/scripts/verificar-ciclo-inventario.ts
+      - run: npx tsx server/scripts/verificar-trazabilidad-cierre.ts
       - run: npm run build

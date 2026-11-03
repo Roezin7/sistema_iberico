@@ -1,3 +1,4 @@
+import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { instanteReal } from './cronologia.js';
@@ -25,6 +26,8 @@ export async function transferirLote(input: {
 }) {
   const efectiva = instanteReal(input.efectiva_at) ?? (input.fecha ? null : new Date());
   return prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, input.negocioId);
+    await exigirPeriodoMutable(tx, input.negocioId, efectiva ?? new Date(`${input.fecha}T00:00:00-06:00`));
     await tx.$queryRaw`SELECT id FROM inventory_lots WHERE id = ${input.loteId} AND negocio_id = ${input.negocioId} FOR UPDATE`;
     const [lote, destino] = await Promise.all([
       tx.inventory_lots.findFirst({ where: { id: input.loteId, negocio_id: input.negocioId }, select: { id: true, zona_id: true, cantidad_restante: true, estado: true, product_id: true, purchases: { select: { recibida_at: true } } } }),
