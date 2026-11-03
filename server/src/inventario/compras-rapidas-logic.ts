@@ -22,6 +22,7 @@ export interface ProductoReglaCompra {
   contenido_compra?: number | null;
   unidad_compra?: string | null;
   rendimiento_util?: number | null;
+  presentacion_modo?: 'exacta' | 'por_lote' | 'variable' | string | null;
   aliases?: string[];
 }
 
@@ -162,6 +163,19 @@ export function validarDiscrepanciasCompra(total: number, lineas: LineaCompraVal
       return;
     }
     const contenido = Number(linea.contenido_compra ?? producto.contenido_compra ?? 0);
+    if (producto.presentacion_modo === 'por_lote' && (!linea.contenido_compra || Number(linea.contenido_compra) <= 0)) {
+      errores.push(discrepancia('PRESENTACION_REQUERIDA', 'error', 'Este producto cambia de tamaño por proveedor o ticket; captura el contenido real de esta compra.', n, producto.name));
+    }
+    if (producto.presentacion_modo === 'variable' && (!linea.cantidad_base || Number(linea.cantidad_base) <= 0)) {
+      errores.push(discrepancia('CANTIDAD_BASE_EXPLICITA', 'error', 'La presentación es variable; captura la cantidad base observada o una estimación aprobada antes de confirmar.', n, producto.name));
+    }
+    if (producto.presentacion_modo === 'variable' && linea.cantidad_base) {
+      advertencias.push(discrepancia('PRESENTACION_APROXIMADA', 'advertencia', 'La conversión de este producto es aproximada y no se infiere desde el catálogo.', n, producto.name));
+    }
+    if (producto.presentacion_modo === 'exacta' && linea.contenido_compra != null && producto.contenido_compra != null
+      && Math.abs(Number(linea.contenido_compra) - Number(producto.contenido_compra)) > 0.01) {
+      advertencias.push(discrepancia('PRESENTACION_DISTINTA', 'advertencia', `El ticket indica ${Number(linea.contenido_compra)} ${producto.unidad_base ?? 'unidades base'} y el catálogo canónico indica ${Number(producto.contenido_compra)}; confirma que no sea otra presentación.`, n, producto.name));
+    }
     const unidadLinea = normalizarUnidad(linea.unidad_compra);
     const unidadProducto = normalizarUnidad(producto.unidad_base);
     // Una diferencia entre presentación y unidad base es esperada (kg→g,

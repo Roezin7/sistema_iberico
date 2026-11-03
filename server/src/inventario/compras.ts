@@ -4,6 +4,7 @@ import { HttpError } from '../middleware/error.js';
 import { costearVentasPendientesEnVivo } from './consumo-epos.js';
 import { asegurarFacturasBanco } from '../facturacion/service.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
+import { registrarPresentacionesObservadas } from './presentaciones.js';
 
 export interface LineaCompraInput {
   product_id: bigint;
@@ -144,6 +145,10 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
       });
       lotes.push(lote);
     }
+
+    // Conserva el formato real del recibo para no reutilizar una presentación
+    // histórica como si fuera la presentación canónica del catálogo.
+    await registrarPresentacionesObservadas(tx, compra.id);
 
     // La ruta directa conserva la misma invariante que la captura rápida:
     // compra, lote FIFO y salida de caja/banco nacen en una transacción única.

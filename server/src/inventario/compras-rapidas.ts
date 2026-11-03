@@ -8,6 +8,7 @@ import { inventarioActual } from './service.js';
 import { redondear } from './logic.js';
 import { asegurarFacturasBanco, mesDeFecha } from '../facturacion/service.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
+import { registrarPresentacionesObservadas } from './presentaciones.js';
 
 export type CapturaCompraLinea = {
   product_id?: bigint | null;
@@ -42,7 +43,7 @@ export async function validarCapturaCompra(negocioId: bigint, total: number, lin
   const productIds = [...new Set(lineas.filter((l) => l.tipo_linea === 'inventario' && l.product_id != null).map((l) => l.product_id!.toString()))].map(BigInt);
   const productos = productIds.length ? await prisma.products.findMany({
     where: { negocio_id: negocioId, id: { in: productIds }, active: true },
-    select: { id: true, name: true, unidad_base: true, contenido_compra: true, unidad_compra: true, rendimiento_util: true, product_aliases: { select: { alias: true } } },
+    select: { id: true, name: true, unidad_base: true, contenido_compra: true, unidad_compra: true, rendimiento_util: true, presentacion_modo: true, product_aliases: { select: { alias: true } } },
   }) : [];
   const productoPorId = new Map(productos.map((p) => [p.id.toString(), p]));
   // La validación de la pantalla debe usar exactamente la misma conversión que
@@ -55,7 +56,7 @@ export async function validarCapturaCompra(negocioId: bigint, total: number, lin
       ? cantidadBaseDesdePresentacion({
         cantidadCompra: l.cantidad_fuente,
         unidadCompra: l.unidad_fuente ?? l.unidad_compra ?? producto.unidad_compra,
-        contenidoPorPresentacion: l.contenido_compra ?? (producto.contenido_compra == null ? null : Number(producto.contenido_compra)),
+        contenidoPorPresentacion: l.contenido_compra ?? (producto.presentacion_modo === 'exacta' && producto.contenido_compra != null ? Number(producto.contenido_compra) : null),
         unidadBase: producto.unidad_base,
         rendimientoUtil: producto.rendimiento_util == null ? 1 : Number(producto.rendimiento_util),
       })
@@ -78,6 +79,7 @@ export async function validarCapturaCompra(negocioId: bigint, total: number, lin
     contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra),
     unidad_compra: p.unidad_compra,
     rendimiento_util: p.rendimiento_util == null ? 1 : Number(p.rendimiento_util),
+    presentacion_modo: p.presentacion_modo,
     aliases: p.product_aliases.map((a) => a.alias),
   })));
 }
@@ -167,7 +169,7 @@ export async function listarBorradoresCompra(negocioId: bigint) {
 
 export async function referenciasCompra(negocioId: bigint) {
   const [productos, ubicaciones, actual] = await Promise.all([
-    prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, unidad_compra: true, contenido_compra: true, rendimiento_util: true, unit_cost: true }, orderBy: { name: 'asc' } }),
+    prisma.products.findMany({ where: { negocio_id: negocioId, active: true }, select: { id: true, name: true, unidad_base: true, unidad_compra: true, contenido_compra: true, rendimiento_util: true, unit_cost: true, presentacion_modo: true, presentacion_nota: true }, orderBy: { name: 'asc' } }),
     prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true }, select: { id: true, nombre: true, tipo: true }, orderBy: { id: 'asc' } }),
     inventarioActual(negocioId, { vista: 'fisica' }),
   ]);
@@ -185,7 +187,7 @@ export async function referenciasCompra(negocioId: bigint) {
         : null;
       return {
         id: Number(p.id), nombre: p.name, unidad_base: p.unidad_base, unidad_compra: p.unidad_compra,
-        contenido_compra: contenido, rendimiento_util: Number(p.rendimiento_util ?? 1),
+        contenido_compra: contenido, rendimiento_util: Number(p.rendimiento_util ?? 1), presentacion_modo: p.presentacion_modo, presentacion_nota: p.presentacion_nota,
         existencia_actual_operativa: existencia, minimo_operativo: minimo, faltante_operativo: faltante,
         existencia_fifo_operativa: estado?.existencia_fifo_operativa ?? null,
         diferencia_fifo_vs_fisico_base: estado?.diferencia_fifo_vs_fisico_base ?? null,
@@ -275,6 +277,7 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
       await tx.purchase_lines.create({ data: { purchase_id: purchaseId, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
       await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: BigInt(productId), purchase_id: purchaseId, zona_id: bodega.id, recibido_at: fecha, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: actual.moneda, fuente: actual.fuente, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref, notas: actual.notas } });
     }
+    await registrarPresentacionesObservadas(tx, purchaseId);
     const dataCompra = { fecha_recepcion: fecha, proveedor: input.proveedor === undefined ? actual.proveedor : input.proveedor?.trim() || null, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref?.trim() || null, total, origen_pago_id: origen.id };
     await tx.purchases.update({ where: { id: purchaseId }, data: dataCompra });
     if (origen.tipo === 'banco') {
@@ -387,7 +390,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     const productIds = [...new Set(inventory.map((l) => l.product_id!.toString()))].map(BigInt);
     const productosValidos = productIds.length ? await tx.products.findMany({
       where: { negocio_id: negocioId, id: { in: productIds }, active: true },
-      select: { id: true, name: true, unidad_base: true, contenido_compra: true, unidad_compra: true, rendimiento_util: true, product_aliases: { select: { alias: true } } },
+      select: { id: true, name: true, unidad_base: true, contenido_compra: true, unidad_compra: true, rendimiento_util: true, presentacion_modo: true, product_aliases: { select: { alias: true } } },
     }) : [];
     const validos = new Set(productosValidos.map((p) => p.id.toString()));
     const faltantes = productIds.filter((id) => !validos.has(id.toString()));
@@ -400,6 +403,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra),
       unidad_compra: p.unidad_compra,
       rendimiento_util: p.rendimiento_util == null ? 1 : Number(p.rendimiento_util),
+      presentacion_modo: p.presentacion_modo,
       aliases: p.product_aliases.map((a) => a.alias),
     }));
     const productoPorId = new Map(productosValidos.map((p) => [p.id.toString(), p]));
@@ -409,7 +413,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     const lineasNormalizadas = compra.capture_lines.map((l) => {
       const p = l.product_id == null ? null : productoPorId.get(l.product_id.toString());
       const calculada = l.tipo_linea === 'inventario' && p
-        ? cantidadBaseDesdePresentacion({ cantidadCompra: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidadCompra: l.unidad_fuente ?? l.unidad_compra ?? p.unidad_compra, contenidoPorPresentacion: l.contenido_compra == null ? (p.contenido_compra == null ? null : Number(p.contenido_compra)) : Number(l.contenido_compra), unidadBase: p.unidad_base, rendimientoUtil: p.rendimiento_util == null ? 1 : Number(p.rendimiento_util) })
+        ? cantidadBaseDesdePresentacion({ cantidadCompra: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidadCompra: l.unidad_fuente ?? l.unidad_compra ?? p.unidad_compra, contenidoPorPresentacion: l.contenido_compra == null ? (p.presentacion_modo === 'exacta' && p.contenido_compra != null ? Number(p.contenido_compra) : null) : Number(l.contenido_compra), unidadBase: p.unidad_base, rendimientoUtil: p.rendimiento_util == null ? 1 : Number(p.rendimiento_util) })
         : null;
       return { ...l, cantidad_base: calculada ?? l.cantidad_base };
     });
@@ -457,6 +461,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       const purchaseLine = await tx.purchase_lines.create({ data: { purchase_id: compra.id, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
       await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: purchaseLine.product_id, purchase_id: compra.id, zona_id: bodega.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: compra.moneda, fuente: compra.fuente, ticket_ref: compra.ticket_ref, notas: notasCompra } });
     }
+    await registrarPresentacionesObservadas(tx, compra.id);
     const categoria = gastoTotal > 0 ? await tx.categorias_gasto.findFirst({ where: { negocio_id: negocioId, nombre: 'Otros', activo: true } }) : null;
     const facturado = origen.tipo === 'banco';
     if (inventarioTotal > 0) {

@@ -386,6 +386,7 @@ interface Producto {
   base_qty: number; unit_cost: number | null; active: boolean; categoria_id: number | null; unidades: UnidadZona[];
   categoria: string | null;
   unidad_base: string | null; contenido_compra: number | null; unidad_compra: string | null; rendimiento_util: number | null;
+  presentacion_modo?: 'exacta' | 'por_lote' | 'variable' | string | null; presentacion_nota?: string | null;
 }
 
 function InventarioCfg() {
@@ -640,6 +641,8 @@ function ProductoEditorPanel({ p, stores, zonas, categorias, focusField, onChang
   const [contenidoCompra, setContenidoCompra] = useState(p.contenido_compra == null ? '' : String(p.contenido_compra));
   const [unidadCompra, setUnidadCompra] = useState(p.unidad_compra ?? '');
   const [rendimiento, setRendimiento] = useState(String(p.rendimiento_util ?? 1));
+  const [presentacionModo, setPresentacionModo] = useState(p.presentacion_modo ?? 'exacta');
+  const [presentacionNota, setPresentacionNota] = useState(p.presentacion_nota ?? '');
   const [ok, setOk] = useState(false);
   const [error, setError] = useState('');
   const minimoRef = useRef<HTMLInputElement>(null);
@@ -670,6 +673,8 @@ function ProductoEditorPanel({ p, stores, zonas, categorias, focusField, onChang
         contenido_compra: contenidoCompra === '' ? null : Number(contenidoCompra),
         unidad_compra: unidadCompra.trim() || null,
         rendimiento_util: Number(rendimiento) || 1,
+        presentacion_modo: presentacionModo,
+        presentacion_nota: presentacionNota.trim() || null,
         categoria_id: categoriaId === '' ? null : categoriaId,
       } });
       setOk(true); setTimeout(() => setOk(false), 1500); onChange();
@@ -698,6 +703,8 @@ function ProductoEditorPanel({ p, stores, zonas, categorias, focusField, onChang
         <label>Unidad base FIFO<select value={unidadBase} onChange={(e) => setUnidadBase(e.target.value)}><option value="">Pendiente</option>{UNIDADES_BASE.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}</select></label>
         <label>Rendimiento útil<input type="number" min="0.01" max="1" step="0.01" value={rendimiento} onChange={(e) => setRendimiento(e.target.value)} /><small className="field-help">1 = 100% aprovechable</small></label>
         <div className="conversion-preview"><span>Conversión</span><strong>{contenidoCompra && unidadBase ? `1 ${unidadCompra || 'presentación'} = ${contenidoCompra} ${unidadBase}` : 'Falta configurar'}</strong><small>{costo && contenidoCompra ? `${mxn(Number(costo) / Number(contenidoCompra))} por ${unidadBase || 'unidad base'}` : 'Agrega costo y contenido'}</small></div>
+        <label>Regla de presentación<select value={presentacionModo} onChange={(e) => setPresentacionModo(e.target.value)}><option value="exacta">Exacta: usar catálogo</option><option value="por_lote">Por lote: usar ticket</option><option value="variable">Variable: captura base</option></select><small className="field-help">Refrescos y mezcladores deben ir por lote.</small></label>
+        <label>Nota de presentación<textarea value={presentacionNota} onChange={(e) => setPresentacionNota(e.target.value)} placeholder="Ej. puede variar por proveedor o deshidratación" /></label>
       </div></section>
       <section ref={zonaRef} className="product-editor__section"><h3>Cómo se cuenta</h3><p className="muted">Unidad de captura por zona.</p><div className="zone-editor">{zonas.map((z) => { const u = p.unidades.find((x) => x.zona_id === z.id); return <UnidadZonaRow key={z.id} productId={p.id} zona={z} unidad={u} onChange={onChange} />; })}</div></section>
       {error && <p className="error-msg">{error}</p>}

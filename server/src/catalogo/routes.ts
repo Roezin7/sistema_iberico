@@ -42,7 +42,7 @@ catalogoRouter.get(
   asyncHandler(async (req, res) => {
     const productos = await prisma.products.findMany({
       where: { negocio_id: req.auth!.negocioId },
-      include: { stores: true, product_zone_units: true, categorias_inventario: true },
+      include: { stores: true, product_zone_units: true, categorias_inventario: true, presentaciones_observadas: { orderBy: { ultima_fecha: 'desc' } } },
       orderBy: { name: 'asc' },
     });
     res.json(
@@ -57,6 +57,13 @@ catalogoRouter.get(
         contenido_compra: num(p.contenido_compra),
         unidad_compra: p.unidad_compra,
         rendimiento_util: num(p.rendimiento_util),
+        presentacion_modo: p.presentacion_modo,
+        presentacion_nota: p.presentacion_nota,
+        presentaciones_observadas: p.presentaciones_observadas.map((v) => ({
+          id: Number(v.id), unidad_compra: v.unidad_compra, contenido_compra: num(v.contenido_compra), unidad_base: v.unidad_base,
+          observaciones: v.observaciones, costo_base_medio: num(v.costo_base_medio), primera_fecha: v.primera_fecha?.toISOString().slice(0, 10) ?? null,
+          ultima_fecha: v.ultima_fecha?.toISOString().slice(0, 10) ?? null, proveedores: v.proveedores, es_canonica: v.es_canonica, notas: v.notas,
+        })),
         active: p.active,
         categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
         categoria: p.categorias_inventario?.nombre ?? null,
@@ -80,6 +87,8 @@ const productoBody = z.object({
   contenido_compra: z.coerce.number().positive().nullable().optional(),
   unidad_compra: z.string().min(1).max(30).nullable().optional(),
   rendimiento_util: z.coerce.number().gt(0).lte(1).optional(),
+  presentacion_modo: z.enum(['exacta', 'por_lote', 'variable']).default('exacta'),
+  presentacion_nota: z.string().max(500).nullable().optional(),
   active: z.boolean().optional(),
   categoria_id: z.coerce.number().int().positive().nullable().optional(),
 });
@@ -101,6 +110,8 @@ catalogoRouter.post(
         contenido_compra: b.contenido_compra ?? null,
         unidad_compra: b.unidad_compra ?? null,
         rendimiento_util: b.rendimiento_util ?? 1,
+        presentacion_modo: b.presentacion_modo,
+        presentacion_nota: b.presentacion_nota ?? null,
         active: b.active ?? true,
         categoria_id: b.categoria_id != null ? BigInt(b.categoria_id) : null,
       },
@@ -129,6 +140,8 @@ catalogoRouter.patch(
         contenido_compra: b.contenido_compra === undefined ? undefined : b.contenido_compra,
         unidad_compra: b.unidad_compra === undefined ? undefined : b.unidad_compra,
         rendimiento_util: b.rendimiento_util,
+        presentacion_modo: b.presentacion_modo,
+        presentacion_nota: b.presentacion_nota,
         active: b.active,
         categoria_id: b.categoria_id === undefined ? undefined : b.categoria_id != null ? BigInt(b.categoria_id) : null,
       },

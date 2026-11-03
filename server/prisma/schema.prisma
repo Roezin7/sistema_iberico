@@ -234,6 +234,11 @@ model products {
   contenido_compra           Decimal?                     @db.Decimal(14, 4)
   unidad_compra              String?
   rendimiento_util           Decimal                      @default(1) @db.Decimal(8, 4)
+  // exacta = el catálogo puede convertir por defecto; por_lote = la compra
+  // debe conservar la presentación observada; variable = requiere captura
+  // explícita porque el contenido no es estable.
+  presentacion_modo          String                       @default("exacta")
+  presentacion_nota          String?
   categoria_id               BigInt?
   inventory_lines            inventory_lines[]
   product_aliases            product_aliases[]
@@ -248,11 +253,34 @@ model products {
   inventory_adjustments      inventory_adjustments[]
   product_zone_units         product_zone_units[]
   producto_costos_historicos producto_costos_historicos[]
+  presentaciones_observadas  product_presentation_variants[]
   receta_lineas              receta_lineas[]
 
   @@unique([negocio_id, name])
   @@index([negocio_id])
   @@index([negocio_id, active, name])
+}
+
+/// Presentaciones observadas en tickets confirmados. No reemplaza la línea
+/// FIFO: documenta tamaños reales para no asumir que todos los proveedores
+/// venden la misma presentación.
+model product_presentation_variants {
+  id                BigInt    @id @default(autoincrement())
+  product_id        BigInt
+  unidad_compra     String
+  contenido_compra  Decimal?  @db.Decimal(14, 4)
+  unidad_base       String?
+  observaciones     Int       @default(0)
+  costo_base_medio  Decimal?  @db.Decimal(14, 6)
+  primera_fecha     DateTime? @db.Date
+  ultima_fecha      DateTime? @db.Date
+  proveedores       String?
+  es_canonica       Boolean   @default(false)
+  notas             String?
+  products          products  @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@unique([product_id, unidad_compra, contenido_compra, unidad_base], map: "product_presentation_variants_unique")
+  @@index([product_id])
 }
 
 model categorias_inventario {

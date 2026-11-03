@@ -4,6 +4,8 @@ export interface ProductoPresentacion {
   contenido_compra?: number | null;
   /** Fracción utilizable de la presentación (0–1). */
   rendimiento_util?: number | null;
+  presentacion_modo?: 'exacta' | 'por_lote' | 'variable' | string | null;
+  presentacion_nota?: string | null;
 }
 
 export function normalizarUnidad(valor?: string | null) {
@@ -38,7 +40,8 @@ export function presentacionTexto(producto?: ProductoPresentacion | null) {
     const rendimiento = rendimientoUtil(producto);
     const usable = Number(producto.contenido_compra) * rendimiento;
     const detalleRendimiento = rendimiento < 0.999 ? ` · rendimiento útil ${Math.round(rendimiento * 100)}%` : '';
-    return `${contenido} ${producto.unidad_base ?? 'unidades base'} por ${producto.unidad_compra}${detalleRendimiento} · usable: ${formatoCantidad(usable)} ${producto.unidad_base ?? 'unidades base'}`;
+    const modo = producto.presentacion_modo === 'por_lote' ? ' · captura el tamaño real de cada ticket' : producto.presentacion_modo === 'variable' ? ' · contenido aproximado; no se infiere' : '';
+    return `${contenido} ${producto.unidad_base ?? 'unidades base'} por ${producto.unidad_compra}${detalleRendimiento} · usable: ${formatoCantidad(usable)} ${producto.unidad_base ?? 'unidades base'}${modo}`;
   }
   if (producto.unidad_base) return `Unidad base: ${producto.unidad_base}. Presentación pendiente.`;
   return 'Presentación pendiente de configurar.';
@@ -53,6 +56,8 @@ export function conversionCompraTexto(producto?: ProductoPresentacion | null) {
   if (!Number.isFinite(contenido) || contenido <= 0 || !unidadCompra || !unidadBase) {
     return 'Conversión pendiente: configura presentación y rendimiento en Catálogo.';
   }
+  if (producto.presentacion_modo === 'por_lote') return 'Presentación por lote: captura el contenido real del ticket; no se usa el tamaño del catálogo.';
+  if (producto.presentacion_modo === 'variable') return 'Presentación variable: captura cantidad base explícita; la referencia del catálogo es aproximada.';
   const usable = contenido * rendimientoUtil(producto);
   const rendimiento = rendimientoUtil(producto);
   const sufijo = rendimiento < 0.999 ? ` (${Math.round(rendimiento * 100)}% útil)` : '';
