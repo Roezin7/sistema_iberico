@@ -292,7 +292,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       select: {
         id: true, name: true, store_id: true, base_qty: true, active: true,
         unit_cost: true, unidad_base: true, contenido_compra: true,
-        unidad_compra: true, rendimiento_util: true, categoria_id: true,
+        unidad_compra: true, rendimiento_util: true, categoria_id: true, presentacion_modo: true,
         stores: { select: { id: true, name: true } },
         categorias_inventario: { select: { id: true, nombre: true } },
       },
@@ -732,7 +732,9 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
         contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
       }),
       total_base: totalBase,
-      unidad_operativa: unidadOperativaInventario(p.unidad_base, p.unidad_compra),
+      unidad_operativa: p.presentacion_modo === 'por_lote' && p.contenido_compra != null
+        ? `equiv. de ${Number(p.contenido_compra)} ${p.unidad_base}`
+        : unidadOperativaInventario(p.unidad_base, p.unidad_compra),
       minimo_operativo: num0(p.base_qty),
       total_operativo: cantidadOperativaInventario({
         totalBase,
@@ -1037,6 +1039,8 @@ export interface LineaConteoInput {
   product_id: number;
   zona_id: number;
   qty_captura: number;
+  /** Contenido físico explícito para tamaños mezclados; evita asumir botellas. */
+  cantidad_base?: number;
 }
 
 export type TipoSnapshotInventario = 'apertura' | 'cierre' | 'ajuste' | 'conteo_operativo';
@@ -1112,7 +1116,12 @@ export async function crearConteo(
     // romper recetas ni FIFO. Convertimos primero a unidad base y después al
     // formato que espera inventory_lines (qty_captura × factor = base).
     let qtyCaptura = l.qty_captura;
-    if (metadata.unidad_conteo === 'operativa') {
+    if (l.cantidad_base != null) {
+      if (!Number.isFinite(l.cantidad_base) || l.cantidad_base < 0) throw new HttpError(400, 'Cantidad base de conteo inválida');
+      // qty_captura conserva dos decimales. Dividir un peso medido entre el
+      // tamaño del envase redondearía fracciones y alteraría el conteo real.
+      return { ...l, qty_captura: l.cantidad_base, factor: 1 };
+    } else if (metadata.unidad_conteo === 'operativa') {
       const unidadBase = normalizarUnidadBase(producto?.unidad_base);
       const contenido = producto?.contenido_compra == null ? null : num0(producto.contenido_compra);
       const cantidadBase = unidadBase === 'pieza'
@@ -1124,6 +1133,15 @@ export async function crearConteo(
     }
     return { ...l, qty_captura: qtyCaptura };
   });
+
+  // Un ajuste puntual no debe borrar los demás productos de esa zona. El
+  // nuevo corte conserva su saldo físico actual, incluidos movimientos ya
+  // contemplados, y reemplaza únicamente los renglones corregidos.
+  const saldoAnterior = metadata.tipo === 'ajuste' && metadata.continuar_snapshot_id == null
+    ? await inventarioActual(negocioId, { vista: 'fisica' }) : null;
+  const conservadas = saldoAnterior?.productos.flatMap((p) => p.por_zona
+    .filter((z) => zonaIds.includes(BigInt(z.zona_id)))
+    .map((z) => ({ product_id: BigInt(p.product_id), zona_id: BigInt(z.zona_id), qty_captura: z.qty_captura, factor: z.factor }))) ?? [];
 
   const resultado = await prisma.$transaction(async (tx) => {
     const semanaId = metadata.semana_id == null ? null : BigInt(metadata.semana_id);
@@ -1160,7 +1178,7 @@ export async function crearConteo(
       }
     }
     const lineasAnteriores = continuarSnapshotId == null
-      ? []
+      ? conservadas
       : await tx.inventory_lines.findMany({
           where: { snapshot_id: continuarSnapshotId },
           select: { product_id: true, zona_id: true, qty_captura: true, factor: true },

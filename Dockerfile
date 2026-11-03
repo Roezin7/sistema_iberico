@@ -1,6 +1,8 @@
 # Sistema Ibérico — imagen de un solo servicio (API + PWA) para Coolify/Hetzner.
 # Debian slim (no Alpine) para evitar problemas de Prisma con musl/openssl.
 FROM node:22-slim
+ARG SOURCE_COMMIT=unknown
+ENV SOURCE_COMMIT=$SOURCE_COMMIT
 
 # openssl/ca-certificates: Prisma en runtime. curl: para el healthcheck de Coolify/Docker.
 RUN apt-get update -y && apt-get install -y openssl ca-certificates curl && rm -rf /var/lib/apt/lists/*

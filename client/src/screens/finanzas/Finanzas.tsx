@@ -11,16 +11,9 @@ import { useConfirm } from '../../ui/ConfirmProvider';
 import { useToast } from '../../ui/ToastProvider';
 import { Cargando } from '../../ui/Cargando';
 import { api } from '../../api';
-import { cantidadBaseDesdePresentacion, conversionCompraTexto, costoBase, formatoCantidad, presentacionTexto } from '../compras/fifo-form';
+import { cantidadBaseCompra } from '../compras/fifo-form';
+import { LineaCompra, type ProductoCompra } from '../compras/LineaCompra';
 import WeekSelector from '../../components/WeekSelector';
-
-interface ProductoCompra { id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null; rendimiento_util?: number | null }
-
-function presentacionCompra(p: ProductoCompra) {
-  if (p.contenido_compra == null && !p.unidad_compra) return p.unidad_base ? `unidad base: ${p.unidad_base} · ${conversionCompraTexto(p)}` : 'presentación pendiente';
-  const contenido = p.contenido_compra == null ? '' : `${Number.isInteger(p.contenido_compra) ? p.contenido_compra : p.contenido_compra.toLocaleString('es-MX', { maximumFractionDigits: 3 })} ${p.unidad_base ?? ''}`.trim();
-  return `${[contenido, p.unidad_compra ? `por ${p.unidad_compra}` : ''].filter(Boolean).join(' ')} · ${conversionCompraTexto(p)}`;
-}
 
 function sumarDias(fechaIso: string, n: number): string {
   const d = new Date(fechaIso + 'T00:00:00Z');
@@ -67,6 +60,7 @@ export default function Finanzas() {
   const [semanas, setSemanas] = useState<Semana[]>([]);
   const [semanaId, setSemanaId] = useState<number | null>(null);
   const [fechaNueva, setFechaNueva] = useState('');
+  const [errorCarga, setErrorCarga] = useState('');
   const { error } = useToast();
   const semanaSolicitada = Number(new URLSearchParams(window.location.search).get('semana'));
 
@@ -87,7 +81,7 @@ export default function Finanzas() {
       return prev ?? solicitada ?? sems.find((s) => s.estado === 'abierta')?.id ?? sems[0]?.id ?? null;
     });
   }
-  useEffect(() => { void recargar(); }, []);
+  useEffect(() => { void recargar().catch((e) => setErrorCarga(e instanceof Error ? e.message : 'No se pudieron cargar las finanzas.')); }, []);
 
   // Siguiente semana en la cadena: el día después del fecha_fin de la última semana
   // registrada (abierta o cerrada). Editable para poder abrir una semana anterior que
@@ -97,7 +91,7 @@ export default function Finanzas() {
   const requiereAperturaExcepcional = ultima?.estado === 'abierta';
   useEffect(() => { if (siguiente) setFechaNueva(siguiente); }, [siguiente]);
 
-  if (!ref || saldosFijados == null) return <Marco><Cargando /></Marco>;
+  if (!ref || saldosFijados == null) return <Marco>{errorCarga ? <div className="empty-state" role="alert"><strong>No se pudieron cargar las finanzas</strong><p>{errorCarga}</p><button className="btn-secondary" onClick={() => { setErrorCarga(''); void recargar().catch((e) => setErrorCarga(e instanceof Error ? e.message : 'No se pudo cargar')); }}>Reintentar</button></div> : <Cargando />}</Marco>;
   if (!saldosFijados) return <Marco><SetupSaldos ref_={ref} onListo={recargar} /></Marco>;
 
   const semana = semanas.find((s) => s.id === semanaId) ?? null;
@@ -1210,7 +1204,7 @@ function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number
       const siguiente = { ...l, [campo]: numerico ? (valor === '' ? null : Number(valor)) : valor };
       if (campo === 'cantidad_fuente' || campo === 'unidad_fuente' || campo === 'unidad_compra' || campo === 'contenido_compra') {
         const producto = productos.find((p) => p.id === siguiente.product_id);
-        const base = cantidadBaseDesdePresentacion({ cantidadCompra: Number(siguiente.cantidad_fuente), unidadCompra: siguiente.unidad_fuente || siguiente.unidad_compra, contenidoPorPresentacion: Number(siguiente.contenido_compra ?? producto?.contenido_compra), unidadBase: producto?.unidad_base, rendimientoUtil: producto?.rendimiento_util });
+        const base = cantidadBaseCompra({ ...siguiente, cantidad_fuente: siguiente.cantidad_fuente ?? null }, producto);
         if (base != null) siguiente.cantidad_base = base;
       }
       return siguiente;
@@ -1222,22 +1216,17 @@ function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number
     const producto = productos.find((p) => p.id === productId);
     setLineas((v) => v.map((l, idx) => {
       if (idx !== i) return l;
-      const siguiente = {
+      const siguiente: CompraDetalleLinea = {
         ...l,
         product_id: productId,
         producto: producto?.nombre ?? null,
         unidad_compra: producto?.unidad_compra ?? l.unidad_compra,
         unidad_fuente: producto?.unidad_compra ?? l.unidad_fuente,
-        contenido_compra: producto?.contenido_compra ?? l.contenido_compra,
+        contenido_compra: producto?.presentacion_modo === 'exacta' ? producto.contenido_compra ?? null : null,
+        cantidad_base: null,
         descripcion_fuente: l.descripcion_fuente || producto?.nombre || '',
       };
-      const base = cantidadBaseDesdePresentacion({
-        cantidadCompra: Number(siguiente.cantidad_fuente),
-        unidadCompra: siguiente.unidad_fuente || siguiente.unidad_compra,
-        contenidoPorPresentacion: Number(siguiente.contenido_compra ?? producto?.contenido_compra),
-        unidadBase: producto?.unidad_base,
-        rendimientoUtil: producto?.rendimiento_util,
-      });
+      const base = cantidadBaseCompra({ ...siguiente, cantidad_fuente: siguiente.cantidad_fuente ?? null }, producto);
       if (base != null) siguiente.cantidad_base = base;
       return siguiente;
     }));
@@ -1275,13 +1264,7 @@ function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number
     {!compra && !error && <Cargando etiqueta="Cargando ticket…" />}
     {compra && <>
       <div className="form-grid form-grid--three"><label>Fecha de recepción<input type="date" value={fechaRecepcion} onChange={(e) => setFechaRecepcion(e.target.value)} /><small className="muted">Define la semana y la fecha del lote FIFO.</small></label><label>Total del ticket<input type="number" min="0" step="0.01" value={total} onChange={(e) => setTotal(e.target.value)} /></label><label>Pago desde<select value={origen} onChange={(e) => setOrigen(e.target.value ? Number(e.target.value) : '')}>{ref_.ubicaciones.map((u) => <option key={u.id} value={u.id}>{u.nombre} · {u.tipo}</option>)}</select></label></div>
-      <div className="quick-lines">{lineas.map((l, i) => { const producto = productos.find((p) => p.id === l.product_id); const cantidadCalculada = cantidadBaseDesdePresentacion({ cantidadCompra: Number(l.cantidad_fuente), unidadCompra: l.unidad_fuente || l.unidad_compra, contenidoPorPresentacion: Number(l.contenido_compra ?? producto?.contenido_compra), unidadBase: producto?.unidad_base, rendimientoUtil: producto?.rendimiento_util }); const costoCalculado = costoBase(Number(l.importe), cantidadCalculada ?? Number(l.cantidad_base)); return <div className="quick-line" key={l.id ?? `${compra.id}-${i}`}>
-        <div className="quick-line__head"><strong>Línea {i + 1}{l.producto ? ` · ${l.producto}` : ''}</strong><button className="btn-ghost" onClick={() => setLineas((v) => v.filter((_, idx) => idx !== i))} disabled={lineas.length === 1}>Quitar</button></div>
-        <input value={l.descripcion_fuente} placeholder="Descripción de la fuente" onChange={(e) => editar(i, 'descripcion_fuente', e.target.value)} aria-label={`Descripción línea ${i + 1}`} />
-        <select value={l.tipo_linea} onChange={(e) => editar(i, 'tipo_linea', e.target.value)}><option value="inventario">Inventario FIFO</option><option value="gasto">Gasto operativo</option><option value="pendiente">Pendiente</option></select>
-        {l.tipo_linea === 'inventario' && <><select value={l.product_id ?? ''} onChange={(e) => seleccionarProducto(i, e.target.value)}><option value="">Producto…</option>{productos.map((p) => <option key={p.id} value={p.id}>{p.nombre} · {presentacionCompra(p)}</option>)}</select>{producto && <small className="quick-line__presentation">{presentacionTexto(producto)}. El contenido está expresado en {producto.unidad_base ?? 'unidad base'}.</small>}<div className="fifo-entry-help">Captura la presentación comprada, no el total base. Ejemplo: <strong>2 piezas × 500 g = 1,000 g</strong>.</div><div className="quick-line__numbers fifo-entry-fields"><label>Cantidad comprada<input type="number" min="0" step="any" value={l.cantidad_fuente ?? ''} placeholder="Ej. 2" onChange={(e) => editar(i, 'cantidad_fuente', e.target.value)} aria-label={`Cantidad comprada línea ${i + 1}`} /></label><label>Unidad de compra<input value={l.unidad_fuente ?? l.unidad_compra ?? ''} placeholder="pz, caja, botella…" onChange={(e) => editar(i, 'unidad_fuente', e.target.value)} aria-label={`Unidad de compra línea ${i + 1}`} /></label><label>Contenido por unidad ({producto?.unidad_base ?? 'unidad base'})<input type="number" min="0" step="any" value={l.contenido_compra ?? producto?.contenido_compra ?? ''} placeholder="Ej. 500" onChange={(e) => editar(i, 'contenido_compra', e.target.value)} aria-label={`Contenido por unidad línea ${i + 1}`} /></label><label>Total base {cantidadCalculada != null && <small>(calculado)</small>}<input type="number" min="0" step="any" value={cantidadCalculada ?? l.cantidad_base ?? ''} readOnly={cantidadCalculada != null} placeholder="Captura si no hay presentación" onChange={(e) => editar(i, 'cantidad_base', e.target.value)} aria-label={`Total base línea ${i + 1}`} /></label><label>Importe del ticket<input type="number" min="0" step="0.01" value={l.importe} placeholder="Ej. 146" onChange={(e) => editar(i, 'importe', e.target.value)} aria-label={`Importe línea ${i + 1}`} /></label></div>{cantidadCalculada != null && <small className="fifo-entry-result">FIFO registrará {formatoCantidad(cantidadCalculada)} {producto?.unidad_base ?? 'unidades base'} · costo base {costoCalculado == null ? '—' : mxn(costoCalculado)}</small>}</>}
-        {l.tipo_linea === 'gasto' && <label className="fifo-expense-amount">Importe del gasto<input type="number" min="0" step="0.01" value={l.importe} placeholder="Ej. 146" onChange={(e) => editar(i, 'importe', e.target.value)} /></label>}
-      </div>; })}</div>
+      <div className="quick-lines">{lineas.map((l, i) => <LineaCompra key={l.id ?? i} linea={{ ...l, cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente ?? null }} productos={productos} numero={i + 1} editar={(campo, valor) => { if (campo === 'product_id') seleccionarProducto(i, String(valor ?? '')); else editar(i, campo, String(valor ?? '')); }} quitar={lineas.length > 1 ? () => setLineas((v) => v.filter((_, idx) => idx !== i)) : undefined} />)}</div>
       {error && <div className="error-msg">{error}</div>}
       <div className="sticky-action"><button className="btn-secondary" onClick={agregarLinea}>Agregar línea</button><button className="btn-ghost" onClick={onClose}>Cancelar</button><button className="btn-primary" disabled={guardando} onClick={() => void guardar()}>{guardando ? 'Guardando…' : 'Guardar ticket y movimientos'}</button></div>
     </>}

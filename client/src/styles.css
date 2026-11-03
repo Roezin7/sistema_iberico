@@ -2461,6 +2461,28 @@ select:disabled {
 .factura-card__actions select { min-width: 145px; }
 
 .quick-lines { display: grid; gap: .7rem; margin-top: .8rem; }
+.shopping-fold > summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .4rem; cursor: pointer; padding: .3rem 0; }
+.shopping-fold > summary::after { content: '＋'; }
+.shopping-fold[open] > summary::after { content: '−'; }
+.purchase-item { display: grid; gap: .75rem; border: 1px solid var(--border); border-radius: var(--r-input); padding: .85rem; min-width: 0; }
+.purchase-item__head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.purchase-item__identity, .purchase-item__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: .75rem; min-width: 0; }
+.purchase-item label, .purchase-meta label, .purchase-total label { display: grid; gap: .3rem; min-width: 0; font-size: .82rem; color: var(--ink-2); }
+.purchase-item input, .purchase-item select, .purchase-meta input, .purchase-meta select { width: 100%; min-width: 0; }
+.purchase-item__details { margin: .75rem 0; }
+.purchase-item__details > summary { cursor: pointer; color: var(--ink-2); font-size: .82rem; padding: .5rem 0; }
+.purchase-item__result { margin: 0; font-size: .85rem; color: var(--ink-2); }
+.purchase-total { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; padding-top: .75rem; border-top: 1px solid var(--border); }
+.purchase-total label { max-width: 15rem; }
+.quick-lines + .btn-secondary { margin-top: .75rem; }
+@media (max-width: 640px) {
+  .purchase-item__identity { grid-template-columns: 1fr; }
+  .purchase-item { padding: .7rem; }
+  .purchase-total > * { flex: 1 1 100%; max-width: none; }
+  .purchase-total label { max-width: none; }
+  .bottom-link { min-width: 0; }
+  .bottom-link > span { font-size: .65rem; }
+}
 /* Cada ticket conserva sus acciones dentro de la tarjeta. Varias barras
    fijas en la misma página se superponían y ocultaban Agregar línea. */
 .ticket-form-actions,

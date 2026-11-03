@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { cantidadBaseDesdePresentacion, resumirCompra, validarDiscrepanciasCompra } from './compras-rapidas-logic.js';
+import { cantidadBaseDesdePresentacion, cantidadBaseCompra, resumirCompra, validarDiscrepanciasCompra } from './compras-rapidas-logic.js';
 
 describe('conversiones de presentación FIFO', () => {
+  it('no aplica la deshidratación a un peso final explícito', () => {
+    expect(cantidadBaseCompra({ cantidad_fuente:1, contenido_compra:20, cantidad_base:20 }, { id:110, name:'Chicharrón', presentacion_modo:'variable', rendimiento_util:0.5 })).toBe(20);
+  });
+  it('no toma 2 litros del catálogo cuando falta el tamaño real del mezclador', () => {
+    expect(cantidadBaseCompra({ cantidad_fuente:2, unidad_compra:'botella' }, { id:27,name:'Agua',unidad_base:'ml',contenido_compra:2000,presentacion_modo:'por_lote' })).toBeNull();
+  });
+  it('convierte kilogramos explícitos sin pedir el peso de un envase', () => {
+    const p={id:89,name:'Naranja',unidad_base:'g',contenido_compra:1000,presentacion_modo:'por_lote'};
+    const l={tipo_linea:'inventario' as const,product_id:89,descripcion_fuente:'Naranja',cantidad_fuente:0.4,unidad_fuente:'kg',cantidad_base:400,importe:8};
+    expect(cantidadBaseCompra(l,p)).toBe(400);
+    expect(validarDiscrepanciasCompra(8,[l],[p]).valida).toBe(true);
+  });
   it('convierte 5 kg de limón en 70 piezas usando el rendimiento configurado', () => {
     expect(cantidadBaseDesdePresentacion({
       cantidadCompra: 5, unidadCompra: 'kg', contenidoPorPresentacion: 14, unidadBase: 'pieza', rendimientoUtil: 1,

@@ -9,10 +9,12 @@ BACKUP_DIR="${BACKUP_DIR:-/tmp/iberico-backups}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$BACKUP_DIR"
 BACKUP_FILE="$BACKUP_DIR/iberico-${STAMP}.dump"
+PG_DUMP_BIN="${PG_DUMP_BIN:-pg_dump}"
+PG_RESTORE_BIN="${PG_RESTORE_BIN:-pg_restore}"
 
 echo "[1/4] Respaldando producción (sólo lectura)…"
-pg_dump --format=custom --no-owner --no-privileges --file="$BACKUP_FILE" "$DATABASE_READONLY_URL"
-pg_restore --list "$BACKUP_FILE" >/dev/null
+"$PG_DUMP_BIN" --format=custom --no-owner --no-privileges --file="$BACKUP_FILE" "$DATABASE_READONLY_URL"
+"$PG_RESTORE_BIN" --list "$BACKUP_FILE" >/dev/null
 echo "[2/4] Backup válido: $BACKUP_FILE"
 
 if [[ "${ALLOW_RESTORE:-}" == "YES" ]]; then
@@ -22,7 +24,7 @@ if [[ "${ALLOW_RESTORE:-}" == "YES" ]]; then
     exit 2
   fi
   echo "[3/4] Restaurando en destino aislado…"
-  pg_restore --no-owner --no-privileges --clean --if-exists --exit-on-error \
+  "$PG_RESTORE_BIN" --no-owner --no-privileges --clean --if-exists --exit-on-error \
     --dbname="$RESTORE_DATABASE_URL" "$BACKUP_FILE"
   echo "[4/4] Restauración verificada en destino aislado."
 else

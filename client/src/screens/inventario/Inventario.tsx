@@ -15,6 +15,7 @@ interface Producto {
   id: number; nombre: string; store: string; base_qty: number | null;
   unit_cost: number | null; unidad_base: string | null; unidad_compra: string | null; contenido_compra: number | null;
   unidades: Unidad[]; categoria_id: number | null; categoria: string | null;
+  presentacion_modo?: string;
 }
 interface ProductoActual {
   product_id: number; nombre: string; store: string; base_qty: number;
@@ -134,6 +135,7 @@ function minimoOperativoProducto(p: ProductoActual): number {
 
 function pluralUnidad(unidad: string | null | undefined, cantidad?: number) {
   const u = (unidad ?? 'unidad').trim().toLowerCase();
+  if (u.startsWith('equiv.')) return u;
   if (cantidad === 1) return u;
   const plurales: Record<string, string> = {
     botella: 'botellas', lata: 'latas', bolsa: 'bolsas', bote: 'botes',
@@ -158,9 +160,17 @@ function unidadOperativaProducto(p: Producto, u: Unidad): string {
 /** Convierte una captura histórica (qty × factor = base) a unidades físicas. */
 function capturaAOperativa(qtyCaptura: number, p: Producto | undefined, u: Unidad): number {
   const base = Number(qtyCaptura) * (Number(u.factor) || 1);
+  const directo = factorConteoDirecto(p);
+  if (directo != null) return base / directo;
   if (!p || p.unidad_base === 'pieza') return base;
   const contenido = Number(p.contenido_compra);
   return Number.isFinite(contenido) && contenido > 0 ? base / contenido : Number(qtyCaptura);
+}
+
+function factorConteoDirecto(p?: Producto): number | null {
+  if (p?.presentacion_modo === 'variable' && (p.unidad_base === 'g' || p.unidad_base === 'ml')) return 1;
+  if (p?.presentacion_modo === 'por_lote' && (p.unidad_base === 'g' || p.unidad_base === 'ml')) return 1000;
+  return null;
 }
 
 type Tab = 'conteo' | 'actual' | 'compras';
@@ -181,6 +191,7 @@ function moverConteoConFlecha(event: KeyboardEvent<HTMLInputElement>) {
 
 export default function Inventario() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>(() => {
     const requested = new URLSearchParams(location.search).get('tab');
     return requested === 'actual' || requested === 'compras' ? requested : 'conteo';
@@ -190,6 +201,11 @@ export default function Inventario() {
     if (requested === 'actual' || requested === 'compras') setTab(requested);
     else if (!requested) setTab('conteo');
   }, [location.search]);
+  function cambiarTab(value: Tab) {
+    const params = new URLSearchParams(location.search);
+    params.set('tab', value);
+    navigate(`/inventario?${params.toString()}`);
+  }
   return (
     <div className="page">
       <header className="page-head">
@@ -200,25 +216,19 @@ export default function Inventario() {
         <p className="muted">Inventario físico, compras y lotes FIFO en un solo flujo.</p>
       </header>
       <nav className="tabs">
-        <button className={tab === 'conteo' ? 'tab tab--on' : 'tab'} onClick={() => setTab('conteo')}>Conteo</button>
-        <button className={tab === 'actual' ? 'tab tab--on' : 'tab'} onClick={() => setTab('actual')}>Existencia actual</button>
-        <button className={tab === 'compras' ? 'tab tab--on' : 'tab'} onClick={() => setTab('compras')}>Compras y FIFO</button>
+        <button className={tab === 'conteo' ? 'tab tab--on' : 'tab'} onClick={() => cambiarTab('conteo')}>Conteo</button>
+        <button className={tab === 'actual' ? 'tab tab--on' : 'tab'} onClick={() => cambiarTab('actual')}>Existencia actual</button>
+        <button className={tab === 'compras' ? 'tab tab--on' : 'tab'} onClick={() => cambiarTab('compras')}>Compras</button>
       </nav>
       <div className="tab-body">
-        {tab === 'conteo' && <Conteo onGuardado={() => setTab('actual')} />}
+        {tab === 'conteo' && <Conteo onGuardado={() => cambiarTab('actual')} />}
         {tab === 'actual' && <InventarioActual />}
         {tab === 'compras' && (
           <>
-            <section className="card" aria-labelledby="lista-compras-heading">
-              <div className="page-title">
-                <Icono name="package" size={20} className="ttl-icon" />
-                <div>
-                  <h2 id="lista-compras-heading">Lista de compras</h2>
-                  <p className="muted">Faltantes calculados desde la existencia física actual y el mínimo operativo.</p>
-                </div>
-              </div>
+            <details className="card shopping-fold" open={new URLSearchParams(location.search).get('comprasTab') === 'lista'}>
+              <summary><strong>Lista de compras</strong><span className="muted">Consultar faltantes por proveedor</span></summary>
               <ListaDeCompras />
-            </section>
+            </details>
             <Compras embebida />
           </>
         )}
@@ -295,7 +305,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           // consumos. Con varias zonas se conserva el último conteo por zona
           // y el operador confirma la distribución real.
           previos[`${prod.product_id}:${pz.zona_id}`] = String(tieneMovimientos && prod.por_zona.length === 1
-            ? (prod.existencia_fisica_operativa ?? capturaAOperativa(pz.qty_captura, producto, unidad))
+            ? (factorConteoDirecto(producto) != null ? (prod.existencia_fisica_base ?? prod.total_base) / factorConteoDirecto(producto)! : prod.existencia_fisica_operativa ?? capturaAOperativa(pz.qty_captura, producto, unidad))
             : capturaAOperativa(pz.qty_captura, producto, unidad));
         }
       }
@@ -337,7 +347,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       .filter(([, v]) => v !== '' && !Number.isNaN(Number(v)))
       .map(([k, v]) => {
         const [product_id, zona_id] = k.split(':').map(Number);
-        return { product_id, zona_id, qty_captura: Number(v) };
+        const directo = factorConteoDirecto(productos.find((p) => p.id === product_id));
+        return { product_id, zona_id, qty_captura: Number(v), ...(directo == null ? {} : { cantidad_base: Number(v) * directo }) };
       })
       .filter((linea) => linea.zona_id === zonaActiva);
     if (lineas.length === 0) {
@@ -447,12 +458,14 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
               const esperado = cierreGuiado ? cierrePreviewPorProducto.get(p.id) : undefined;
               const key = `${p.id}:${zonaActiva}`;
               const esBool = u.unidad_captura === 'boolean';
-              const unidadOperativa = unidadOperativaProducto(p, u);
+              const directo = factorConteoDirecto(p);
+              const unidadOperativa = directo == null ? unidadOperativaProducto(p, u) : directo === 1000 ? (p.unidad_base === 'ml' ? 'litro' : 'kg') : p.unidad_base ?? 'unidad';
               return (
                 <li key={p.id} className="conteo-row">
                   <div className="conteo-info">
                     <strong>{p.nombre}</strong>
                     <small className="muted">Se captura en {pluralUnidad(unidadOperativa, 2)} · {p.store}</small>
+                    {directo != null && <small className="muted">Suma el contenido de todos los envases{p.unidad_base === 'ml' && directo === 1000 ? ': 2 de 600 ml = 1.2 L' : ''}.</small>}
                     {esperado && <small className="muted">Esperado al cierre: {formatoCantidad(esperado.esperado_operativo)} {pluralUnidad(esperado.unidad_operativa, esperado.esperado_operativo)}</small>}
                   </div>
                   {esBool ? (

@@ -42,7 +42,7 @@ catalogoRouter.get(
   asyncHandler(async (req, res) => {
     const productos = await prisma.products.findMany({
       where: { negocio_id: req.auth!.negocioId },
-      include: { stores: true, product_zone_units: true, categorias_inventario: true, presentaciones_observadas: { orderBy: { ultima_fecha: 'desc' } } },
+      include: { stores: true, product_zone_units: true, categorias_inventario: true, presentaciones_observadas: { where: { observaciones: { gt: 0 } }, orderBy: { ultima_fecha: 'desc' } } },
       orderBy: { name: 'asc' },
     });
     res.json(

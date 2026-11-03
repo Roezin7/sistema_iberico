@@ -50,6 +50,7 @@ export async function aplicarMapeoEpos(input: { negocioId: bigint; from?: Date; 
   const aplicadas: { menu_id: number; epos_product_id: number }[] = [];
   for (const p of propuestas) {
     if (p.estado !== 'mapeado' || p.epos_product_id == null || p.menu_id == null) continue;
+    if (p.menu_epos_product_id === p.epos_product_id) continue;
     if (p.menu_epos_product_id != null && p.menu_epos_product_id !== p.epos_product_id) continue;
     const ocupado = await prisma.productos_menu.findFirst({
       where: { negocio_id: input.negocioId, epos_product_id: p.epos_product_id, id: { not: BigInt(p.menu_id) } },

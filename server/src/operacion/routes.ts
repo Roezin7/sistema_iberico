@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth } from '../auth/middleware.js';
 import { inventarioActual, listaComprasDesdeInventario } from '../inventario/service.js';
-import { semanaActual, saludOperativa, resumen, resumenDiario } from '../finanzas/service.js';
+import { semanaActual, saludOperativa, resumen, resumenDiario, cuadre } from '../finanzas/service.js';
 import { diaDeTareas } from '../tareas/service.js';
 import { listarConciliacionesDiarias } from '../epos/reconciliation.js';
 
@@ -26,13 +26,14 @@ operacionRouter.get('/resumen', asyncHandler(async (req, res) => {
     res.json({ semana, salud: null, resumen: null, dias: [], conciliaciones: [], inventario, compras: listaComprasDesdeInventario(inventario), tareas });
     return;
   }
-  const [salud, resumenSemana, dias, conciliaciones, inventario, tareas] = await Promise.all([
+  const [salud, resumenSemana, dias, conciliaciones, inventario, tareas, caja] = await Promise.all([
     saludOperativa(negocioId),
     resumen(negocioId, BigInt(semana.id)),
     resumenDiario(negocioId, BigInt(semana.id)),
     listarConciliacionesDiarias(negocioId, BigInt(semana.id)),
     inventarioActual(negocioId, { vista: 'fisica' }),
     diaDeTareas(negocioId, fecha),
+    cuadre(negocioId, BigInt(semana.id)),
   ]);
-  res.json({ semana, salud, resumen: resumenSemana, dias: dias.dias, conciliaciones, inventario, compras: listaComprasDesdeInventario(inventario), tareas });
+  res.json({ semana, salud, resumen: resumenSemana, dias: dias.dias, conciliaciones, inventario, compras: listaComprasDesdeInventario(inventario), tareas, caja });
 }));

@@ -8,20 +8,11 @@ La implementación actual está preparada para **Ibérico**, con interfaz en esp
 moneda MXN y zona horaria `America/Mexico_City`. El backend separa los datos por negocio,
 aunque la selección dinámica del negocio todavía no está expuesta en la interfaz.
 
-## Reutilizabilidad: 76%
+## Estado y prioridades actuales
 
-El **76%** representa cuánto del sistema puede utilizarse en otro bar, restaurante o
-negocio con inventario y control de caja conservando la arquitectura y los módulos
-actuales. No es cobertura de pruebas ni porcentaje de código duplicado.
+La revisión de producción del 3 de noviembre está en [Revisión ejecutiva y plan de Ibérico](docs/REVISION_EJECUTIVA_Y_PLAN_IBERICO_2026-11-03.md). Describe lo comprobado, las limitaciones de datos y el plan de cuatro semanas. La app se organiza en Operación, Abasto, Finanzas y Administración.
 
-| Criterio | Peso | Resultado | Evidencia |
-| --- | ---: | ---: | --- |
-| Arquitectura y separación por módulos | 25% | 23% | Monorepo, API REST, cliente desacoplado, servicios y lógica de dominio separados |
-| Configuración del negocio | 25% | 19% | Productos, zonas, tiendas, unidades, usuarios, fondos, socios, categorías y tareas son configurables |
-| Marca, localización y reglas particulares | 20% | 11% | Nombre visible, MXN, zona horaria, seed y comisión de terminal de 1.99% requieren adaptación |
-| Operación, despliegue y datos | 15% | 13% | PostgreSQL, migraciones, Docker, Render/Coolify, healthcheck y servicio único reutilizables |
-| Calidad y facilidad de extensión | 15% | 10% | TypeScript, Zod y pruebas de lógica; faltan pruebas de integración/E2E y una API versionada/documentada |
-| **Total** | **100%** | **76%** | |
+La arquitectura tiene separación por negocio, pero aún requiere adaptar marca, reglas, conexión Epos y selección de negocio para replicarla. No se presenta un porcentaje de reutilización sin un ensayo de réplica.
 
 ### Qué se reutiliza directamente
 
@@ -148,8 +139,9 @@ sistema opera sin una llave de IA.
 - Aplicación instalable con manifest, iconos y service worker de actualización automática.
 - Diseño adaptable con navegación lateral o inferior y temas claro/oscuro.
 - El shell de la aplicación queda disponible sin conexión.
-- Las mutaciones `POST`, `PUT`, `PATCH` y `DELETE` que fallan por red se guardan en
-  IndexedDB y se reenvían en orden al reconectar.
+- Sólo los borradores de compra y los resultados de tareas admiten cola sin conexión.
+  Pagos, conteos y cierres requieren conexión. La captura de compras conserva además
+  un borrador local con foto y datos al recargar.
 - Indicador de conexión y cantidad de operaciones pendientes.
 - Los rechazos `4xx` se retiran de la cola y se muestran al usuario; los errores
   transitorios de red/servidor se conservan para reintento.
@@ -287,7 +279,9 @@ Las pruebas actuales cubren las reglas puras más sensibles:
 
 Límites que deben considerarse:
 
-- No hay todavía pruebas de integración de API, base de datos ni pruebas E2E de interfaz.
+- Hay pruebas de contrato HTTP y una verificación de API contra una copia local restaurada
+  (server/scripts/verificar-flujo-compras.ts). La revisión visual en navegador se documenta
+  en el informe; todavía no forma parte de la ejecución automática en CI.
 - La experiencia visual selecciona el negocio inicial; no existe selector o resolución por
   subdominio.
 - La autenticación por PIN es adecuada para operación interna, no sustituye SSO/MFA.

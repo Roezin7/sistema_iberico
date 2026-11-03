@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
-import { cantidadBaseDesdePresentacion, notasDeValidacion, resumirCompra, validarDiscrepanciasCompra, type ProductoReglaCompra } from './compras-rapidas-logic.js';
+import { cantidadBaseCompra, notasDeValidacion, resumirCompra, validarDiscrepanciasCompra, type ProductoReglaCompra } from './compras-rapidas-logic.js';
 import { costearVentasPendientesEnVivo } from './consumo-epos.js';
 import { inventarioActual } from './service.js';
 import { redondear } from './logic.js';
@@ -53,13 +53,7 @@ export async function validarCapturaCompra(negocioId: bigint, total: number, lin
   const lineasNormalizadas = lineas.map((l) => {
     const producto = l.product_id == null ? null : productoPorId.get(l.product_id.toString());
     const cantidadBase = l.tipo_linea === 'inventario' && producto
-      ? cantidadBaseDesdePresentacion({
-        cantidadCompra: l.cantidad_fuente,
-        unidadCompra: l.unidad_fuente ?? l.unidad_compra ?? producto.unidad_compra,
-        contenidoPorPresentacion: l.contenido_compra ?? (producto.presentacion_modo === 'exacta' && producto.contenido_compra != null ? Number(producto.contenido_compra) : null),
-        unidadBase: producto.unidad_base,
-        rendimientoUtil: producto.rendimiento_util == null ? 1 : Number(producto.rendimiento_util),
-      })
+      ? cantidadBaseCompra(l, { ...producto, contenido_compra: producto.contenido_compra == null ? null : Number(producto.contenido_compra), rendimiento_util: Number(producto.rendimiento_util) })
       : null;
     return { ...l, cantidad_base: cantidadBase ?? l.cantidad_base };
   });
@@ -71,6 +65,8 @@ export async function validarCapturaCompra(negocioId: bigint, total: number, lin
     cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base),
     unidad_compra: l.unidad_compra,
     contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra),
+    cantidad_fuente: l.cantidad_fuente ?? null,
+    unidad_fuente: l.unidad_fuente,
     costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario),
   })), productos.map((p) => ({
     id: p.id,
@@ -256,6 +252,15 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     const resumen = resumirCompra(total, input.lineas.map((l) => ({ tipo_linea: l.tipo_linea, importe: Number(l.importe) })));
     if (!resumen.cuadra) throw new HttpError(400, 'Las líneas deben cuadrar exactamente con el total del ticket');
     if (resumen.pendiente > 0) throw new HttpError(400, 'Una compra confirmada no puede conservar líneas pendientes; clasifica cada importe como inventario o gasto');
+    const catalogo = await tx.products.findMany({ where: { negocio_id: negocioId, active: true }, include: { product_aliases: true } });
+    const reglas: ProductoReglaCompra[] = catalogo.map((p) => ({ ...p, contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra), rendimiento_util: Number(p.rendimiento_util), aliases: p.product_aliases.map((a) => a.alias) }));
+    const normalizadas = input.lineas.map((l) => {
+      const p = reglas.find((p) => String(p.id) === String(l.product_id));
+      return p && l.tipo_linea === 'inventario' ? { ...l, cantidad_base: cantidadBaseCompra(l, p) } : l;
+    });
+    const validacion = validarDiscrepanciasCompra(total, normalizadas, reglas);
+    if (!validacion.valida) throw new HttpError(400, validacion.errores.map((d) => d.mensaje).join(' '));
+    input = { ...input, lineas: normalizadas };
     const inventory = input.lineas.filter((l) => l.tipo_linea === 'inventario');
     if (inventory.some((l) => !l.product_id || !l.cantidad_base || l.cantidad_base <= 0)) throw new HttpError(400, 'Cada línea de inventario requiere producto y cantidad base');
     const origenId = input.origen_pago_id === undefined ? actual.origen_pago_id : input.origen_pago_id;
@@ -270,16 +275,17 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     const porProducto = new Map<string, { qty: number; importe: number; unidad: string | null; contenido: number | null }>();
     for (const l of inventory) {
       const key = l.product_id!.toString(); const prev = porProducto.get(key); const qty = Number(l.cantidad_base); const importe = Number(l.importe);
-      porProducto.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, unidad: prev.unidad ?? l.unidad_compra ?? null, contenido: prev.contenido ?? l.contenido_compra ?? null } : { qty, importe, unidad: l.unidad_compra ?? null, contenido: l.contenido_compra ?? null });
+      const misma = prev && prev.unidad === (l.unidad_compra ?? null) && prev.contenido === (l.contenido_compra ?? null);
+      porProducto.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, unidad: misma ? prev.unidad : 'mixta', contenido: misma ? prev.contenido : null } : { qty, importe, unidad: l.unidad_compra ?? null, contenido: l.contenido_compra ?? null });
+      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: l.product_id!, purchase_id: purchaseId, zona_id: bodega.id, recibido_at: fecha, cantidad_inicial: qty, cantidad_restante: qty, costo_unitario: importe / qty, moneda: actual.moneda, fuente: actual.fuente, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref, notas: actual.notas } });
     }
     for (const [productId, line] of porProducto) {
       const costo = line.importe / line.qty;
       await tx.purchase_lines.create({ data: { purchase_id: purchaseId, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
-      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: BigInt(productId), purchase_id: purchaseId, zona_id: bodega.id, recibido_at: fecha, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: actual.moneda, fuente: actual.fuente, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref, notas: actual.notas } });
     }
-    await registrarPresentacionesObservadas(tx, purchaseId);
     const dataCompra = { fecha_recepcion: fecha, proveedor: input.proveedor === undefined ? actual.proveedor : input.proveedor?.trim() || null, ticket_ref: input.ticket_ref === undefined ? actual.ticket_ref : input.ticket_ref?.trim() || null, total, origen_pago_id: origen.id };
     await tx.purchases.update({ where: { id: purchaseId }, data: dataCompra });
+    await registrarPresentacionesObservadas(tx, purchaseId);
     if (origen.tipo === 'banco') {
       await tx.facturas.updateMany({ where: { negocio_id: negocioId, compra_id: purchaseId }, data: { mes: mesDeFecha(fecha) } });
       await asegurarFacturasBanco(negocioId, tx);
@@ -413,7 +419,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     const lineasNormalizadas = compra.capture_lines.map((l) => {
       const p = l.product_id == null ? null : productoPorId.get(l.product_id.toString());
       const calculada = l.tipo_linea === 'inventario' && p
-        ? cantidadBaseDesdePresentacion({ cantidadCompra: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidadCompra: l.unidad_fuente ?? l.unidad_compra ?? p.unidad_compra, contenidoPorPresentacion: l.contenido_compra == null ? (p.presentacion_modo === 'exacta' && p.contenido_compra != null ? Number(p.contenido_compra) : null) : Number(l.contenido_compra), unidadBase: p.unidad_base, rendimientoUtil: p.rendimiento_util == null ? 1 : Number(p.rendimiento_util) })
+        ? cantidadBaseCompra({ cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente), unidad_fuente: l.unidad_fuente, unidad_compra: l.unidad_compra, contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra), cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base) }, reglasProductos.find((r) => String(r.id) === String(p.id))!)
         : null;
       return { ...l, cantidad_base: calculada ?? l.cantidad_base };
     });
@@ -433,6 +439,8 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base),
       unidad_compra: l.unidad_compra,
       contenido_compra: l.contenido_compra == null ? null : Number(l.contenido_compra),
+      cantidad_fuente: l.cantidad_fuente == null ? null : Number(l.cantidad_fuente),
+      unidad_fuente: l.unidad_fuente,
       costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario),
     })), reglasProductos);
     if (validacion.errores.length) {
@@ -454,14 +462,15 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       // directamente como costo por unidad base. La fuente confiable para el
       // lote es el importe total dividido entre la cantidad base convertida.
       const costo = importe / qty;
-      productos.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, costo: (prev.importe + importe) / (prev.qty + qty), unidad: prev.unidad ?? l.unidad_compra, contenido: prev.contenido ?? (l.contenido_compra == null ? null : Number(l.contenido_compra)) } : { qty, importe, costo, unidad: l.unidad_compra, contenido: l.contenido_compra == null ? null : Number(l.contenido_compra) });
+      const contenido = l.contenido_compra == null ? null : Number(l.contenido_compra);
+      const misma = prev && prev.unidad === l.unidad_compra && prev.contenido === contenido;
+      productos.set(key, prev ? { qty: prev.qty + qty, importe: prev.importe + importe, costo: (prev.importe + importe) / (prev.qty + qty), unidad: misma ? prev.unidad : 'mixta', contenido: misma ? prev.contenido : null } : { qty, importe, costo, unidad: l.unidad_compra, contenido });
+      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: l.product_id!, purchase_id: compra.id, zona_id: bodega.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: qty, cantidad_restante: qty, costo_unitario: costo, moneda: compra.moneda, fuente: compra.fuente, ticket_ref: compra.ticket_ref, notas: notasCompra } });
     }
     for (const [productId, line] of productos) {
       const costo = line.costo;
-      const purchaseLine = await tx.purchase_lines.create({ data: { purchase_id: compra.id, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
-      await tx.inventory_lots.create({ data: { negocio_id: negocioId, product_id: purchaseLine.product_id, purchase_id: compra.id, zona_id: bodega.id, recibido_at: compra.fecha_recepcion, cantidad_inicial: line.qty, cantidad_restante: line.qty, costo_unitario: costo, moneda: compra.moneda, fuente: compra.fuente, ticket_ref: compra.ticket_ref, notas: notasCompra } });
+      await tx.purchase_lines.create({ data: { purchase_id: compra.id, product_id: BigInt(productId), qty: line.qty, unidad_compra: line.unidad, contenido_compra: line.contenido, costo_unitario: costo, importe: line.importe } });
     }
-    await registrarPresentacionesObservadas(tx, compra.id);
     const categoria = gastoTotal > 0 ? await tx.categorias_gasto.findFirst({ where: { negocio_id: negocioId, nombre: 'Otros', activo: true } }) : null;
     const facturado = origen.tipo === 'banco';
     if (inventarioTotal > 0) {
@@ -471,6 +480,7 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
       await tx.movimientos.create({ data: { negocio_id: negocioId, semana_id: semana.id, fecha: compra.fecha_recepcion, tipo: 'gasto', monto: gastoTotal, ubicacion_origen_id: origen.id, categoria_id: categoria?.id ?? null, facturado, descripcion: `Compra ticket ${compra.ticket_ref ?? compra.id}${gastos.length ? ' · gasto operativo' : ' · diferencia no itemizada'}`, usuario_id: usuarioId, compra_id: compra.id } });
     }
     await tx.purchases.update({ where: { id: compra.id }, data: { total, estado: 'confirmada', notas: notasCompra, confirmada_por: usuarioId, confirmada_at: new Date() } });
+    await registrarPresentacionesObservadas(tx, compra.id);
     if (origen.tipo === 'banco') await asegurarFacturasBanco(negocioId, tx);
     await registrarAuditoria({ negocioId, usuarioId, entidad: 'compra', entidadId: compra.id, accion: 'confirmar', despues: { total, inventario: inventarioTotal, gasto: gastoTotal, origen_pago_id: origen.id } }, tx);
     return { purchase_id: Number(compra.id), estado: 'confirmada', inventario: inventarioTotal, gasto: gastoTotal, movimientos: (inventarioTotal > 0 ? 1 : 0) + (gastoTotal > 0 ? 1 : 0), discrepancias: validacion.advertencias };
@@ -480,11 +490,12 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
 }
 
 export async function actualizarBorradorLineas(negocioId: bigint, purchaseId: bigint, lineas: CapturaCompraLinea[], total?: number | null) {
-  const compra = await prisma.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } }, select: { id: true } });
+  const compra = await prisma.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } }, select: { id: true, estado: true } });
   if (!compra) throw new HttpError(404, 'Compra pendiente no encontrada');
   if (!lineas.length) throw new HttpError(400, 'La compra debe conservar al menos una línea');
   await prisma.$transaction(async (tx) => {
-    if (total !== undefined) await tx.purchases.update({ where: { id: purchaseId }, data: { total } });
+    const reserva = await tx.purchases.updateMany({ where: { id: purchaseId, negocio_id: negocioId, estado: { in: ['revision', 'borrador'] } }, data: total !== undefined ? { total } : { estado: compra.estado } });
+    if (!reserva.count) throw new HttpError(409, 'La compra cambió de estado; recarga antes de editarla');
     await tx.purchase_capture_lines.deleteMany({ where: { purchase_id: purchaseId } });
       await tx.purchase_capture_lines.createMany({ data: lineas.map((l) => ({ purchase_id: purchaseId, product_id: l.product_id ?? null, tipo_linea: l.tipo_linea, descripcion_fuente: l.descripcion_fuente.trim(), cantidad_fuente: l.cantidad_fuente ?? null, unidad_fuente: l.unidad_fuente?.trim() || null, cantidad_base: l.cantidad_base ?? null, unidad_compra: l.unidad_compra?.trim() || null, contenido_compra: l.contenido_compra ?? null, costo_unitario: l.costo_unitario ?? null, importe: l.importe, confianza: l.confianza ?? null, notas: l.notas?.trim() || null })) });
   });

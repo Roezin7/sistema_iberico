@@ -46,7 +46,7 @@ export default function Shell({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  useEffect(() => { setPaletteOpen(false); setMobileMoreOpen(false); }, [location.pathname]);
+  useEffect(() => { setPaletteOpen(false); setMobileMoreOpen(false); }, [location.pathname, location.search]);
 
   const syncChip = !online ? <button className="sync-chip sync-chip--off" onClick={() => void sincronizar()}><span className="sync-dot" /> Sin conexión{pendientes > 0 && ` · ${pendientes} pendientes`}</button> : pendientes > 0 ? <button className="sync-chip sync-chip--pending" onClick={() => void sincronizar()}><span className="sync-dot" /> Sincronizar {pendientes}</button> : <span className="sync-chip"><span className="sync-dot sync-dot--ok" /> Todo al día</span>;
 
@@ -68,7 +68,7 @@ export default function Shell({ children }: { children: ReactNode }) {
     </div>
     <nav className="bottom-nav" aria-label="Navegación móvil">
       {mainItems.slice(0, 4).map((item) => <NavLink key={item.ruta} to={item.ruta} end={item.ruta === '/'} className={({ isActive }) => isActive ? 'bottom-link bottom-link--on' : 'bottom-link'}><Icono name={item.icono} size={21} /><span>{item.label}</span></NavLink>)}
-      {(mainItems.length > 4 || toolItems.length > 0) && <button type="button" className={`bottom-link bottom-link--button ${mobileMoreOpen ? 'bottom-link--on' : ''}`} aria-expanded={mobileMoreOpen} onClick={() => setMobileMoreOpen((open) => !open)}><Icono name="sparkles" size={21} /><span>Más</span></button>}
+      <button type="button" className={`bottom-link bottom-link--button ${mobileMoreOpen ? 'bottom-link--on' : ''}`} aria-label="Abrir opciones de cuenta" aria-expanded={mobileMoreOpen} onClick={() => setMobileMoreOpen((open) => !open)}><Icono name="sparkles" size={21} /><span>Cuenta</span></button>
     </nav>
     {mobileMoreOpen && <div className="mobile-more-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMobileMoreOpen(false); }}>
       <section className="mobile-more-panel" aria-label="Más secciones">

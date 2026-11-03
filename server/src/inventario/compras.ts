@@ -5,6 +5,7 @@ import { costearVentasPendientesEnVivo } from './consumo-epos.js';
 import { asegurarFacturasBanco } from '../facturacion/service.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 import { registrarPresentacionesObservadas } from './presentaciones.js';
+import { validarDiscrepanciasCompra } from './compras-rapidas-logic.js';
 
 export interface LineaCompraInput {
   product_id: bigint;
@@ -76,11 +77,17 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
     const productIds = [...new Set(input.lineas.map((l) => l.product_id.toString()))].map(BigInt);
     const productos = await tx.products.findMany({
       where: { negocio_id: negocioId, id: { in: productIds }, active: true },
-      select: { id: true },
     });
     const validos = new Set(productos.map((p) => p.id.toString()));
     const faltantes = productIds.filter((id) => !validos.has(id.toString()));
     if (faltantes.length) throw new HttpError(400, `Producto no válido para este negocio: ${faltantes.map(String).join(', ')}`);
+
+    const totalLineas = input.lineas.reduce((sum, l) => sum + (l.importe ?? l.cantidad_base * l.costo_unitario_base), 0);
+    const validacion = validarDiscrepanciasCompra(input.total ?? totalLineas, input.lineas.map((l) => ({
+      ...l, tipo_linea: 'inventario' as const, descripcion_fuente: productos.find((p) => p.id === l.product_id)!.name,
+      importe: l.importe ?? l.cantidad_base * l.costo_unitario_base,
+    })), productos.map((p) => ({ ...p, contenido_compra: p.contenido_compra == null ? null : Number(p.contenido_compra), rendimiento_util: Number(p.rendimiento_util) })));
+    if (!validacion.valida) throw new HttpError(400, validacion.errores.map((d) => d.mensaje).join(' '));
 
     const bodega = await tx.zonas_inventario.findFirst({
       where: { negocio_id: negocioId, nombre: 'Bodega' },

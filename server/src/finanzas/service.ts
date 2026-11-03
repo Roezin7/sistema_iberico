@@ -1691,7 +1691,7 @@ export async function tableroDecisiones(negocioId: bigint, limite = 8) {
 /** Diagnóstico de preparación de datos maestros y colas operativas. Sólo
  * lectura: sirve para saber si los indicadores pueden usarse para decidir. */
 export async function saludOperativa(negocioId: bigint) {
-  const [productosActivos, sinZona, sinCategoria, menuActivo, menuSinEpos, menuSinReceta, comprasPendientes, semanasAbiertasFilas, snapshotsLegado] = await Promise.all([
+  const [productosActivos, sinZona, sinCategoria, menuActivo, menuSinEpos, menuSinReceta, comprasPendientes, semanasAbiertasFilas, snapshotsLegado, menuSinPrecio] = await Promise.all([
     prisma.products.count({ where: { negocio_id: negocioId, active: true } }),
     prisma.products.count({ where: { negocio_id: negocioId, active: true, product_zone_units: { none: {} } } }),
     prisma.products.count({ where: { negocio_id: negocioId, active: true, categoria_id: null } }),
@@ -1702,12 +1702,13 @@ export async function saludOperativa(negocioId: bigint) {
     prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, recetas: { none: { estado: { in: ['validada', 'completada'] } } } } }),
     // `revision` is the state used by OCR/manual drafts; it is still a
     // pending purchase until an administrator confirms or rejects it.
-    prisma.purchases.count({ where: { negocio_id: negocioId, estado: { in: ['pendiente', 'revision'] } } }),
+    prisma.purchases.count({ where: { negocio_id: negocioId, estado: { in: ['pendiente', 'revision', 'borrador'] } } }),
     prisma.semanas.findMany({ where: { negocio_id: negocioId, estado: 'abierta' }, orderBy: { fecha_inicio: 'desc' }, select: { fecha_inicio: true, fecha_fin: true } }),
     // Los conteos operativos históricos pueden existir fuera de una semana y
     // siguen siendo evidencia válida. Sólo un snapshot de ciclo sin semana
     // rompe la trazabilidad de apertura/cierre/ajuste.
     prisma.inventory_snapshot.count({ where: { negocio_id: negocioId, semana_id: null, tipo: { in: ['apertura', 'cierre', 'cierre_apertura', 'ajuste'] } } }),
+    prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, OR: [{ precio_venta: null }, { precio_venta: { lte: 0 } }] } }),
   ]);
   // Las excepciones de semanas cerradas permanecen en la auditoría, pero no
   // deben bloquear el tablero operativo actual. Epos usa timestamps UTC y las
@@ -1739,6 +1740,8 @@ export async function saludOperativa(negocioId: bigint) {
     ...(ventasPendientes ? [`${ventasPendientes} venta(s) Epos pendientes o con excepción`] : []),
   ];
   const advertencias = [
+    ...(menuSinPrecio ? [`${menuSinPrecio} producto(s) del menú sin precio de referencia; margen no verificable`] : []),
+    ...(semanaOperativa && iso(semanaOperativa.fecha_fin) < iso(fechaOperativaHoy()) ? ['La semana abierta ya terminó; revisa su cierre antes de operar la siguiente'] : []),
     ...(sinCategoria ? [`${sinCategoria} producto(s) activo(s) sin categoría`] : []),
     ...(comprasPendientes ? [`${comprasPendientes} compra(s) pendientes de revisión`] : []),
     ...(semanasAbiertas > 1 ? [`Hay ${semanasAbiertas} semanas abiertas simultáneamente`] : []),
@@ -1746,7 +1749,7 @@ export async function saludOperativa(negocioId: bigint) {
   ].filter(Boolean);
   return {
     generado_at: new Date().toISOString(), estado: bloqueadores.length ? 'requiere_atencion' : advertencias.length ? 'operable_con_alertas' : 'saludable',
-    catalogo: { productos_activos: productosActivos, sin_zona: sinZona, sin_categoria: sinCategoria, menu_activo: menuActivo, menu_sin_epos: menuSinEpos, menu_sin_receta: menuSinReceta },
+    catalogo: { productos_activos: productosActivos, sin_zona: sinZona, sin_categoria: sinCategoria, menu_activo: menuActivo, menu_sin_epos: menuSinEpos, menu_sin_receta: menuSinReceta, menu_sin_precio: menuSinPrecio },
     operacion: { compras_pendientes: comprasPendientes, ventas_pendientes: ventasPendientes, semanas_abiertas: semanasAbiertas, snapshots_sin_semana: snapshotsLegado },
     bloqueadores, advertencias,
   };

@@ -33,6 +33,8 @@ export interface LineaCompraValidable extends LineaCompraResumen {
   unidad_compra?: string | null;
   contenido_compra?: number | null;
   costo_unitario?: number | null;
+  cantidad_fuente?: number | null;
+  unidad_fuente?: string | null;
 }
 
 export interface DiscrepanciaCompra {
@@ -93,6 +95,20 @@ export function cantidadBaseDesdePresentacion(input: {
   if (origen === 'kg' && destino === 'g') return cantidad * 1000;
   if (origen === 'l' && destino === 'ml') return cantidad * 1000;
   return null;
+}
+
+/** Misma regla en validación, confirmación y edición. Un peso variable sólo
+ * acepta cantidad base explícita; una presentación por lote nunca hereda
+ * el tamaño del catálogo. Las unidades métricas sí convierten directamente. */
+export function cantidadBaseCompra(linea: Pick<LineaCompraValidable, 'cantidad_base' | 'cantidad_fuente' | 'unidad_fuente' | 'unidad_compra' | 'contenido_compra'>, producto: ProductoReglaCompra) {
+  if (producto.presentacion_modo === 'variable') return linea.cantidad_base ?? null;
+  return cantidadBaseDesdePresentacion({
+    cantidadCompra: linea.cantidad_fuente,
+    unidadCompra: linea.unidad_fuente || linea.unidad_compra || producto.unidad_compra,
+    contenidoPorPresentacion: linea.contenido_compra ?? (producto.presentacion_modo === 'exacta' ? producto.contenido_compra : null),
+    unidadBase: producto.unidad_base,
+    rendimientoUtil: producto.rendimiento_util,
+  }) ?? linea.cantidad_base ?? null;
 }
 
 // Alias de proveedor que históricamente han provocado errores al capturar tickets.
@@ -163,7 +179,10 @@ export function validarDiscrepanciasCompra(total: number, lineas: LineaCompraVal
       return;
     }
     const contenido = Number(linea.contenido_compra ?? producto.contenido_compra ?? 0);
-    if (producto.presentacion_modo === 'por_lote' && (!linea.contenido_compra || Number(linea.contenido_compra) <= 0)) {
+    const origen = normalizarUnidad(linea.unidad_fuente || linea.unidad_compra);
+    const destino = normalizarUnidad(producto.unidad_base);
+    const metricaDirecta = origen === destino || (origen === 'kg' && destino === 'g') || (origen === 'l' && destino === 'ml');
+    if (producto.presentacion_modo === 'por_lote' && (!linea.contenido_compra || Number(linea.contenido_compra) <= 0) && !metricaDirecta) {
       errores.push(discrepancia('PRESENTACION_REQUERIDA', 'error', 'Este producto cambia de tamaño por proveedor o ticket; captura el contenido real de esta compra.', n, producto.name));
     }
     if (producto.presentacion_modo === 'variable' && (!linea.cantidad_base || Number(linea.cantidad_base) <= 0)) {
@@ -209,7 +228,7 @@ export function validarDiscrepanciasCompra(total: number, lineas: LineaCompraVal
   for (const [productId, count] of porProducto) {
     if (count > 1) {
       const producto = productosMap.get(productId);
-      advertencias.push(discrepancia('PRODUCTO_REPETIDO', 'advertencia', `El producto aparece ${count} veces; se consolidará antes de crear el lote FIFO.`, undefined, producto?.name));
+      advertencias.push(discrepancia('PRODUCTO_REPETIDO', 'advertencia', `El producto aparece ${count} veces; cada presentación conservará su lote y costo.`, undefined, producto?.name));
     }
   }
   return { errores, advertencias, valida: errores.length === 0 };

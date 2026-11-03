@@ -36,12 +36,12 @@ export default function Tareas() {
           <button className={tab === 'gestionar' ? 'tab tab--on' : 'tab'} onClick={() => setTab('gestionar')}>Gestionar</button>
         </nav>
       )}
-      <div className="tab-body">{tab === 'hoy' || !esAdmin ? <Hoy /> : <Gestionar />}</div>
+      <div className="tab-body">{tab === 'hoy' || !esAdmin ? <TareasDelDia /> : <Gestionar />}</div>
     </div>
   );
 }
 
-function Hoy() {
+export function TareasDelDia() {
   const [fecha, setFecha] = useState(hoyMx());
   const [dia, setDia] = useState<Dia | null>(null);
   const [cargando, setCargando] = useState(true);

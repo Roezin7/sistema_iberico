@@ -93,6 +93,7 @@ app.use('/api', apiRouter);
 app.use(
   express.static(publicDir, {
     setHeaders: (res, filePath) => {
+      if (filePath.endsWith(`${path.sep}version.json`)) res.setHeader('Cache-Control', 'no-store');
       if (filePath.includes(`${path.sep}assets${path.sep}`)) {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       }
