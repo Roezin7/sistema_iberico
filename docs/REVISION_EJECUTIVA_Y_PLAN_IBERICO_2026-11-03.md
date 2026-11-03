@@ -37,6 +37,8 @@ Esto acredita integridad básica, no exactitud física. Para la semana 44 (26 de
 
 Los diez artículos sin precio son Café americano, Gomitas, Jim Beam Rocas, Shot de 400 Conejos y los servicios de Bacardi, Tequila, 1800, Tequila 8, Dobel y Hacienda. No se infirió el precio vigente de una venta histórica con posibles promociones.
 
+Tras desplegar la entrega se vinculó Servicio Bacardi al ID Epos 4055736. Una segunda revisión consultó directamente los **132 productos de Epos**, usando las credenciales protegidas del servidor, no únicamente las ventas importadas. Se aplicaron siete conciliaciones locales y se separó Shot Jim Beam de Rocas; se conservaron ventas, lotes y costos históricos. Los detalles y las decisiones restantes están al final de este documento.
+
 ## Plan de esta entrega: ejecutado paso a paso
 
 1. **Revisar producción y recuperar una copia comprobable.** Se creó un dump de PostgreSQL 18, se restauró en una base local aislada y se comprobaron sus tablas. El script ahora admite indicar los binarios de PostgreSQL; el cliente 16 instalado por defecto no puede respaldar un servidor 18.
@@ -50,7 +52,7 @@ Los diez artículos sin precio son Café americano, Gomitas, Jim Beam Rocas, Sho
 9. **Corregir evidencia inequívoca.** Dobel Diamante Botella y Servicio Dobel todavía consumían 750 ml pese a la confirmación de 700 ml. Se crearon versiones nuevas vigentes desde el 3 de noviembre; se conservaron las anteriores.
 10. **Verificar y preparar mantenimiento.** Se agregaron controles automáticos de tipos, pruebas y compilación en GitHub Actions, un archivo público de versión de compilación y una auditoría SQL repetible de sólo lectura.
 
-Pruebas observadas: 131/131 en 13 suites; tipos de cliente y compilación de ambos proyectos; prueba de API con compra mixta, validaciones, costos por lote, un solo pago, segundo intento de confirmación, edición, continuación de zonas, ajuste puntual y ventas importadas tarde; navegador sin errores JavaScript ni desborde horizontal a 360/390/1440 px. El borrador de compra conserva datos al recargar y 20 g explícitos permanecen en 20 g. El formulario aparece aproximadamente a 587 px en móvil de 390 px, antes detrás de toda la lista de compras.
+Pruebas observadas: 131/131 en 13 suites; tipos de cliente y compilación de ambos proyectos; prueba de API con compra mixta, validaciones, costos por lote, un solo pago, segundo intento de confirmación, edición, continuación de zonas, ajuste puntual y ventas importadas tarde; navegador sin errores JavaScript ni desborde horizontal a 360/390/1440 px. También se completó en navegador el recorrido captura → revisión explícita → confirmación, exclusivamente en la copia local. El borrador de compra conserva datos al recargar y 20 g explícitos permanecen en 20 g. El formulario aparece aproximadamente a 587 px en móvil de 390 px, antes detrás de toda la lista de compras.
 
 ## Lo ambiguo o incompleto que todavía importa
 
@@ -99,3 +101,36 @@ Cada piloto registra ingreso incremental, insumos, personal adicional, comisione
 Conservar las cuatro secciones actuales. Operación muestra próximos pasos; Abasto recibe y cuenta; Finanzas concilia y cierra; Administración configura. Los detalles técnicos se abren cuando ayudan a decidir. Marketing e IA quedan secundarios hasta que compras, caja e inventario concilien durante dos semanas.
 
 Cada cambio de código debe pasar tipos, pruebas, compilación y una comprobación del flujo afectado. Verificar `/version.json` y `/api/health` después de desplegar. La auditoría se repite con `scripts/auditar-produccion-readonly.sql`; la prueba con escritura sólo acepta una base local cuyo nombre contiene audit/test. El backup y la copia local contienen datos del negocio y no se publican en Git.
+
+## Evidencia de entrega
+
+Código publicado: `93679f4`. El [control de calidad de GitHub Actions](https://github.com/Roezin7/sistema_iberico/actions/runs/41589082341) terminó correctamente. Producción respondió con la nueva salud operativa, cinco vínculos pendientes y el archivo de compilación generado a las 06:20:12 UTC del 3 de noviembre. La imagen actual no informa el hash de Git en ese archivo (`revision=unknown`); la fecha de compilación y las respuestas se contrastaron con la entrega. Exponer el hash exacto requiere pasar SOURCE_COMMIT desde el entorno de despliegue.
+
+## Conciliación directa de Epos y recetas — 3 de noviembre
+
+Esta consulta corrige el alcance de la revisión inicial: sí hay acceso al catálogo remoto completo desde el servidor. No fue necesario pedir al dueño precios que Epos ya proporciona. Sólo se leyó Epos; los cambios se hicieron en Ibérico, en transacción y con ocho entradas de bitácora. La operación está documentada en `server/scripts/conciliar-menu-epos-2026-11-03.mjs`, con vista previa por defecto y comprobación de ID, nombre remoto, precio y ausencia de duplicados activos.
+
+| Artículo | ID Epos vigente | Precio Epos aplicado | Costo FIFO registrado de receta vigente |
+| --- | ---: | ---: | ---: |
+| Café americano | 3978590 | $45 | $4.22 |
+| Shot de 400 Conejos | 2364539 | $70 | $49.85 |
+| Servicio Bacardi | 4055736 | $900 | $350.03 |
+| Servicio Hacienda de Tepa | 2364534 | $700 | $328.85 |
+| Jim Beam Rocas | 3632848 | $80 | $34.62 |
+| Shot Jim Beam whiskey | 4040675 | $70 | $34.62 |
+| Servicio Jim Beam | 4040672 | $830 | $439.00, sólo botella en receta actual |
+| Cuba de Dobel Diamante | 3504178 | $140 | Consultable en menú |
+
+Rocas estaba asociado incorrectamente al shot. Se corrigió y se creó el artículo específico Shot Jim Beam whiskey con la receta de 2 oz confirmada por el propietario, vigente desde el 3 de noviembre. Servicio Jim Beam tenía un ID histórico no incluido en el catálogo actual y precio $600; el SKU vigente es “Servicio Jim Bean ACTUALIZADO”, $830. Cuba Dobel estaba en $110 localmente frente a $140 en Epos. No se recalcularon ventas históricas ni se cambiaron los precios del punto de venta.
+
+**El costo registrado todavía no equivale al costo validado.** Los $350.03 de Bacardi usan la receta de 750 ml y los lotes actuales. El ticket de La Comer del 20 de octubre dice Bacardi y Jim Beam de 700 ml, pero ambas líneas quedaron con 750 ml y 1,500 ml para dos botellas. Dobel también conserva un lote de 750 ml de la compra del 27 de octubre pese a la presentación confirmada de 700 ml. Jim Beam ya tiene consumos; no debe editarse el lote sin una corrección trazable que separe cantidad, valoración y consumos previos. Además, Servicio Jim Beam todavía sólo contiene la botella: no es comparable con los servicios que incluyen mezcladores.
+
+Con los tickets adjuntos, los mezcladores de un servicio cuestan **$145 de reposición**: cinco Topo Chico de 600 ml a $22 ($110) y dos Coca de 450 ml a $17.50 ($35). El FIFO actual de esos mismos 3,000 ml + dos piezas es distinto porque toma primero lotes anteriores. Bacardi de la compra promocionada cuesta $243.75 por botella: **$388.75 por servicio a esos precios de compra**, no utilidad neta ni garantía del costo de cualquier lote futuro. Jim Beam de 700 ml cuesta $439 por botella: $584 con esos mezcladores, sujeto a confirmar que el servicio Jim Beam incluye ese acompañamiento.
+
+Pendientes que sí requieren definición, no buscar nuevamente precios:
+
+- Epos ya tiene 1800 Cristalino Botella (3036870, $1,950), Dobel Diamante Botella (3036867, $1,750) y Tequila 8 Botella (3273776, $1,750). Cada ID ya pertenece al artículo Botella local. Para asociar su Servicio hay que confirmar si es el mismo servicio completo y consolidar los duplicados, o si son dos ofertas distintas. No se duplicaron ID ni se publicaron nuevos productos remotos.
+- Servicio Tequila es un alias genérico local de Tequila Ocho según su propia receta; no existe como SKU independiente en Epos. Debe consolidarse con la decisión anterior, no inventar un ID.
+- Gomitas no aparece en los 132 productos remotos. El ID local 0 no es válido como vínculo Epos. Las dos ventas manuales suman $75 para dos piezas, lo que no acredita un precio vigente único; el costo FIFO sí es $28 por pieza.
+
+Estado tras la conciliación: 101 artículos activos, 1,261/1,261 ventas todavía costeadas, ninguna compra ni venta pendiente; cinco artículos sin precio local (los tres servicios duplicados, el genérico y Gomitas). La salud cuenta cuatro ID nulos; adicionalmente debe considerarse inválido el ID 0 de Gomitas. La falta real de información está ahora delimitada, no resuelta ocultando alertas.

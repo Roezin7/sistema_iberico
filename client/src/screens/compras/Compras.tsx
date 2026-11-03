@@ -141,8 +141,8 @@ export default function Compras({ embebida = false }: { embebida?: boolean }) {
       loading={cargandoSemanas}
       disabled={!semanas.length}
     />}
-    <CapturaRapida key={semana?.id ?? fechaInicial} fechaInicial={semana ? fechaInicial < semana.fecha_inicio ? semana.fecha_inicio : fechaInicial > semana.fecha_fin ? semana.fecha_fin : fechaInicial : fechaInicial} onSaved={() => { if (esAdmin) void cargar(); }} />
-    {esAdmin && semana && <GastoRapido semana={semana} onSaved={() => void cargarTickets()} />}
+    {(!esAdmin || tab === 'tickets') ? <CapturaRapida key={semana?.id ?? fechaInicial} fechaInicial={semana ? fechaInicial < semana.fecha_inicio ? semana.fecha_inicio : fechaInicial > semana.fecha_fin ? semana.fecha_fin : fechaInicial : fechaInicial} onSaved={() => { if (esAdmin) { setTab('pendientes'); void cargar(); } }} /> : <button className="btn-secondary" onClick={() => setTab('tickets')}>Registrar nueva compra</button>}
+    {esAdmin && semana && tab === 'tickets' && <GastoRapido semana={semana} onSaved={() => void cargarTickets()} />}
     {esAdmin && <nav className="tabs">
       <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('tickets'); void cargarTickets(); }}>Historial de entradas</button>
       <button className={tab === 'pendientes' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('pendientes'); void cargar(); }}>Por revisar {pendientesSemana.length ? `(${pendientesSemana.length})` : ''}</button>
