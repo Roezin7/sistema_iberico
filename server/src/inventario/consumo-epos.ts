@@ -5,6 +5,7 @@ import { convertirCantidad } from '../recetas/costeo.js';
 import { consumirFIFO } from './fifo.js';
 import { normalizarNombreEpos } from '../epos/mapeo-menu.js';
 import { filtroConsumoFifoActivo } from './fuentes.js';
+import { referenciaDiaMexico } from './cronologia.js';
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
@@ -170,7 +171,7 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
         select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchases: { select: { recibida_at: true } } },
       })).filter(lote => disponibleParaVenta(lote, venta.fecha)));
     const resultado = consumirFIFO(lotes.map((lote) => ({
-      id: Number(lote.id), recibidoAt: (lote.purchases?.recibida_at ?? lote.recibido_at).toISOString(), cantidadRestante: Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
+      id: Number(lote.id), recibidoAt: (lote.purchases?.recibida_at ?? referenciaDiaMexico(lote.recibido_at)).toISOString(), cantidadRestante: Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
     })), cantidadBase);
     if (resultado.faltante > 0.0001) {
       return { estado: 'excepcion', error: `Inventario insuficiente: ${linea.products.name}; faltan ${resultado.faltante} ${unidadBase}`, costoTotal: 0, consumos: [] };

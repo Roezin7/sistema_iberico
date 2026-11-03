@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { reconstruirZonas, referenciaDiaMexico, instanteReal, type AnclaZona } from './cronologia.js';
+import { consumirFIFO } from './fifo.js';
 const date = (time: string) => new Date(`2026-11-01T${time}:00-06:00`);
 const anchors = (local = '21:00', bodega = '20:00'): AnclaZona[] => [{ zonaId: 1, nombre: 'Local', cantidad: 10, corte: date(local) }, { zonaId: 2, nombre: 'Bodega', cantidad: 20, corte: date(bodega) }];
 describe('cronología física por zona', () => {
@@ -43,5 +44,12 @@ describe('cronología física por zona', () => {
     expect(instanteReal(null)).toBeNull();
     expect(() => instanteReal('no-fecha')).toThrow();
     expect(() => instanteReal(new Date('2030-01-01'), date('20:00'))).toThrow();
+  });
+  it('una recepción conocida de la noche anterior precede al lote legado del día siguiente', () => {
+    const r = consumirFIFO([
+      { id: 1, recibidoAt: referenciaDiaMexico(new Date('2026-11-02T00:00:00Z')).toISOString(), cantidadRestante: 1, costoUnitario: 3 },
+      { id: 2, recibidoAt: date('23:30').toISOString(), cantidadRestante: 1, costoUnitario: 2 },
+    ], 1);
+    expect(r.consumos[0]?.loteId).toBe(2); expect(r.costoTotal).toBe(2);
   });
 });
