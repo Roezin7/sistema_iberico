@@ -36,7 +36,7 @@ export async function valorSnapshotHistorico(db: Db, negocioId: bigint, snapshot
   const byProduct = new Map<string, typeof history>();
   for (const h of history) { const key = h.product_id.toString(); const rows = byProduct.get(key) ?? []; rows.push(h); byProduct.set(key, rows); }
   return Math.round(lines.reduce((sum, l) => {
-    const h = seleccionarCostoHistorico(byProduct.get(l.product_id.toString()) ?? [], snapshot.created_at);
+    const h = seleccionarCostoHistorico(byProduct.get(l.product_id.toString()) ?? [], l.contado_at ?? snapshot.created_at);
     return sum + Number(l.qty_captura) * Number(l.factor) * (costoBaseHistorico(l.products, h) ?? 0);
   }, 0) * 100) / 100;
 }

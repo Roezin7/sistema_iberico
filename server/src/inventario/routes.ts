@@ -9,6 +9,7 @@ import { prepararAperturaFifo } from './apertura-fifo.js';
 import { consumirVentasEpos, costearVentasPendientesEnVivo, estadoFifoEnVivo } from './consumo-epos.js';
 import { actualizarBorradorLineas, cambiarOrigenPagoCompra, confirmarBorradorCompra, crearBorradorCompra, editarCompraConfirmada, listarBorradoresCompra, listarCompras, obtenerCompraConfirmada, obtenerFotoCompra, rechazarBorradorCompra, referenciasCompra, validarCapturaCompra } from './compras-rapidas.js';
 import { listarTransferencias, transferirLote } from './ubicacion-lotes.js';
+import { actualizarRecepcionReal } from './compras-rapidas.js';
 
 export const inventarioRouter = Router();
 
@@ -56,6 +57,7 @@ inventarioRouter.get(
 );
 
 const conteoSchema = z.object({
+  contado_at: z.string().datetime({ offset: true }).nullable().optional(),
   tipo: z.enum(['apertura', 'cierre', 'ajuste']),
   unidad_conteo: z.enum(['captura', 'operativa']).default('captura'),
   semana_id: z.coerce.number().int().positive().nullable().optional(),
@@ -91,6 +93,7 @@ inventarioRouter.post(
       unidad_conteo: body.unidad_conteo,
       semana_id: body.semana_id ?? null,
       continuar_snapshot_id: body.continuar_snapshot_id ?? null,
+      contado_at: body.contado_at,
       motivo: body.motivo,
       nota: body.nota,
       usuario_id: req.auth!.usuarioId,
@@ -133,10 +136,11 @@ inventarioRouter.post('/lotes/:id/transferir', soloAdmin, asyncHandler(async (re
   const loteId = BigInt(z.coerce.number().int().positive().parse(req.params.id));
   const body = z.object({
     zona_destino_id: z.coerce.number().int().positive(),
+    efectiva_at: z.string().datetime({ offset: true }).nullable().optional(),
     fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     motivo: z.string().trim().max(500).optional().nullable(),
   }).parse(req.body);
-  res.status(201).json(await transferirLote({ negocioId: req.auth!.negocioId, loteId, zonaDestinoId: BigInt(body.zona_destino_id), fecha: body.fecha, motivo: body.motivo, usuarioId: req.auth!.usuarioId }));
+  res.status(201).json(await transferirLote({ negocioId: req.auth!.negocioId, loteId, zonaDestinoId: BigInt(body.zona_destino_id), fecha: body.fecha, efectiva_at: body.efectiva_at, motivo: body.motivo, usuarioId: req.auth!.usuarioId }));
 }));
 
 /** POST /inventario/apertura-fifo — materializa el snapshot de apertura como lotes FIFO. */
@@ -151,6 +155,7 @@ inventarioRouter.post(
   soloAdmin,
   asyncHandler(async (req, res) => {
     const body = z.object({
+      recibida_at: z.string().datetime({ offset: true }).nullable().optional(),
       confirmada: z.literal(true),
       fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       proveedor: z.string().trim().min(1).optional().nullable(),
@@ -182,6 +187,7 @@ inventarioRouter.post(
 /** Captura rápida desde celular. Empleados pueden dejarla en revisión; no crea FIFO todavía. */
 inventarioRouter.post('/compras/rapidas', asyncHandler(async (req, res) => {
   const body = z.object({
+    recibida_at: z.string().datetime({ offset: true }).nullable().optional(),
     fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     proveedor: z.string().trim().max(160).optional().nullable(),
     ticket_ref: z.string().trim().max(120).optional().nullable(),
@@ -242,6 +248,12 @@ inventarioRouter.get('/compras/:id/foto', asyncHandler(async (req, res) => {
   const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
   const foto = await obtenerFotoCompra(req.auth!.negocioId, id);
   res.json(foto);
+}));
+
+inventarioRouter.patch('/compras/:id/recepcion', soloAdmin, asyncHandler(async (req, res) => {
+  const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  const body = z.object({ recibida_at: z.string().datetime({ offset: true }).nullable() }).parse(req.body);
+  res.json(await actualizarRecepcionReal(req.auth!.negocioId, req.auth!.usuarioId, id, body.recibida_at));
 }));
 
 inventarioRouter.get('/compras/:id', asyncHandler(async (req, res) => {

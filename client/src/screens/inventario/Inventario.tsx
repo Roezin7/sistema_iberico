@@ -5,6 +5,7 @@ import { Icono } from '../../icons';
 import { Cargando } from '../../ui/Cargando';
 import WeekSelector from '../../components/WeekSelector';
 import Compras from '../compras/Compras';
+import { inputHoraMexico, isoDesdeHoraMexico } from '../../operating';
 
 // --- Tipos de la API ---
 interface Zona { id: number; nombre: string; orden: number }
@@ -27,6 +28,7 @@ interface ProductoActual {
   cantidad_fifo_base: number | null; cantidad_fifo_operativa: number | null;
   valor_fifo_actual: number | null;
   existencia_fisica_base?: number; existencia_fisica_operativa?: number;
+  movimientos_no_cubiertos_base?: number;
   conteo_fisico_base?: number; entradas_posteriores_base?: number; consumos_posteriores_base?: number;
   existencia_fifo_base?: number | null; existencia_fifo_operativa?: number | null;
   diferencia_fifo_vs_fisico_base?: number | null;
@@ -35,7 +37,7 @@ interface ProductoActual {
   costo_fifo_base: number | null; cantidad_con_lote: number; cantidad_sin_lote: number;
   fuente_valoracion: 'fifo' | 'catalogo' | 'mixta' | 'sin_costo';
   categoria_id: number | null; categoria: string | null;
-  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number; unidad_captura?: string }[];
+  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number; unidad_captura?: string; contado_at?: string | null }[];
 }
 
 // Agrupa por categoría, respetando el orden configurado; "Sin categoría" al final.
@@ -71,6 +73,7 @@ function SeccionCategoria({ titulo, count, children }: { titulo: string; count: 
   );
 }
 interface Actual {
+  recepciones_sin_hora?: number[];
   snapshot_id: number | null; fecha: string | null; tipo: string | null; semana_id: number | null; productos: ProductoActual[];
   valor_total: number; valor_fifo_total: number; valor_catalogo_total: number; valor_fifo_actual_total: number;
   fuente_existencia_actual: 'fisico';
@@ -106,6 +109,8 @@ interface ItemCompra {
 interface GrupoCompra { store: string; items: ItemCompra[]; subtotal: number }
 interface ListaCompras { grupos: GrupoCompra[]; total: number }
 interface SnapshotHistorial {
+  oficial_para?: { tipo: string; semana_id: number }[];
+  oficial?: boolean; zonas?: { zona_id: number; contado_at: string }[];
   id: number; tipo: 'apertura' | 'cierre' | 'ajuste' | 'conteo_operativo' | string;
   semana_id: number | null; motivo: string | null; nota: string | null; creado_at: string; lineas: number;
 }
@@ -264,6 +269,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   // snapshot anterior para que Bodega y Local queden asociados.
   const [continuarSnapshotId, setContinuarSnapshotId] = useState<number | null>(null);
   const [zonasGuardadas, setZonasGuardadas] = useState<number[]>([]);
+  const [horasZona, setHorasZona] = useState<Record<number, string>>({});
+  const [cargandoConteo, setCargandoConteo] = useState(false);
   // Durante la operación no se capturan conteos. El flujo válido es abrir,
   // cerrar o documentar un ajuste puntual.
   const [tipo, setTipo] = useState<TipoCaptura>(cierreGuiado ? 'cierre' : 'apertura');
@@ -312,6 +319,22 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       setValores(previos);
     });
   }, []);
+
+  useEffect(() => {
+    if (tipo === 'ajuste' || semanaId == null) { setHorasZona({}); setCargandoConteo(false); return; }
+    let vigente = true;
+    setCargandoConteo(true);
+    api<SnapshotHistorial[]>('/inventario/snapshots?semana_id=' + semanaId).then(rows => {
+      if (!vigente) return;
+      const oficial = rows.find(row => row.oficial_para?.some(c => c.tipo === tipo && c.semana_id === semanaId) || (!row.oficial_para && row.tipo === tipo && row.oficial));
+      setContinuarSnapshotId(oficial?.id ?? null);
+      setZonasGuardadas(oficial?.zonas?.map(z => z.zona_id) ?? []);
+      setHorasZona(Object.fromEntries((oficial?.zonas ?? []).map(z => [z.zona_id, inputHoraMexico(z.contado_at)])));
+      if (oficial) setMsg('Conteo recuperado. Las zonas guardadas conservan su hora; completa las restantes o usa ajuste documentado para corregirlas.');
+    }).catch(e => { if (vigente) setMsg(e instanceof Error ? e.message : 'No se pudo recuperar el conteo.'); })
+      .finally(() => { if (vigente) setCargandoConteo(false); });
+    return () => { vigente = false; };
+  }, [tipo, semanaId]);
 
   useEffect(() => {
     setCierrePreview(null);
@@ -370,7 +393,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         setMsg('Describe el motivo del ajuste (mínimo 5 caracteres).');
         return;
       }
-      const resultado = await api<{ snapshot_id: number }>('/inventario/snapshots', {
+      const resultado = await api<{ snapshot_id: number; contado_at: string }>('/inventario/snapshots', {
         method: 'POST',
         body: {
           lineas,
@@ -379,9 +402,11 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           motivo: motivo.trim() || null,
           unidad_conteo: 'operativa',
           continuar_snapshot_id: continuarSnapshotId,
+          contado_at: isoDesdeHoraMexico(horasZona[zonaActiva] ?? ''),
         },
       });
       setContinuarSnapshotId(resultado.snapshot_id);
+      setHorasZona(prev => ({ ...prev, [zonaActiva]: inputHoraMexico(resultado.contado_at) }));
       setZonasGuardadas((prev) => (prev.includes(zonaActiva) ? prev : [...prev, zonaActiva]));
       // Sólo limpia la zona que acaba de guardarse; así una segunda zona no
       // borra lo que el operador todavía estaba revisando en la primera.
@@ -394,6 +419,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         else onGuardado();
       } else {
         const siguiente = zonas.find((zona) => zona.id !== zonaActiva && !zonasGuardadas.includes(zona.id));
+        if (siguiente) setZonaActiva(siguiente.id);
         setMsg(`${zonas.find((zona) => zona.id === zonaActiva)?.nombre ?? 'Zona'} guardada. Captura ${siguiente?.nombre ?? 'la siguiente zona'} y vuelve a guardar.`);
       }
     } catch (e) {
@@ -408,6 +434,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   return (
     <>
       <section className="inventory-capture-context">
+        {cargandoConteo && <Cargando etiqueta="Recuperando conteo guardado…" />}
         <div className="section-heading"><div><strong>¿Qué estás contando?</strong><p className="muted">Elige el tipo de conteo.</p></div></div>
         {cierreGuiado ? <div className="info-box info-box--compact">
           <strong>Confirmación de cierre de {semanaId ? `la semana ${semanaId}` : 'la semana actual'}</strong>
@@ -439,10 +466,12 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       <div className="zona-tabs">
         {zonas.map((z) => (
           <button key={z.id} className={z.id === zonaActiva ? 'pill pill--on' : 'pill'} onClick={() => setZonaActiva(z.id)}>
-            {z.nombre}
+            {z.nombre}{zonasGuardadas.includes(z.id) ? ' ✓' : ''}
           </button>
         ))}
       </div>
+      {zonaActiva != null && <label>Momento del conteo (México)<input type="datetime-local" value={horasZona[zonaActiva] ?? ''} disabled={zonasGuardadas.includes(zonaActiva) || guardando || cargandoConteo} onChange={e => setHorasZona(prev => ({ ...prev, [zonaActiva]: e.target.value }))} /><small className="muted">Si lo dejas vacío, se usa la hora de guardar esta zona. Las ventas anteriores ya están incluidas; las posteriores sí se descuentan.</small></label>}
+      {zonaActiva != null && zonasGuardadas.includes(zonaActiva) && tipo !== 'ajuste' && <p className="info-box">Esta zona ya está guardada. Para corregirla, elige Ajuste documentado.</p>}
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
         <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>
         {cierreGuiado
@@ -470,11 +499,12 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                   </div>
                   {esBool ? (
                     <div className="bool-toggle">
-                      <button className={valores[key] === '1' ? 'pill pill--on' : 'pill'} onClick={() => setVal(p.id, zonaActiva, '1')}>Sí</button>
-                      <button className={valores[key] === '0' ? 'pill pill--on' : 'pill'} onClick={() => setVal(p.id, zonaActiva, '0')}>No</button>
+                      <button className={valores[key] === '1' ? 'pill pill--on' : 'pill'} disabled={tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva)} onClick={() => setVal(p.id, zonaActiva, '1')}>Sí</button>
+                      <button className={valores[key] === '0' ? 'pill pill--on' : 'pill'} disabled={tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva)} onClick={() => setVal(p.id, zonaActiva, '0')}>No</button>
                     </div>
                   ) : (
                     <input
+                      disabled={tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva)}
                       className="conteo-input"
                       data-conteo-input="true"
                       type="number"
@@ -500,7 +530,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         <button className="btn-secondary" onClick={() => setValores({})} disabled={guardando || capturados === 0}>
           Limpiar
         </button>
-        <button className="btn-primary" onClick={guardar} disabled={guardando}>
+        <button className="btn-primary" onClick={guardar} disabled={guardando || cargandoConteo || (tipo !== 'ajuste' && zonaActiva != null && zonasGuardadas.includes(zonaActiva))}>
           {guardando ? 'Guardando…' : cierreGuiado ? `Guardar ${zonas.find((zona) => zona.id === zonaActiva)?.nombre ?? 'zona'} y continuar` : `Guardar ${zonas.find((zona) => zona.id === zonaActiva)?.nombre ?? 'zona'}`}
         </button>
       </div>
@@ -676,6 +706,7 @@ function InventarioActual() {
   const bajoMinimo = data.productos.filter((p) => existenciaOperativaProducto(p) < minimoOperativoProducto(p)).length;
   const sinExistencia = data.productos.filter((p) => existenciaOperativaProducto(p) <= 0).length;
   const entradasRegistradas = data.productos.filter((p) => (p.entradas_posteriores_base ?? 0) > 0).length;
+  const cortesZona = [...new Map(data.productos.flatMap(p => p.por_zona).filter(z => z.contado_at).map(z => [z.zona_id, z])).values()];
 
   return (
     <>
@@ -683,6 +714,7 @@ function InventarioActual() {
         <div className="inventory-overview__head">
           <div><span className="eyebrow">Existencia actual</span><strong className="big-number">{mxn(data.valor_total)}</strong></div>
           <span className="chip chip--ok">Fuente: físico + movimientos</span>
+          {!!data.recepciones_sin_hora?.length && <p role="status">Hay {data.recepciones_sin_hora.length} compra(s) del día del conteo sin hora real de llegada. Confírmala en Compras para distinguir si ya estaban contadas.</p>}
         </div>
         <div className="inventory-overview__values">
           <div><small>Productos</small><strong>{data.productos.length}</strong></div>
@@ -694,6 +726,7 @@ function InventarioActual() {
         <small className="muted">
           {data.fecha ? `Último registro: ${new Date(data.fecha).toLocaleString('es-MX')} · ${data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'histórico'}${data.semana_id ? ` · semana ${data.semana_id}` : ''}` : 'Sin registros aún'}
         </small>
+        <details><summary>Cortes por zona (México)</summary>{cortesZona.map(z => <p key={z.zona_id}>{z.zona}: {inputHoraMexico(z.contado_at).replace('T', ' ')}</p>)}</details>
         <small className="muted">Parte del último conteo y aplica entradas confirmadas y consumos registrados. FIFO queda como auditoría.</small>
       </div>
       {data.sin_costo.length > 0 && (
@@ -731,6 +764,7 @@ function InventarioActual() {
                   <div className="stock-row__value"><strong>{mxn(valorActual)}</strong><small>valor físico</small></div>
                   {(tieneMovimiento || tieneBrecha) && <div className="stock-row__audit">
                     {tieneMovimiento && <span>Desde el último conteo: {tieneEntrada ? `+${formatoCantidad(p.entradas_posteriores_base)} base en entradas` : ''}{tieneEntrada && (p.consumos_posteriores_base ?? 0) > 0 ? ' · ' : ''}{(p.consumos_posteriores_base ?? 0) > 0 ? `−${formatoCantidad(p.consumos_posteriores_base)} base en consumos` : ''}</span>}
+                    {(p.movimientos_no_cubiertos_base ?? 0) > 0 && <span>Revisar movimientos: {formatoCantidad(p.movimientos_no_cubiertos_base)} {p.unidad_base} sin saldo físico suficiente en su momento.</span>}
                     {tieneBrecha && <><span>FIFO esperado: {formatoCantidad(cantidadFifo)} {pluralUnidad(p.unidad_operativa, cantidadFifo)}</span><span>Brecha: {formatoCantidad(p.diferencia_fifo_vs_fisico_base ?? 0)} base{p.cantidad_sin_lote > 0 ? ' · parte sin lote' : ''}</span></>}
                   </div>}
                 </li>;

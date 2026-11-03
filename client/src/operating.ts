@@ -26,6 +26,14 @@ export function todayMexico(): string {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
 }
 
+/** datetime-local siempre representa México, no la zona del dispositivo. */
+export function inputHoraMexico(iso: string | null | undefined): string {
+  return iso ? new Date(iso).toLocaleString('sv-SE', { timeZone: 'America/Mexico_City', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).replace(' ', 'T') : '';
+}
+export function isoDesdeHoraMexico(input: string): string | null {
+  return input ? new Date(`${input}-06:00`).toISOString() : null;
+}
+
 export function formatNumber(value: number | null | undefined, maximumFractionDigits = 3): string {
   if (value == null || !Number.isFinite(value)) return '—';
   return value.toLocaleString('es-MX', { maximumFractionDigits });

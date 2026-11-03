@@ -20,6 +20,7 @@ type CachedMenu = {
   nombre: string;
   epos_product_id: number | null;
   recetas: {
+    vigente_desde: Date | null;
     lineas: {
       product_id: bigint;
       cantidad: Prisma.Decimal;
@@ -30,6 +31,7 @@ type CachedMenu = {
 };
 
 type CachedLot = {
+  purchases?: { recibida_at: Date | null } | null;
   id: bigint;
   product_id?: bigint;
   recibido_at: Date;
@@ -96,6 +98,10 @@ function finDelDia(value: Date) {
   return new Date(`${fecha}T23:59:59.999Z`);
 }
 
+function disponibleParaVenta(lote: CachedLot, venta: Date) {
+  return lote.purchases?.recibida_at ? lote.purchases.recibida_at <= venta : lote.recibido_at <= finDelDia(venta);
+}
+
 async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date }, context?: PlanContext): Promise<PlanConsumo> {
   const previo = context
     ? context.consumedVentaIds.has(venta.id.toString())
@@ -111,7 +117,7 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
 
   const includeReceta = {
     recetas: {
-      where: { estado: 'validada', OR: [{ vigente_desde: null }, { vigente_desde: { lte: venta.fecha } }] },
+      where: { estado: 'validada', OR: [{ vigente_desde: null }, { vigente_desde: { lte: fechaDb(venta.fecha) } }] },
       orderBy: { version: 'desc' as const },
       take: 1,
       include: { lineas: { include: { products: { select: { id: true, name: true, unidad_base: true } } } } },
@@ -136,7 +142,7 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
     ? context.menus.find((candidate) => normalizarNombreEpos(candidate.nombre) === normalizarNombreEpos(venta.producto_nombre)) ?? null
     : (await client.productos_menu.findMany({ where: { negocio_id: negocioId, activo: true }, include: includeReceta })).find((candidate) => normalizarNombreEpos(candidate.nombre) === normalizarNombreEpos(venta.producto_nombre)) ?? null);
   if (!menu) return { estado: 'excepcion', error: `Producto Epos sin mapeo: ${venta.producto_nombre}`, costoTotal: 0, consumos: [] };
-  const receta = menu.recetas[0];
+  const receta = menu.recetas.find(r => r.vigente_desde == null || r.vigente_desde.toISOString().slice(0, 10) <= fechaISO(venta.fecha));
   // Una receta todavía no validada es un pendiente de configuración, no una
   // excepción operativa. Las excepciones deben reservarse para un mapeo
   // inexistente o una existencia FIFO realmente insuficiente.
@@ -157,14 +163,14 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
     // que una compra capturada con fecha futura tape artificialmente un faltante
     // histórico cuando el costeo se reintenta en vivo.
     const lotes = context
-      ? seleccionarLotesOperativos((context.lotsByProduct.get(linea.product_id.toString()) ?? []).filter((lote) => lote.recibido_at <= finDelDia(venta.fecha)))
-      : seleccionarLotesOperativos(await client.inventory_lots.findMany({
-        where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 }, recibido_at: { lte: finDelDia(venta.fecha) } },
+      ? seleccionarLotesOperativos((context.lotsByProduct.get(linea.product_id.toString()) ?? []).filter((lote) => disponibleParaVenta(lote, venta.fecha)))
+      : seleccionarLotesOperativos((await client.inventory_lots.findMany({
+        where: { negocio_id: negocioId, product_id: linea.product_id, estado: 'abierto', cantidad_restante: { gt: 0 } },
         orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
-        select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true },
-      }));
+        select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchases: { select: { recibida_at: true } } },
+      })).filter(lote => disponibleParaVenta(lote, venta.fecha)));
     const resultado = consumirFIFO(lotes.map((lote) => ({
-      id: Number(lote.id), recibidoAt: fechaISO(lote.recibido_at), cantidadRestante: Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
+      id: Number(lote.id), recibidoAt: (lote.purchases?.recibida_at ?? lote.recibido_at).toISOString(), cantidadRestante: Number(lote.cantidad_restante), costoUnitario: Number(lote.costo_unitario),
     })), cantidadBase);
     if (resultado.faltante > 0.0001) {
       return { estado: 'excepcion', error: `Inventario insuficiente: ${linea.products.name}; faltan ${resultado.faltante} ${unidadBase}`, costoTotal: 0, consumos: [] };
@@ -182,12 +188,11 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
       recetas: {
         where: { estado: 'validada' },
         orderBy: { version: 'desc' },
-        take: 1,
-        select: { lineas: { select: { product_id: true, cantidad: true, unidad: true, products: { select: { name: true, unidad_base: true } } } } },
+        select: { vigente_desde: true, lineas: { select: { product_id: true, cantidad: true, unidad: true, products: { select: { name: true, unidad_base: true } } } } },
       },
     },
   }) as CachedMenu[];
-  const productIds = [...new Set(menus.flatMap((menu) => menu.recetas[0]?.lineas.map((linea) => linea.product_id.toString()) ?? []))].map(BigInt);
+  const productIds = [...new Set(menus.flatMap((menu) => menu.recetas.flatMap(r => r.lineas.map(linea => linea.product_id.toString()))))].map(BigInt);
   const lots = productIds.length ? await client.inventory_lots.findMany({
     where: {
       negocio_id: negocioId,
@@ -196,7 +201,7 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
       cantidad_restante: { gt: 0 },
     },
     orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
-    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true },
+    select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true, purchases: { select: { recibida_at: true } } },
   }) : [];
   const consumed = await client.inventory_consumptions.findMany({
     where: {
@@ -449,24 +454,25 @@ export async function estadoFifoEnVivo(negocioId: bigint) {
  * reinicie la existencia de las semanas anteriores.
  */
 export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date, modo: ModoCosteo = 'normal') {
-  const lotes = await prisma.inventory_lots.findMany({
+  const candidatos = await prisma.inventory_lots.findMany({
     where: {
       negocio_id: negocioId,
-      recibido_at: { lte: fechaCorte },
       estado: { in: ['abierto', 'agotado'] },
       ...(modo === 'historico_prueba' ? { fuente: 'historico_prueba' as const } : {}),
     },
-    select: { id: true, product_id: true, cantidad_inicial: true, costo_unitario: true, fuente: true },
+    select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true, fuente: true, purchases: { select: { recibida_at: true } } },
   });
+  const lotes = candidatos.filter(l => (l.purchases?.recibida_at ?? l.recibido_at) <= fechaCorte);
   const lotesSeleccionados = [...new Set(lotes.map((lote) => lote.product_id.toString()))]
     .flatMap((productId) => seleccionarLotesOperativos(lotes.filter((lote) => lote.product_id.toString() === productId), modo));
   if (!lotesSeleccionados.length) return { valor: 0, unidades: 0, lotes: 0 };
   const consumos = await prisma.inventory_consumptions.findMany({
     where: { negocio_id: negocioId, fecha: { lte: fechaCorte }, lote_id: { in: lotesSeleccionados.map((lote) => lote.id) }, ...filtroConsumoFifoActivo({ incluirAjustes: true }) },
-    select: { lote_id: true, cantidad: true },
+    select: { lote_id: true, cantidad: true, epos_venta: { select: { fecha: true } } },
   });
   const consumido = new Map<string, number>();
   for (const consumo of consumos) {
+    if (consumo.epos_venta && consumo.epos_venta.fecha > fechaCorte) continue;
     const key = consumo.lote_id.toString();
     consumido.set(key, (consumido.get(key) ?? 0) + Number(consumo.cantidad));
   }

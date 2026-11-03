@@ -9,6 +9,8 @@ import { redondear } from './logic.js';
 import { asegurarFacturasBanco, mesDeFecha } from '../facturacion/service.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 import { registrarPresentacionesObservadas } from './presentaciones.js';
+import { instanteReal } from './cronologia.js';
+import { filtroConsumoFifoActivo } from './fuentes.js';
 
 export type CapturaCompraLinea = {
   product_id?: bigint | null;
@@ -26,6 +28,7 @@ export type CapturaCompraLinea = {
 };
 
 export type CapturaCompraInput = {
+  recibida_at?: string | null;
   fecha_recepcion: string;
   proveedor?: string | null;
   ticket_ref?: string | null;
@@ -80,6 +83,27 @@ export async function validarCapturaCompra(negocioId: bigint, total: number, lin
   })));
 }
 
+/** Cambia únicamente la evidencia temporal de llegada, nunca pagos ni lotes. */
+export async function actualizarRecepcionReal(negocioId: bigint, usuarioId: bigint, purchaseId: bigint, valor: string | null) {
+  const recibida = instanteReal(valor);
+  return prisma.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM purchases WHERE id = ${purchaseId} AND negocio_id = ${negocioId} FOR UPDATE`;
+    const compra = await tx.purchases.findFirst({ where: { id: purchaseId, negocio_id: negocioId } });
+    if (!compra || !['revision', 'borrador', 'confirmada'].includes(compra.estado)) throw new HttpError(404, 'Compra editable no encontrada');
+    await tx.$queryRaw`SELECT id FROM inventory_lots WHERE purchase_id = ${purchaseId} AND negocio_id = ${negocioId} FOR UPDATE`;
+    if (recibida) {
+      const consumoAnterior = await tx.inventory_consumptions.findFirst({ where: { negocio_id: negocioId, lote: { purchase_id: purchaseId }, ...filtroConsumoFifoActivo(), epos_venta: { fecha: { lt: recibida } } }, select: { id: true } });
+      if (consumoAnterior) throw new HttpError(409, 'La hora indicada es posterior a una venta ya costeada con esta compra. Revisa esa venta antes de cambiar la recepción.');
+      const trasladoAnterior = await tx.inventory_lot_transfers.findFirst({ where: { negocio_id: negocioId, lote: { purchase_id: purchaseId }, efectiva_at: { lt: recibida } }, select: { id: true } });
+      if (trasladoAnterior) throw new HttpError(409, 'La hora indicada es posterior a un traslado de esta compra. Revisa el traslado antes de cambiar la recepción.');
+    }
+    if (compra.recibida_at?.getTime() === recibida?.getTime() || !compra.recibida_at && !recibida) return { purchase_id: Number(purchaseId), recibida_at: recibida?.toISOString() ?? null };
+    await tx.purchases.update({ where: { id: purchaseId }, data: { recibida_at: recibida } });
+    await registrarAuditoria({ negocioId, usuarioId, entidad: 'compra', entidadId: purchaseId, accion: 'corregir_hora_recepcion', antes: { recibida_at: compra.recibida_at }, despues: { recibida_at: recibida }, metadata: { fecha_pago_sin_cambio: true, sin_recosteo_historico: true } }, tx);
+    return { purchase_id: Number(purchaseId), recibida_at: recibida?.toISOString() ?? null };
+  });
+}
+
 function fechaUTC(fecha: string): Date {
   const value = new Date(`${fecha}T00:00:00.000Z`);
   if (Number.isNaN(value.getTime())) throw new HttpError(400, 'Fecha de compra inválida');
@@ -112,6 +136,7 @@ export async function crearBorradorCompra(negocioId: bigint, usuarioId: bigint, 
     throw new HttpError(400, 'El total y las líneas deben tener valores válidos');
   }
   const fecha = fechaUTC(input.fecha_recepcion);
+  const recibidaAt = instanteReal(input.recibida_at);
   const ticket = input.ticket_ref?.trim() || null;
   const foto = validarFoto(input.foto_data, input.foto_mime);
   await validarOrigen(negocioId, input.origen_pago_id);
@@ -127,6 +152,7 @@ export async function crearBorradorCompra(negocioId: bigint, usuarioId: bigint, 
     const compra = await tx.purchases.create({
       data: {
         negocio_id: negocioId, fecha_recepcion: fecha, proveedor: input.proveedor?.trim() || null,
+        recibida_at: recibidaAt,
         ticket_ref: ticket, total: input.total, moneda: input.moneda ?? 'MXN', fuente: input.tipo_documento === 'orden_manuscrita' ? 'orden_manuscrita' : 'ticket_movil',
         notas: input.notas?.trim() || null, estado: 'revision', foto_data: foto?.data ?? null,
         foto_mime: foto?.mime ?? null, foto_hash: foto?.hash ?? null, origen_pago_id: input.origen_pago_id ?? null,
@@ -153,7 +179,7 @@ export async function listarBorradoresCompra(negocioId: bigint) {
     orderBy: [{ fecha_recepcion: 'desc' }, { id: 'desc' }],
   });
   return filas.map((f) => ({
-    id: Number(f.id), fecha_recepcion: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor,
+    id: Number(f.id), fecha_recepcion: f.fecha_recepcion.toISOString().slice(0, 10), recibida_at: f.recibida_at?.toISOString() ?? null, proveedor: f.proveedor,
     ticket_ref: f.ticket_ref, total: f.total == null ? null : Number(f.total), fuente: f.fuente, estado: f.estado, foto: !!f.foto_data, notas: f.notas,
     origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null,
     lineas: f.capture_lines.map((l) => ({ id: Number(l.id), product_id: l.product_id ? Number(l.product_id) : null,
@@ -202,7 +228,7 @@ export async function listarCompras(negocioId: bigint, fecha?: string) {
   const where: { negocio_id: bigint; fecha_recepcion?: Date } = { negocio_id: negocioId };
   if (fecha) where.fecha_recepcion = fechaUTC(fecha);
   const filas = await prisma.purchases.findMany({ where, include: { purchase_lines: { include: { products: { select: { name: true, unidad_base: true } } } }, capture_lines: true, movimientos: { select: { tipo: true, monto: true } }, origen_pago: { select: { nombre: true } } }, orderBy: [{ fecha_recepcion: 'desc' }, { id: 'desc' }] });
-  return filas.map((f) => ({ id: Number(f.id), fecha: f.fecha_recepcion.toISOString().slice(0, 10), proveedor: f.proveedor, ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), fuente: f.fuente, estado: f.estado, foto: !!f.foto_data, origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null, origen_pago: f.origen_pago?.nombre ?? null, movimientos: f.movimientos.map((m) => ({ tipo: m.tipo, monto: Number(m.monto) })), lineas: [...f.purchase_lines.map((l) => ({ id: `${f.id}-${l.product_id}`, tipo: 'inventario', producto: l.products.name, product_id: Number(l.product_id), cantidad_base: Number(l.qty), costo_unitario: Number(l.costo_unitario), importe: Number(l.importe ?? 0) })), ...f.capture_lines.filter((l) => l.tipo_linea === 'gasto').map((l) => ({ id: Number(l.id), tipo: 'gasto', producto: l.descripcion_fuente, product_id: l.product_id ? Number(l.product_id) : null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) }))] }));
+  return filas.map((f) => ({ id: Number(f.id), fecha: f.fecha_recepcion.toISOString().slice(0, 10), recibida_at: f.recibida_at?.toISOString() ?? null, proveedor: f.proveedor, ticket_ref: f.ticket_ref, total: Number(f.total ?? 0), fuente: f.fuente, estado: f.estado, foto: !!f.foto_data, origen_pago_id: f.origen_pago_id ? Number(f.origen_pago_id) : null, origen_pago: f.origen_pago?.nombre ?? null, movimientos: f.movimientos.map((m) => ({ tipo: m.tipo, monto: Number(m.monto) })), lineas: [...f.purchase_lines.map((l) => ({ id: `${f.id}-${l.product_id}`, tipo: 'inventario', producto: l.products.name, product_id: Number(l.product_id), cantidad_base: Number(l.qty), costo_unitario: Number(l.costo_unitario), importe: Number(l.importe ?? 0) })), ...f.capture_lines.filter((l) => l.tipo_linea === 'gasto').map((l) => ({ id: Number(l.id), tipo: 'gasto', producto: l.descripcion_fuente, product_id: l.product_id ? Number(l.product_id) : null, cantidad_base: l.cantidad_base == null ? null : Number(l.cantidad_base), costo_unitario: l.costo_unitario == null ? null : Number(l.costo_unitario), importe: Number(l.importe) }))] }));
 }
 
 export async function obtenerCompraConfirmada(negocioId: bigint, purchaseId: bigint) {
@@ -216,7 +242,7 @@ export async function obtenerCompraConfirmada(negocioId: bigint, purchaseId: big
   });
   if (!compra) throw new HttpError(404, 'Compra no encontrada');
   return {
-    id: Number(compra.id), fecha_recepcion: compra.fecha_recepcion.toISOString().slice(0, 10), proveedor: compra.proveedor,
+    id: Number(compra.id), fecha_recepcion: compra.fecha_recepcion.toISOString().slice(0, 10), recibida_at: compra.recibida_at?.toISOString() ?? null, proveedor: compra.proveedor,
     ticket_ref: compra.ticket_ref, total: Number(compra.total ?? 0), fuente: compra.fuente, estado: compra.estado,
     origen_pago_id: compra.origen_pago_id ? Number(compra.origen_pago_id) : null,
     origen_pago: compra.origen_pago?.nombre ?? null,

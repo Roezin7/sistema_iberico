@@ -43,16 +43,16 @@ try {
   const foreign = await request(`/inventario/compras/${pid}`, 'PATCH', {total:100,lineas:[{...linea(600,2,100),product_id:999999}]});assert.equal(foreign.status,400);
   const before = (await request('/inventario/current?vista=fisica')).body;
   const unrelatedBefore = before.productos.find((p: any) => p.product_id === 1).existencia_actual_base;
-  const local = await request('/inventario/snapshots','POST',{tipo:'ajuste',semana_id:74,motivo:'Verificación local de tamaños mezclados',unidad_conteo:'operativa',lineas:[{product_id:27,zona_id:1,qty_captura:1.2,cantidad_base:1200},{product_id:41,zona_id:1,qty_captura:0.45,cantidad_base:450}]});assert.equal(local.status,201,JSON.stringify(local.body));
+  const local = await request('/inventario/snapshots','POST',{tipo:'ajuste',semana_id:74,contado_at:new Date(Date.now()-5000).toISOString(),motivo:'Verificación local de tamaños mezclados',unidad_conteo:'operativa',lineas:[{product_id:27,zona_id:1,qty_captura:1.2,cantidad_base:1200},{product_id:41,zona_id:1,qty_captura:0.45,cantidad_base:450}]});assert.equal(local.status,201,JSON.stringify(local.body));
   const peso=await prisma.inventory_lines.findUniqueOrThrow({where:{snapshot_id_product_id_zona_id:{snapshot_id:BigInt(local.body.snapshot_id),product_id:41n,zona_id:1n}}});assert.equal(Number(peso.qty_captura)*Number(peso.factor),450,'Peso explícito no pierde precisión por la presentación');
-  const bodega = await request('/inventario/snapshots','POST',{tipo:'ajuste',semana_id:74,motivo:'Continuación de verificación local',unidad_conteo:'operativa',continuar_snapshot_id:local.body.snapshot_id,lineas:[{product_id:27,zona_id:2,qty_captura:1.7,cantidad_base:1700}]});assert.equal(bodega.status,201,JSON.stringify(bodega.body));
+  const bodega = await request('/inventario/snapshots','POST',{tipo:'ajuste',semana_id:74,contado_at:new Date(Date.now()-3000).toISOString(),motivo:'Continuación de verificación local',unidad_conteo:'operativa',continuar_snapshot_id:local.body.snapshot_id,lineas:[{product_id:27,zona_id:2,qty_captura:1.7,cantidad_base:1700}]});assert.equal(bodega.status,201,JSON.stringify(bodega.body));
   const snapshot = await prisma.inventory_snapshot.findUniqueOrThrow({where:{id:BigInt(bodega.body.snapshot_id)}});
   const after = (await request('/inventario/current?vista=fisica')).body;
   assert.equal(after.productos.find((p: any) => p.product_id===27).existencia_actual_base,2900);
   assert.equal(after.productos.find((p: any) => p.product_id===1).existencia_actual_base,unrelatedBefore,'Un ajuste puntual conserva los demás productos');
   const imp=await prisma.epos_importaciones.findFirstOrThrow();
-  for(const [name,offset] of [['antes',-1000],['después',1000]] as const){
-    const fecha=new Date(snapshot.created_at.getTime()+offset);
+  for(const [name,offset] of [['antes',-6000],['después',1000]] as const){
+    const fecha=new Date(new Date(bodega.body.contado_at).getTime()+offset);
     const sale=await prisma.epos_ventas.create({data:{negocio_id:1n,importacion_id:imp.id,clave:`${id}-${name}`,fecha,producto_nombre:'Agua Mineral QA',cantidad:1,venta_bruta:0,metodo_pago:'Cash',costeo_estado:'costeada',costo_fifo:1}});
     const date=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Mexico_City'}).format(fecha);
     await prisma.inventory_consumptions.create({data:{negocio_id:1n,product_id:27n,lote_id:lots[0]!.id,epos_venta_id:sale.id,fecha:new Date(date+'T12:00:00Z'),cantidad:50,costo_unitario:0.02,costo_total:1,fuente:'venta_receta'}});

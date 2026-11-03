@@ -6,6 +6,7 @@ import { asegurarFacturasBanco } from '../facturacion/service.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 import { registrarPresentacionesObservadas } from './presentaciones.js';
 import { validarDiscrepanciasCompra } from './compras-rapidas-logic.js';
+import { instanteReal } from './cronologia.js';
 
 export interface LineaCompraInput {
   product_id: bigint;
@@ -17,6 +18,7 @@ export interface LineaCompraInput {
 }
 
 export interface CompraInput {
+  recibida_at?: string | null;
   fecha_recepcion: string;
   proveedor?: string | null;
   ticket_ref?: string | null;
@@ -103,6 +105,7 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
       data: {
         negocio_id: negocioId,
         fecha_recepcion: fecha,
+        recibida_at: instanteReal(input.recibida_at),
         proveedor: input.proveedor?.trim() || null,
         ticket_ref: ticketRef,
         total: input.total ?? totalCalculado,
