@@ -133,4 +133,52 @@ Pendientes que sí requieren definición, no buscar nuevamente precios:
 - Servicio Tequila es un alias genérico local de Tequila Ocho según su propia receta; no existe como SKU independiente en Epos. Debe consolidarse con la decisión anterior, no inventar un ID.
 - Gomitas no aparece en los 132 productos remotos. El ID local 0 no es válido como vínculo Epos. Las dos ventas manuales suman $75 para dos piezas, lo que no acredita un precio vigente único; el costo FIFO sí es $28 por pieza.
 
-Estado tras la conciliación: 101 artículos activos, 1,261/1,261 ventas todavía costeadas, ninguna compra ni venta pendiente; cinco artículos sin precio local (los tres servicios duplicados, el genérico y Gomitas). La salud cuenta cuatro ID nulos; adicionalmente debe considerarse inválido el ID 0 de Gomitas. La falta real de información está ahora delimitada, no resuelta ocultando alertas.
+Estado tras la conciliación inicial, antes de confirmar la unificación: 101 artículos activos, 1,261/1,261 ventas todavía costeadas, ninguna compra ni venta pendiente; cinco artículos sin precio local (los tres servicios duplicados, el genérico y Gomitas). La salud contaba cuatro ID nulos; adicionalmente debe considerarse inválido el ID 0 de Gomitas.
+
+### Unificación confirmada y aplicada en producción
+
+El propietario confirmó explícitamente que 1800 Cristalino Botella, Dobel Diamante Botella y Tequila 8 Botella son los servicios completos. Se conservaron esos tres registros como principales, con sus ID Epos y precios vigentes, y se desactivaron (sin borrar) los tres duplicados locales llamados Servicio. Los nombres principales coinciden con Epos; sus recetas y notas especifican que incluyen el servicio completo.
+
+| Principal activo | ID Epos | Precio | Receta vigente desde el 3 de noviembre |
+| --- | ---: | ---: | --- |
+| 1800 Cristalino Botella | 3036870 | $1,950 | 700 ml de 1800 + 3,000 ml de mineral + 2 Coca |
+| Dobel Diamante Botella | 3036867 | $1,750 | 700 ml de Dobel + 3,000 ml de mineral + 2 Coca |
+| Tequila 8 Botella | 3273776 | $1,750 | 1 botella de Tequila Ocho + 3,000 ml de mineral + 2 Coca |
+
+Cada receta especifica cinco minerales de 600 ml y dos refrescos de 450 ml. Se crearon tres versiones nuevas y tres eventos de bitácora, conservando íntegramente las versiones anteriores. La comprobación comparó huellas completas antes/después: las 1,261 ventas, 1,082 lotes, 6,446 consumos y 1,283 movimientos permanecieron sin cambios. Una segunda ejecución no creó recetas ni eventos adicionales. La API de producción muestra los tres principales con sus tres ingredientes, sin duplicados activos ni ID repetidos.
+
+Estado actual: 98 artículos activos, dos precios pendientes (Servicio Tequila genérico y Gomitas) y un ID nulo (Servicio Tequila); Gomitas conserva el ID 0 inválido ya señalado. El alias genérico no se retiró como parte de la autorización de estos tres servicios. El FIFO vigente devuelve $1,049.64 para 1800 y $898.06 para Dobel, todavía sujeto a las discrepancias de lotes documentadas. Para Tequila Ocho no alcanza el FIFO de una botella: falta 0.75 pieza; no se creó existencia ficticia para cubrirla.
+
+Operación repetible: `server/scripts/unificar-servicios-tequila-2026-11-03.mjs` (vista previa por defecto; `--apply` valida y aplica localmente en transacción, con Epos sólo de lectura).
+
+### Correcciones de entradas y acuerdos posteriores del propietario
+
+Se corrigieron tres entradas con sus importes originales, sin tocar pagos ni volver a descontar consumos:
+
+| Entrada | Cantidad anterior | Cantidad corregida | Saldo del lote tras corregir | Importe conservado |
+| --- | ---: | ---: | ---: | ---: |
+| Bacardi, compra #91 | 1,500 ml | 1,400 ml (2 × 700) | 1,400 ml | $487.50 |
+| Jim Beam, compra #91 | 1,500 ml | 1,400 ml (2 × 700) | 1,281.706 ml | $878.00 |
+| Dobel, compra #99 | 750 ml | 700 ml | 700 ml | $849.00 |
+
+Jim Beam conserva exactamente los 118.294 ml ya consumidos. Las dos ventas anteriores conservan sus costos; la diferencia de costo histórica no reexpresada es **$4.9458** y está explícita en la bitácora del lote #1242. No se inventó un gasto en efectivo para absorberla ni se reabrió una semana cerrada. Esta diferencia queda como conciliación de valoración, separada de los $315.50 de Caja.
+
+Bacardi y Jim Beam ahora exigen contenido por compra, porque la evidencia demuestra que no se debe asumir 750 ml para cualquier botella. El catálogo de referencia y las futuras unidades de captura usan 700 ml; los factores guardados en conteos históricos permanecen intactos. La interpretación física de aquellos conteos requiere validación del operador; cambiar el catálogo no convierte retroactivamente una medición antigua en un conteo verificado de 700 ml.
+
+Servicio Bacardi y Servicio Jim Beam tienen nuevas versiones prospectivas: botella de 700 ml + cinco minerales de 600 ml + dos Coca de 450 ml. Las versiones anteriores se conservaron. Los otros tres servicios de tequila mantienen la unificación aprobada.
+
+El propietario confirmó **Gomitas a $35** y pidió **desactivar Servicio Tequila genérico**: ambas acciones están aplicadas con bitácora, sin reescribir ventas anteriores. Gomitas tiene costo FIFO $28 y margen bruto de insumos $7 (20% del precio), antes de personal, comisiones y otros gastos. Sigue sin existir como SKU independiente en el catálogo remoto; no se inventó un ID.
+
+El propietario indicó dejar **el cierre financiero pendiente**, porque aún espera la liquidación bancaria y refiere el feriado. Semana 44 sigue abierta. No se registró Banco teórico como arqueo real ni se dio por explicado el sobrante de Caja por ese motivo. Caja Fuerte Mauri también sigue pendiente de confirmación.
+
+El último cierre físico registrado tiene **Tequila Ocho en cero, Local y Bodega**. El saldo FIFO de 0.25 botella es una discrepancia de auditoría, no evidencia para agregar 0.75 botella ni una compra inexistente.
+
+#### Protección de valoración histórica
+
+Se detectó una falla adicional: el costo histórico conservaba precio, pero dividía entre la presentación actual. Cambiar 750 a 700 ml podía revaluar un cierre anterior aunque su conteo no se hubiera editado. La referencia histórica ahora conserva precio, contenido, unidad, fuente y hora efectiva. La edición del catálogo guarda el antes y después dentro de la misma transacción. La valoración de snapshots y los ajustes documentados comparten esta lógica.
+
+Para las correcciones ya aplicadas se recuperó el formato anterior desde su bitácora. La referencia inicial de catálogo usa una vigencia técnica de inicio, identificada expresamente como **referencia legada, no ticket ni compra**, y no altera la fecha de ninguna compra. Los costos desconocidos permanecen desconocidos; no se sustituyen por el precio actual.
+
+Verificación: **139 pruebas en 15 suites**, tipos y compilación; integración con rollback para cambio de precio/formato dentro del mismo día; 93 snapshots de la copia de trabajo conservan exactamente la valoración anterior al centavo. Se creó otro respaldo de producción y se restauró en una segunda base aislada para ensayar la migración completa y la recuperación de referencias desde bitácora. Las pruebas no escriben en producción.
+
+Pendientes de alcance real: liquidación/arqueos y diferencias físicas; conciliación de los $4.9458 históricos; hora efectiva por zona y recepción de compras; la compra #91 conserva una fecha operativa asumida del 22 de octubre aunque el recibo indica el 20. No se modificaron cortes diarios de una semana cerrada como efecto secundario de corregir sus mililitros.

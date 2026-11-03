@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { num0 } from '../lib/num.js';
+import { valorSnapshotHistorico } from './costos-historicos.js';
 
 function costoUnitarioBase(producto: { unit_cost: unknown; unidad_base?: string | null; contenido_compra?: unknown }) {
   const costo = producto.unit_cost == null ? null : Number(producto.unit_cost);
@@ -67,11 +68,8 @@ type AjusteInput = {
 };
 
 async function valorSnapshotTx(tx: Prisma.TransactionClient, snapshotId: bigint) {
-  const lineas = await tx.inventory_lines.findMany({ where: { snapshot_id: snapshotId }, include: { products: { select: { unit_cost: true, unidad_base: true, contenido_compra: true } } } });
-  return Math.round(lineas.reduce((total, l) => {
-    const costo = costoUnitarioBase(l.products) ?? 0;
-    return total + num0(l.qty_captura) * num0(l.factor) * costo;
-  }, 0) * 100) / 100;
+  const snapshot = await tx.inventory_snapshot.findUniqueOrThrow({ where: { id: snapshotId }, select: { negocio_id: true } });
+  return valorSnapshotHistorico(tx, snapshot.negocio_id, snapshotId);
 }
 
 /**

@@ -5,6 +5,7 @@ import { num } from '../lib/num.js';
 import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
+import { registrarCambioCostoCatalogo } from '../inventario/costos-historicos.js';
 
 export const catalogoRouter = Router();
 catalogoRouter.use(requireAuth); // lecturas: cualquier usuario autenticado
@@ -127,26 +128,31 @@ catalogoRouter.patch(
   asyncHandler(async (req, res) => {
     const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
     const b = productoBody.partial().parse(req.body);
-    const prod = await prisma.products.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
-    if (!prod) throw new HttpError(404, 'Producto no encontrado');
-    const actualizado = await prisma.products.update({
-      where: { id },
-      data: {
-        name: b.nombre,
-        store_id: b.store_id != null ? BigInt(b.store_id) : undefined,
-        base_qty: b.base_qty,
-        unit_cost: b.unit_cost === undefined ? undefined : b.unit_cost,
-        unidad_base: b.unidad_base === undefined ? undefined : b.unidad_base,
-        contenido_compra: b.contenido_compra === undefined ? undefined : b.contenido_compra,
-        unidad_compra: b.unidad_compra === undefined ? undefined : b.unidad_compra,
-        rendimiento_util: b.rendimiento_util,
-        presentacion_modo: b.presentacion_modo,
-        presentacion_nota: b.presentacion_nota,
-        active: b.active,
-        categoria_id: b.categoria_id === undefined ? undefined : b.categoria_id != null ? BigInt(b.categoria_id) : null,
-      },
+    await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM products WHERE id = ${id} AND negocio_id = ${req.auth!.negocioId} FOR UPDATE`;
+      const prod = await tx.products.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
+      if (!prod) throw new HttpError(404, 'Producto no encontrado');
+      const actualizado = await tx.products.update({
+        where: { id },
+        data: {
+          name: b.nombre,
+          store_id: b.store_id != null ? BigInt(b.store_id) : undefined,
+          base_qty: b.base_qty,
+          unit_cost: b.unit_cost === undefined ? undefined : b.unit_cost,
+          unidad_base: b.unidad_base === undefined ? undefined : b.unidad_base,
+          contenido_compra: b.contenido_compra === undefined ? undefined : b.contenido_compra,
+          unidad_compra: b.unidad_compra === undefined ? undefined : b.unidad_compra,
+          rendimiento_util: b.rendimiento_util,
+          presentacion_modo: b.presentacion_modo,
+          presentacion_nota: b.presentacion_nota,
+          active: b.active,
+          categoria_id: b.categoria_id === undefined ? undefined : b.categoria_id != null ? BigInt(b.categoria_id) : null,
+        },
+      });
+      await registrarCambioCostoCatalogo(tx, prod, actualizado, new Date(), 'edicion_catalogo');
+      await registrarAuditoria({ negocioId: req.auth!.negocioId, usuarioId: req.auth!.usuarioId, entidad: 'producto', entidadId: id, accion: 'editar', antes: { nombre: prod.name, base_qty: Number(prod.base_qty), unit_cost: prod.unit_cost == null ? null : Number(prod.unit_cost), contenido_compra: prod.contenido_compra, unidad_base: prod.unidad_base, active: prod.active, categoria_id: prod.categoria_id }, despues: { nombre: actualizado.name, base_qty: Number(actualizado.base_qty), unit_cost: actualizado.unit_cost == null ? null : Number(actualizado.unit_cost), contenido_compra: actualizado.contenido_compra, unidad_base: actualizado.unidad_base, active: actualizado.active, categoria_id: actualizado.categoria_id } }, tx);
+      return actualizado;
     });
-    await registrarAuditoria({ negocioId: req.auth!.negocioId, usuarioId: req.auth!.usuarioId, entidad: 'producto', entidadId: id, accion: 'editar', antes: { nombre: prod.name, base_qty: Number(prod.base_qty), unit_cost: prod.unit_cost == null ? null : Number(prod.unit_cost), active: prod.active, categoria_id: prod.categoria_id }, despues: { nombre: actualizado.name, base_qty: Number(actualizado.base_qty), unit_cost: actualizado.unit_cost == null ? null : Number(actualizado.unit_cost), active: actualizado.active, categoria_id: actualizado.categoria_id } });
     res.json({ ok: true });
   }),
 );

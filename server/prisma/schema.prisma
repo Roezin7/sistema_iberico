@@ -181,10 +181,15 @@ model producto_costos_historicos {
   id         BigInt   @id @default(autoincrement())
   product_id BigInt
   fecha      DateTime @db.Date
-  costo      Decimal  @db.Decimal(12, 2)
+  costo      Decimal? @db.Decimal(12, 2)
+  contenido_compra Decimal? @db.Decimal(14, 4)
+  unidad_base String?
+  vigente_desde DateTime? @db.Timestamptz(6)
+  fuente String?
   products   products @relation(fields: [product_id], references: [id], onDelete: Cascade)
 
   @@index([product_id])
+  @@index([product_id, vigente_desde])
 }
 
 model inventory_snapshot {
