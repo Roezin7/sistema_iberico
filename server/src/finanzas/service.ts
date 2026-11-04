@@ -24,7 +24,6 @@ import {
 } from './logic.js';
 import { generarSnapshotEnCierre, sumaPasivosActivos } from '../patrimonio/service.js';
 import { inventarioActual, valorSnapshot } from '../inventario/service.js';
-import { valorFifoAlCorte } from '../inventario/consumo-epos.js';
 import { esConsumoFifoActivo, esReversionFifo, filtroConsumoFifoActivo } from '../inventario/fuentes.js';
 import { etiquetaCanonica } from './weeks.js';
 export { etiquetaCanonica } from './weeks.js';
@@ -343,15 +342,14 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
   // El ledger guarda el día operativo al mediodía UTC. Este límite incluye el
   // domingo completo y evita que la conciliación quede artificialmente corta.
   const limiteSemanaDb = new Date(`${iso(semana.fecha_fin)}T23:59:59.999Z`);
-  const limiteCorte = rangoEposSemana(semana.fecha_inicio, semana.fecha_fin).fin;
-  const [movs, fifoCorte, inventarioFisico, consumosPeriodo, consumosActivosDetalle, consumosCostoDetalle, reversionesPeriodo] = await Promise.all([
+  const limiteCorte = new Date(Math.min(rangoEposSemana(semana.fecha_inicio, semana.fecha_fin).fin.getTime(), Date.now()));
+  const [movs, inventarioFisico, consumosPeriodo, consumosActivosDetalle, consumosCostoDetalle, reversionesPeriodo] = await Promise.all([
     prisma.movimientos.findMany({
       where: { negocio_id: negocioId, semana_id: semanaId, tipo: 'compra_inventario' },
       select: { monto: true },
     }),
     // El corte termina el lunes a las 06:00Z para incluir todo el domingo
     // civil. Usar fecha_fin a medianoche excluía ventas y lotes del domingo.
-    valorFifoAlCorte(negocioId, limiteCorte),
     // La apertura puede venir del cierre de la semana anterior (por ejemplo,
     // el snapshot 62 es el arranque de la semana 66 aunque conserve semana_id
     // 65). Filtrar por semana_id aquí lo excluía y dejaba el patrimonio físico
@@ -404,10 +402,15 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
   const cierreRegistrado = controlFisico ? valorConciliado : semanal.cierre_snapshot_id == null || semanal.cierre_valor == null
     ? null
     : num0(semanal.cierre_valor);
-  const fisicoActual = inventarioFisico.snapshot_id == null ? null : redondear(inventarioFisico.valor_total);
+  const fifoCorte = inventarioFisico.valoracion_fifo;
+  const fisicoActual = inventarioFisico.snapshot_id == null || fifoCorte.productos_con_diferencia_cantidad > 0
+    ? null : fifoCorte.valor_monetario;
+  const catalogoReferencia = inventarioFisico.snapshot_id == null ? null : inventarioFisico.valor_catalogo_total;
   // Una semana cerrada conserva su snapshot de cierre como autoridad. Si aún
   // está abierta, el último conteo físico de esa semana es provisional.
-  const patrimonioInventario = seleccionarValorPatrimonio(cierreRegistrado, fisicoActual);
+  // Un cierre legado puede estar valorado a catálogo: se conserva como
+  // evidencia, pero no se vuelve a etiquetar como costo FIFO del patrimonio.
+  const patrimonioInventario = seleccionarValorPatrimonio(controlFisico ? valorConciliado : null, fisicoActual);
   const costoVentasLedger = consumosPeriodo._count._all > 0 ? num0(consumosPeriodo._sum.costo_total) : null;
   // Los lotes normales llevan un sufijo de semana (p. ej. venta_fifo_vivo_w64).
   // Sólo las filas marcadas explícitamente como `_exception` son excepciones.
@@ -443,16 +446,19 @@ async function inventarioDeSemana(negocioId: bigint, semanaId: bigint) {
     apertura_valor: apertura,
     compras,
     cierre_valor: cierreRegistrado,
+    cierre_valor_fuente: controlFisico ? 'fifo_conciliado' : cierreRegistrado == null ? 'pendiente' : 'registro_historico',
     valor_fisico_actual: fisicoActual,
+    valor_catalogo_referencia: catalogoReferencia,
+    valoracion_fifo: fifoCorte,
     valor_patrimonio: patrimonioInventario.valor,
     valor_patrimonio_fuente: patrimonioInventario.fuente,
     costo_ventas: costoVentas,
     costo_ventas_fuente: costoVentasLedger == null ? 'pendiente_fifo' : 'ledger_fifo_en_vivo',
-    valor_fifo_corte: fifoCorte.valor,
+    valor_fifo_corte: fifoCorte.valor_monetario,
     unidades_fifo_corte: fifoCorte.unidades,
     diferencia_fifo_vs_fisico: patrimonioInventario.valor == null
       ? null
-      : redondear(fifoCorte.valor - patrimonioInventario.valor),
+      : redondear(fifoCorte.valor_monetario - patrimonioInventario.valor),
     control_fifo: {
       costo_movimientos_activos: costoVentasLedger,
       costo_normal: costoNormal,

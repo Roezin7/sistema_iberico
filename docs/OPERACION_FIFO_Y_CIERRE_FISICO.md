@@ -46,4 +46,6 @@ La integración crea negocios QA aislados y se niega a escribir en una base remo
 
 ## Límites honestos
 
+Desde el 4 de noviembre, Abasto, Finanzas y la tarjeta de Operación muestran como importe principal la valoración FIFO: cantidad de cada capa por su costo almacenado, sumada antes de redondear. Catálogo aparece sólo como referencia secundaria. La valoración al corte comparte un único cálculo temporal; no se sustituye un costo casi igual por el precio de catálogo. Las capas con costo estimado se indican con su número y valor, incluso si alguna tiene costo técnico cero. Si las cantidades físicas y FIFO difieren, se advierte aparte: una diferencia de precios nunca se presenta como merma. Los cierres legados valorados con otro criterio conservan su registro histórico identificado; no se reescriben.
+
 El software no demuestra por sí mismo que una diferencia sea derrame, regalo, receta incorrecta o mal conteo. Hace falta evidencia humana. Las horas históricas desconocidas no se convierten en horas observadas: se declara el límite legado y su resultado provisional. FIFO es una valoración teórica; el físico de cada zona sigue siendo la referencia de existencias. Los costos, saldos bancarios y causas pendientes no se certifican sólo porque la pantalla ya permita continuar.

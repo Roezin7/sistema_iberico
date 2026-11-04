@@ -619,9 +619,8 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
     : utilidadBruta - r.comision_terminal_estimada - gastos - sueldos - propinasPagadas);
   const margenOperativo = utilidadOperativa == null || ventasOperativas === 0 ? null : utilidadOperativa / ventasOperativas;
   const inventarioCerrado = r.inventario.estado === 'cerrado' && r.inventario.cierre_valor != null;
-  // El patrimonio usa el conteo físico de esta semana. El FIFO restante es
-  // una referencia contable para detectar diferencias, nunca un sustituto del
-  // inventario físico que haría aparecer activos inflados.
+  // Cantidades físicas y costo FIFO son controles distintos. Catálogo queda
+  // sólo como referencia y nunca sustituye el costo almacenado de las capas.
   const inventarioFisico = r.inventario.valor_patrimonio;
   const inventarioLibroFifo = r.inventario.valor_fifo_corte;
   const patrimonioOperativo = r.patrimonio_activos;
@@ -682,18 +681,20 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
         <div className="section-heading"><div><strong>Patrimonio operativo al corte</strong><p className="muted">Caja más inventario.</p></div><span className="big-number">{mxn(patrimonioOperativo)}</span></div>
         <div className="patrimonio-grid">
           <div><small>Banco y caja</small><strong>{mxn(r.saldo_real_final_total)}</strong></div>
-          <div><small>Inventario físico al corte</small><strong>{mxn(inventarioFisico)}</strong></div>
-          <div><small>FIFO contable restante</small><strong>{mxn(inventarioLibroFifo)}</strong></div>
+          <div><small>Inventario al costo FIFO</small><strong>{mxn(inventarioFisico)}</strong></div>
+          <div><small>Catálogo (referencia)</small><strong>{mxn(r.inventario.valor_catalogo_referencia)}</strong></div>
           <div><small>Pasivos activos</small><strong>{mxn(r.pasivos_activos)}</strong></div>
           <div><small>Patrimonio neto</small><strong>{mxn(r.patrimonio_neto)}</strong></div>
         </div>
         <p className="muted" style={{ margin: '0.8rem 0 0', fontSize: '0.82rem' }}>
           {inventarioCerrado
-            ? 'El patrimonio usa dinero disponible más el inventario físico cerrado. El FIFO restante sólo sirve para conciliar el libro contra el conteo.'
+            ? 'El patrimonio usa dinero disponible más el inventario al cierre. El importe FIFO conserva los costos de sus capas; catálogo es sólo referencia.'
             : inventarioFisico != null
-              ? 'El patrimonio es provisional: usa el último conteo físico de esta semana. Se congela al cerrar.'
-              : 'Patrimonio pendiente: captura el inventario físico de esta semana para mostrar una cifra real.'}
+              ? 'El patrimonio es provisional: usa las cantidades conciliadas valoradas con sus costos FIFO. Los costos estimados no están certificados.'
+              : 'Patrimonio pendiente: falta un conteo o hay cantidades físicas y FIFO distintas. Revisa la conciliación.'}
         </p>
+        {r.inventario.valoracion_fifo.capas_estimadas > 0 && <p className="muted">Valor provisional: incluye {r.inventario.valoracion_fifo.capas_estimadas} capas con costo estimado ({mxn(r.inventario.valoracion_fifo.valor_estimado)}). No representa una merma.</p>}
+        {r.inventario.valoracion_fifo.productos_con_diferencia_cantidad > 0 && <p className="vision-callout__warning">{r.inventario.valoracion_fifo.productos_con_diferencia_cantidad} productos con diferencia de cantidad entre físico y FIFO. No se compara catálogo con FIFO para medir merma.</p>}
         {!r.resultado_independiente && r.ventas_epos_pendientes > 0 && (
           <div className="vision-callout__warning" style={{ marginTop: '0.65rem' }}>
             Hay {r.ventas_epos_pendientes} ventas Epos sin costo FIFO activo ({mxn(r.importe_ventas_epos_pendientes)}). La utilidad seguirá marcada como provisional.
@@ -725,10 +726,12 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
 
       <div className="resumen-card">
         <strong>Ciclo semanal de inventario</strong>
-        {fila('Inventario de apertura', mxn(r.inventario.apertura_valor))}
+        {fila(r.inventario.apertura_origen === 'cierre_conciliado_con_costos_conservados' ? 'Inventario de apertura (FIFO)' : 'Inventario de apertura (registro histórico)', mxn(r.inventario.apertura_valor))}
         {fila('Compras de la semana', mxn(r.inventario.compras))}
-        {fila(inventarioCerrado ? 'Inventario registrado al cierre' : 'Inventario de cierre (pendiente)', mxn(r.inventario.cierre_valor))}
-        {diferenciaCierreVsFifo != null && Math.abs(diferenciaCierreVsFifo) > 0.01 && fila('FIFO contable restante (referencia)', mxn(inventarioLibroFifo))}
+        {fila(inventarioCerrado ? r.inventario.cierre_valor_fuente === 'fifo_conciliado' ? 'Inventario al cierre (FIFO)' : 'Inventario al cierre (registro histórico)' : 'Inventario de cierre (pendiente)', mxn(r.inventario.cierre_valor))}
+        {fila('Inventario al corte (FIFO)', mxn(inventarioLibroFifo))}
+        {fila('Catálogo (sólo referencia)', mxn(r.inventario.valor_catalogo_referencia))}
+        {r.inventario.valoracion_fifo.capas_estimadas > 0 && <p className="muted">Provisional: {r.inventario.valoracion_fifo.capas_estimadas} capas con costo estimado, por {mxn(r.inventario.valoracion_fifo.valor_estimado)}. Catálogo y FIFO no son dos existencias ni su diferencia es merma.</p>}
         {fila(r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' ? 'Costo de ventas FIFO en vivo' : 'Costo de ventas FIFO pendiente', mxn(r.inventario.costo_ventas))}
         {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <div className="kv"><span className="muted">FIFO normal / excepciones</span><span>{mxn(r.inventario.control_fifo.costo_normal)} / {mxn(r.inventario.control_fifo.costo_excepcion)}</span></div>}
         {r.inventario.costo_ventas_fuente === 'ledger_fifo_en_vivo' && <p className="muted" style={{ margin: '0.55rem 0 0', fontSize: '0.82rem' }}>El valor del corte FIFO se reconstruye con los lotes que siguen abiertos; los lotes pasan a la siguiente semana sin reiniciarse.</p>}

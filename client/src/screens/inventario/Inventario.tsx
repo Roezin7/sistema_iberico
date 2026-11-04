@@ -28,6 +28,7 @@ interface ProductoActual {
   valor: number; valor_fifo: number; valor_catalogo: number;
   cantidad_fifo_base: number | null; cantidad_fifo_operativa: number | null;
   valor_fifo_actual: number | null;
+  capas_costo_estimado: number;
   existencia_fisica_base?: number; existencia_fisica_operativa?: number;
   movimientos_no_cubiertos_base?: number;
   conteo_fisico_base?: number; entradas_posteriores_base?: number; consumos_posteriores_base?: number;
@@ -77,6 +78,7 @@ interface Actual {
   recepciones_sin_hora?: number[];
   snapshot_id: number | null; fecha: string | null; tipo: string | null; semana_id: number | null; productos: ProductoActual[];
   valor_total: number; valor_fifo_total: number; valor_catalogo_total: number; valor_fifo_actual_total: number;
+  valoracion_fifo: { capas_estimadas: number; valor_estimado: number; provisional: boolean; productos_con_diferencia_cantidad: number };
   fuente_existencia_actual: 'fisico';
   sin_costo: { product_id: number; nombre: string }[];
 }
@@ -716,9 +718,14 @@ function InventarioActual() {
     <>
       <div className="resumen-card inventory-overview">
         <div className="inventory-overview__head">
-          <div><span className="eyebrow">Existencia actual</span><strong className="big-number">{mxn(data.valor_total)}</strong></div>
-          <span className="chip chip--ok">Fuente: físico + movimientos</span>
+          <div><span className="eyebrow">Inventario actual · costo FIFO</span><strong className="big-number">{mxn(data.valor_fifo_actual_total)}</strong></div>
+          <span className={data.valoracion_fifo.provisional || data.valoracion_fifo.productos_con_diferencia_cantidad > 0 ? 'chip chip--warn' : 'chip chip--ok'}>{data.valoracion_fifo.provisional || data.valoracion_fifo.productos_con_diferencia_cantidad > 0 ? 'Valor provisional' : 'Valor por lotes FIFO'}</span>
           {!!data.recepciones_sin_hora?.length && <p role="status">Hay {data.recepciones_sin_hora.length} compra(s) del día del conteo sin hora real de llegada. Confírmala en Compras para distinguir si ya estaban contadas.</p>}
+        </div>
+        <div className="inventory-overview__valuation">
+          <small className="muted">Catálogo (referencia): {mxn(data.valor_catalogo_total)} · no es costo FIFO ni merma.</small>
+          {data.valoracion_fifo.capas_estimadas > 0 && <small className="muted">Incluye {data.valoracion_fifo.capas_estimadas} capas con costo estimado ({mxn(data.valoracion_fifo.valor_estimado)}). Pendiente de comprobar.</small>}
+          {data.valoracion_fifo.productos_con_diferencia_cantidad > 0 && <small className="muted">Hay {data.valoracion_fifo.productos_con_diferencia_cantidad} productos con cantidades físicas y FIFO diferentes. El importe sólo valora los lotes; no certifica el conteo.</small>}
         </div>
         <div className="inventory-overview__values">
           <div><small>Productos</small><strong>{data.productos.length}</strong></div>
@@ -731,7 +738,7 @@ function InventarioActual() {
           {data.fecha ? `Último registro: ${new Date(data.fecha).toLocaleString('es-MX',{timeZone:'America/Mexico_City'})} · ${data.tipo === 'apertura_conciliada' ? 'apertura conciliada (saldo derivado)' : data.tipo === 'cierre' ? 'cierre' : data.tipo === 'apertura' ? 'apertura' : data.tipo === 'ajuste' ? 'ajuste' : 'histórico'}` : 'Sin registros aún'}
         </small>
         <details><summary>Cortes por zona (México)</summary>{cortesZona.map(z => <p key={z.zona_id}>{z.zona}: {inputHoraMexico(z.contado_at).replace('T', ' ')}</p>)}</details>
-        <small className="muted">Cantidades: último físico + entradas − consumos posteriores. El importe es referencia de catálogo, no costo FIFO confirmado. La diferencia entre precios de catálogo y capas no es merma.</small>
+        <small className="muted">Cantidades: último físico + entradas − consumos posteriores. El importe principal usa los costos guardados de los lotes, sin sustituirlos por catálogo. Costos estimados y diferencias se señalan por separado.</small>
       </div>
       <ControlInventario />
       {data.sin_costo.length > 0 && (
@@ -747,7 +754,7 @@ function InventarioActual() {
               (() => {
                 const totalOperativo = existenciaOperativaProducto(p);
                 const minimoOperativo = minimoOperativoProducto(p);
-                const valorActual = p.valor;
+                const valorActual = p.valor_fifo_actual ?? 0;
                 const cantidadFifo = p.cantidad_fifo_operativa ?? 0;
                 const tieneEntrada = (p.entradas_posteriores_base ?? 0) > 0;
                 const nivel = totalOperativo <= 0 ? 'empty' : totalOperativo < minimoOperativo ? 'low' : 'ok';
@@ -766,7 +773,7 @@ function InventarioActual() {
                     <div className="stock-row__bar" aria-hidden="true"><span style={{ width: `${avance}%` }} /></div>
                     <small>mín. {formatoCantidad(minimoOperativo)} {pluralUnidad(p.unidad_operativa, minimoOperativo)}</small>
                   </div>
-                  <div className="stock-row__value"><strong>{mxn(valorActual)}</strong><small>valor físico</small></div>
+                  <div className="stock-row__value"><strong>{mxn(valorActual)}</strong><small>{p.capas_costo_estimado > 0 ? 'FIFO · costo estimado' : p.cantidad_sin_lote > 0 ? 'FIFO · sin cobertura completa' : 'costo FIFO'}</small></div>
                   {(tieneMovimiento || tieneBrecha) && <div className="stock-row__audit">
                     {tieneMovimiento && <span>Desde el último conteo: {tieneEntrada ? `+${formatoCantidad(p.entradas_posteriores_base)} base en entradas` : ''}{tieneEntrada && (p.consumos_posteriores_base ?? 0) > 0 ? ' · ' : ''}{(p.consumos_posteriores_base ?? 0) > 0 ? `−${formatoCantidad(p.consumos_posteriores_base)} base en consumos` : ''}</span>}
                     {(p.movimientos_no_cubiertos_base ?? 0) > 0 && <span>Revisar movimientos: {formatoCantidad(p.movimientos_no_cubiertos_base)} {p.unidad_base} sin saldo físico suficiente en su momento.</span>}

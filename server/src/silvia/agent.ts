@@ -192,7 +192,11 @@ async function loopHerramientas(
             tool_use_id: block.id,
             content: JSON.stringify({
               fecha_conteo_mas_reciente: inv.fecha,
-              valor_total_a_costo: inv.valor_total,
+              valor_total_a_costo: inv.valor_fifo_actual_total,
+              valor_catalogo_solo_referencia: inv.valor_catalogo_total,
+              capas_costo_estimado: inv.valoracion_fifo.capas_estimadas,
+              valor_costo_estimado: inv.valoracion_fifo.valor_estimado,
+              valoracion_provisional: inv.valoracion_fifo.provisional || inv.valoracion_fifo.productos_con_diferencia_cantidad > 0,
               productos,
               compra_sugerida: compras,
               notas: [

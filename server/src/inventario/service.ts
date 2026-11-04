@@ -1,3 +1,4 @@
+import { valorFifoAlCorte } from './consumo-epos.js';
 import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import { prisma } from '../db.js';
 import { cargarLibroFisico, proyectarProducto, efectivaLote, q4 } from './libro-fisico.js';
@@ -64,6 +65,7 @@ export interface ProductoActual {
   cantidad_fifo_operativa: number | null;
   /** Valor de todos los lotes FIFO abiertos, sin truncarlo al conteo físico. */
   valor_fifo_actual: number | null;
+  capas_costo_estimado: number;
   /** Existencia física operativa: último conteo + entradas - consumos. */
   existencia_fisica_base: number;
   existencia_fisica_operativa: number;
@@ -103,6 +105,7 @@ export interface InventarioActual {
   valor_catalogo_total: number;
   /** Valuación del saldo FIFO operativo actual (no del último conteo). */
   valor_fifo_actual_total: number;
+  valoracion_fifo: Awaited<ReturnType<typeof valorFifoAlCorte>> & { productos_con_diferencia_cantidad: number };
   fuente_existencia_actual: 'fisico';
   sin_costo: { product_id: number; nombre: string }[];
 }
@@ -269,7 +272,7 @@ export function inventarioActual(negocioId: bigint, options: { semanaId?: bigint
 
 async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?: bigint; hasta?: Date; vista?: 'fisica' | 'operativa' } = {}): Promise<InventarioActual> {
   options = { ...options, hasta: options.hasta ?? new Date() };
-  const [productos, snaps, lotesTodos, consumosPosteriores, ajustesInventario, zonasInventario] = await Promise.all([
+  const [productos, snaps, lotesTodos, consumosPosteriores, ajustesInventario, zonasInventario, valoracionFifo] = await Promise.all([
     prisma.products.findMany({
       where: { negocio_id: negocioId, active: true },
       select: {
@@ -321,8 +324,10 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       select: { id: true, nombre: true, orden: true },
       orderBy: { orden: 'asc' },
     }),
+    valorFifoAlCorte(negocioId, options.hasta!),
   ]);
 
+  const valorFifoPorProducto = new Map(valoracionFifo.productos.map(p => [p.product_id, p]));
   const lotes = lotesTodos.filter((lote) => lote.estado === 'abierto' && num0(lote.cantidad_restante) > 0 && (!options.hasta || efectivaLote(lote) <= options.hasta));
   const zonaBodegaGlobal = zonasInventario.find((zona) => zona.nombre.trim().toLowerCase() === 'bodega') ?? null;
 
@@ -494,37 +499,14 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
     // sumar puede desfasar el valor del snapshot oficial por algunos centavos.
     const valorCatalogo = unitCostBase == null ? 0 : totalBase * unitCostBase;
     const valorado = valorarFisicoConLotes(totalBase, lotesProducto, unitCostBase);
-    const cantidadesLotes = lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante), 0);
-    // Los costos de lote se almacenan con seis decimales, mientras que el
-    // costo base del catálogo puede ser periódico (por ejemplo, $30 / 14).
-    // Cuando todos los lotes están revaluados al catálogo y el saldo coincide
-    // con el físico, usa el valor exacto del catálogo para evitar una brecha
-    // artificial por la precisión limitada del almacenamiento.
-    const lotesAlCostoActual = lotesProducto.length > 0 && unitCostBase != null
-      && lotesProducto.every((l) => Math.abs(num0(l.costo_unitario) - unitCostBase) <= 0.0000011);
-    const saldoFifoAlineado = lotesAlCostoActual && Math.abs(cantidadesLotes - totalBase) <= 0.0001;
-    // El físico operativo parte del conteo y aplica las entradas/consumos
-    // registrados. FIFO sigue siendo el libro de lotes y una auditoría, no una
-    // segunda existencia que se sume por separado.
+    const valoracionProducto = valorFifoPorProducto.get(Number(p.id));
     const existenciaFisicaBase = q4(totalBase);
-    const existenciaFifoBase = lotesProducto.length ? q4(cantidadesLotes) : null;
-    const cantidadFifoOperativa = lotesProducto.length
-      ? cantidadOperativaInventario({
-          totalBase: cantidadesLotes,
-          unidadBase: p.unidad_base,
-          contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra),
-        })
+    const existenciaFifoBase = valoracionProducto ? q4(valoracionProducto.cantidad) : null;
+    const cantidadFifoOperativa = valoracionProducto
+      ? cantidadOperativaInventario({ totalBase: valoracionProducto.cantidad, unidadBase: p.unidad_base, contenidoCompra: p.contenido_compra == null ? null : Number(p.contenido_compra) })
       : null;
-    const valorFifoActual = lotesProducto.length
-      // Conserva precisión por producto; el total se redondea una sola vez.
-      // Así no se crea una brecha artificial por sumar centavos redondeados.
-      ? saldoFifoAlineado
-        ? valorCatalogo
-        : Math.round(lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) * 1_000_000_000_000) / 1_000_000_000_000
-      : null;
-    const costoFifoBase = cantidadesLotes > 0
-      ? lotesProducto.reduce((a, l) => a + num0(l.cantidad_restante) * num0(l.costo_unitario), 0) / cantidadesLotes
-      : null;
+    const valorFifoActual = valoracionProducto?.valor ?? null;
+    const costoFifoBase = valoracionProducto && valoracionProducto.cantidad > 0 ? valoracionProducto.valor / valoracionProducto.cantidad : null;
     if (unitCostBase == null && !lotesProducto.length) sinCosto.push({ product_id: Number(p.id), nombre: p.name });
     return {
       product_id: Number(p.id),
@@ -557,16 +539,15 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       unidad_compra: p.unidad_compra,
       rendimiento_util: num(p.rendimiento_util) ?? 1,
       // Conserva precisión por producto; los totales se redondean al final.
-      valor_fifo: saldoFifoAlineado
-        ? valorCatalogo
-        : Math.round(valorado.valor * 1_000_000_000_000) / 1_000_000_000_000,
+      valor_fifo: Math.round(valorado.valor * 1_000_000_000_000) / 1_000_000_000_000,
       valor_catalogo: valorCatalogo,
       costo_fifo_base: costoFifoBase == null ? null : Math.round(costoFifoBase * 1_000_000) / 1_000_000,
       cantidad_con_lote: Math.round(valorado.consumido * 1_000_000) / 1_000_000,
       cantidad_sin_lote: Math.round(Math.max(0, totalBase - valorado.consumido) * 1_000_000) / 1_000_000,
-      cantidad_fifo_base: lotesProducto.length ? Math.round(cantidadesLotes * 1_000_000) / 1_000_000 : null,
+      cantidad_fifo_base: existenciaFifoBase,
       cantidad_fifo_operativa: cantidadFifoOperativa,
       valor_fifo_actual: valorFifoActual,
+      capas_costo_estimado: valoracionProducto?.capas_estimadas ?? 0,
       existencia_fisica_base: existenciaFisicaBase,
       existencia_fisica_operativa: cantidadOperativaInventario({
         totalBase: existenciaFisicaBase,
@@ -579,7 +560,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       movimientos_no_cubiertos_base: q4(reconstruido.noCubierto),
       existencia_fifo_base: existenciaFifoBase,
       existencia_fifo_operativa: cantidadFifoOperativa,
-      diferencia_fifo_vs_fisico_base: existenciaFifoBase == null ? null : q4(existenciaFifoBase - existenciaFisicaBase),
+      diferencia_fifo_vs_fisico_base: q4((existenciaFifoBase ?? 0) - existenciaFisicaBase),
       existencia_actual_base: existenciaFisicaBase,
       existencia_actual_operativa: cantidadOperativaInventario({
         totalBase: existenciaFisicaBase,
@@ -613,7 +594,10 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
   const valorTotal = Math.round(result.reduce((a, p) => a + p.valor, 0) * 100) / 100;
   const valorFifoTotal = Math.round(result.reduce((a, p) => a + p.valor_fifo, 0) * 100) / 100;
   const valorCatalogoTotal = Math.round(result.reduce((a, p) => a + p.valor_catalogo, 0) * 100) / 100;
-  const valorFifoActualTotal = Math.round(result.reduce((a, p) => a + (p.valor_fifo_actual ?? p.valor_fifo), 0) * 100) / 100;
+  const valorFifoActualTotal = valoracionFifo.valor_monetario;
+  const idsActivos = new Set(result.map(p => p.product_id));
+  const productosConDiferencia = result.filter(p => Math.abs((p.cantidad_fifo_base ?? 0) - p.existencia_actual_base) > 0.0001).length
+    + valoracionFifo.productos.filter(p => !idsActivos.has(p.product_id) && p.cantidad > 0.0001).length;
   const recepcionesSinHora = [...new Set(lotesTodos.filter(l => l.purchase_id != null && !l.purchases?.recibida_at && l.estado !== 'cancelado'
     && pares.some(z => fechaCivil(z.created_at) === l.recibido_at.toISOString().slice(0, 10))).map(l => Number(l.purchase_id)))];
   return {
@@ -631,6 +615,7 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
     valor_fifo_total: valorFifoTotal,
     valor_catalogo_total: valorCatalogoTotal,
     valor_fifo_actual_total: valorFifoActualTotal,
+    valoracion_fifo: { ...valoracionFifo, productos_con_diferencia_cantidad: productosConDiferencia },
     fuente_existencia_actual: 'fisico',
     sin_costo: sinCosto,
   };

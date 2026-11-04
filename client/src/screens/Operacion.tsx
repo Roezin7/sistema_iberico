@@ -8,7 +8,7 @@ import { mxn, type ConciliacionDiaria, type DiaFila, type Resumen, type SaludOpe
 import { todayMexico, weekLabel, weekStateLabel } from '../operating';
 import { TareasDelDia } from './tareas/Tareas';
 
-interface InventarioActual { valor_total: number; valor_fifo_actual_total: number; productos: ProductoInventario[]; sin_costo: { product_id: number; nombre: string }[]; lista_compras?: ListaCompras }
+interface InventarioActual { valor_total: number; valor_fifo_actual_total: number; valoracion_fifo: { provisional: boolean; productos_con_diferencia_cantidad: number }; productos: ProductoInventario[]; sin_costo: { product_id: number; nombre: string }[]; lista_compras?: ListaCompras }
 interface ProductoInventario { product_id: number; nombre: string; total_operativo: number; minimo_operativo: number; faltante_operativo?: number; unidad_operativa: string; fuente_valoracion: string; }
 interface ListaCompras { total: number; grupos: { store: string; subtotal: number; items: { product_id: number; nombre: string; faltante: number; unidad_operativa?: string; valor_faltante: number }[] }[] }
 interface TareasDia { fecha: string; checklists?: { checklist_id: number; nombre: string; tipo: string; items?: { id: number; texto: string; completado: boolean }[]; progreso?: { hechos: number; total: number } }[] }
@@ -104,7 +104,7 @@ export default function Operacion() {
 
       <section className="operation-metrics" aria-label="Resumen operativo">
         <article><span>Ventas de hoy</span><strong>{mxn(ventasHoy?.total_ventas ?? null)}</strong><small>{ventasHoy ? 'Registradas' : 'Aún sin corte'}</small></article>
-        <article><span>Inventario físico</span><strong>{mxn(inventario?.valor_total)}</strong><small>{inventario ? `${inventario.productos.length} productos` : '—'}</small></article>
+        <article><span>Inventario · FIFO</span><strong>{mxn(inventario?.valor_fifo_actual_total)}</strong><small>{inventario ? `${inventario.productos.length} productos${inventario.valoracion_fifo.provisional || inventario.valoracion_fifo.productos_con_diferencia_cantidad > 0 ? ' · provisional' : ''}` : '—'}</small></article>
         <article><span>Faltantes</span><strong className={faltantes.length ? 'metric-danger' : ''}>{faltantes.length}</strong><small>{faltantes.length ? `${mxn(compras?.total)} estimado` : 'Todo en rango'}</small></article>
         <article><span>Checklist</span><strong>{tareasTotal ? `${tareasCompletadas}/${tareasTotal}` : '—'}</strong><small>{tareasTotal ? 'Completado hoy' : 'Sin tareas asignadas'}</small></article>
       </section>

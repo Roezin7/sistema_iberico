@@ -1,3 +1,4 @@
+import { resumirValoracionFifo } from './valoracion-fifo.js';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -469,12 +470,12 @@ export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date, modo
       estado: { in: ['abierto', 'agotado'] },
       ...(modo === 'historico_prueba' ? { fuente: 'historico_prueba' as const } : {}),
     },
-    select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true, fuente: true, disponible_desde: true, orden_fifo_at: true, contenido_presentacion: true, unidad_presentacion: true, purchases: { select: { recibida_at: true } } },
+    select: { id: true, product_id: true, recibido_at: true, cantidad_inicial: true, costo_unitario: true, costo_estimado: true, fuente: true, disponible_desde: true, orden_fifo_at: true, contenido_presentacion: true, unidad_presentacion: true, purchases: { select: { recibida_at: true } } },
   });
   const lotes = candidatos.filter(l => efectivaLote(l) <= fechaCorte);
   const lotesSeleccionados = [...new Set(lotes.map((lote) => lote.product_id.toString()))]
     .flatMap((productId) => seleccionarLotesOperativos(lotes.filter((lote) => lote.product_id.toString() === productId), modo));
-  if (!lotesSeleccionados.length) return { valor: 0, unidades: 0, lotes: 0 };
+  if (!lotesSeleccionados.length) return resumirValoracionFifo([]);
   const consumos = await prisma.inventory_consumptions.findMany({
     where: { negocio_id: negocioId, fecha: { lte: fechaCorte }, lote_id: { in: lotesSeleccionados.map((lote) => lote.id) }, ...filtroConsumoFifoActivo({ incluirAjustes: true }) },
     select: { lote_id: true, cantidad: true, efectiva_at:true, fecha:true, epos_venta: { select: { fecha: true } } },
@@ -485,19 +486,9 @@ export async function valorFifoAlCorte(negocioId: bigint, fechaCorte: Date, modo
     const key = consumo.lote_id.toString();
     consumido.set(key, (consumido.get(key) ?? 0) + Number(consumo.cantidad));
   }
-  let unidades = 0;
-  let valor = 0;
-  let lotesConSaldo = 0;
-  for (const lote of lotesSeleccionados) {
-    const restante = Math.max(0, Number(lote.cantidad_inicial) - (consumido.get(lote.id.toString()) ?? 0));
-    if (restante <= 0.0001) continue;
-    lotesConSaldo += 1;
-    unidades += restante;
-    valor += restante * Number(lote.costo_unitario);
-  }
-  return {
-    valor: Number(valor.toFixed(4)),
-    unidades: Number(unidades.toFixed(4)),
-    lotes: lotesConSaldo,
-  };
+  return resumirValoracionFifo(lotesSeleccionados.map(lote => ({
+    product_id: lote.product_id,
+    cantidad_restante: Math.max(0, Number(lote.cantidad_inicial) - (consumido.get(lote.id.toString()) ?? 0)),
+    costo_unitario: lote.costo_unitario, costo_estimado: lote.costo_estimado,
+  })));
 }

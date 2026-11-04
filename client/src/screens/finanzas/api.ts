@@ -52,7 +52,10 @@ export interface Resumen {
   inventario: {
     apertura_snapshot_id: number | null; cierre_snapshot_id: number | null;
     apertura_valor: number | null; compras: number; cierre_valor: number | null;
+    cierre_valor_fuente: 'fifo_conciliado' | 'registro_historico' | 'pendiente';
     valor_fisico_actual: number | null;
+    valor_catalogo_referencia: number | null;
+    valoracion_fifo: { capas_estimadas: number; valor_estimado: number; provisional: boolean; productos_con_diferencia_cantidad: number };
     valor_patrimonio: number | null;
     valor_patrimonio_fuente: 'inventario_fisico_cierre' | 'inventario_fisico_actual' | 'pendiente_cierre';
     costo_ventas: number | null; costo_ventas_fuente: 'ledger_fifo_en_vivo' | 'pendiente_fifo';

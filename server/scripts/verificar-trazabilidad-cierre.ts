@@ -40,6 +40,9 @@ try {
   const consumption=await db.inventory_consumptions.findFirstOrThrow({where:{epos_venta_id:sale.id}});assert.equal(consumption.lote_id,child.id);assert.equal(consumption.lote_original_id,old.id);assert.equal(Number(consumption.costo_total),60);
   assert.equal(Number((await db.epos_ventas.findUniqueOrThrow({where:{id:sale.id}})).costo_fifo),60);assert.equal((await inventarioActual(id)).productos[0]!.existencia_actual_base,antes);
   assert.equal((await valorFifoAlCorte(id,d('2026-10-25','23:30'))).valor,200);assert.equal((await valorFifoAlCorte(id,d('2026-10-26','00:00'))).valor,160);
+  assert.equal((await inventarioActual(id,{hasta:d('2026-10-25','23:30')})).valor_fifo_actual_total,200);
+  assert.equal((await inventarioActual(id,{hasta:d('2026-10-26','00:00')})).valor_fifo_actual_total,160);
+  assert.equal((await inventarioActual(id)).valor_fifo_actual_total,100);
   assert.equal(await db.movimientos.count({where:{negocio_id:id}}),0);
   checks.push('Dos cierres simultáneos crean una apertura; venta posterior conserva cantidad/costo y origen; valoración histórica permanece al corte');
   checks.push('Revisión obsoleta rechazada; siguiente físico 5 = lote inicial 8 − consumo posterior 3');
