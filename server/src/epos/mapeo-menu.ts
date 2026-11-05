@@ -12,6 +12,27 @@ export function normalizarNombreEpos(value: string) {
     .replace(/\s+/g, ' ');
 }
 
+/**
+ * Nombres históricos que ya llegaron desde Epos con abreviaturas o errores de
+ * captura. El ID de Epos sigue siendo la llave principal; estos alias sólo
+ * permiten resolver ventas antiguas que llegaron sin ProductID.
+ */
+const MENU_NOMBRE_ALIASES: Record<string, string> = {
+  'cba doble d': 'cuba de dobel diamante',
+  'cuba de doble diamante': 'cuba de dobel diamante',
+  'q c b a w d': 'cuba de dobel diamante',
+  'q c b a wd': 'cuba de dobel diamante',
+  'cuba de hacienda de tepa': 'cuba de hacienda de tepa',
+  'paloma grande dobel': 'paloma grande dobel',
+  'pizza madrilena': 'pizza madrilena 4 quesos',
+  'pizza madrilena 4 quesos': 'pizza madrilena 4 quesos',
+};
+
+export function normalizarNombreMenu(value: string) {
+  const normalized = normalizarNombreEpos(value);
+  return MENU_NOMBRE_ALIASES[normalized] ?? normalized;
+}
+
 type VentaMap = { nombre: string; epos_product_id: number | null; cantidad: number; ventas: number };
 
 export async function auditarMapeoEpos(input: { negocioId: bigint; from?: Date; to?: Date }) {
@@ -23,7 +44,13 @@ export async function auditarMapeoEpos(input: { negocioId: bigint; from?: Date; 
     prisma.productos_menu.findMany({ where: { negocio_id: input.negocioId, activo: true }, select: { id: true, nombre: true, epos_product_id: true } }),
   ]);
   const byId = new Map(menu.filter((m) => m.epos_product_id != null).map((m) => [m.epos_product_id!, m]));
-  const byName = new Map(menu.map((m) => [normalizarNombreEpos(m.nombre), m]));
+  const byName = new Map(menu.map((m) => [normalizarNombreMenu(m.nombre), m]));
+  for (const candidate of menu) {
+    const canonical = normalizarNombreMenu(candidate.nombre);
+    for (const [alias, target] of Object.entries(MENU_NOMBRE_ALIASES)) {
+      if (target === canonical) byName.set(alias, candidate);
+    }
+  }
   const grouped = new Map<string, VentaMap>();
   for (const venta of ventas) {
     const key = `${venta.epos_product_id ?? 'nombre'}:${normalizarNombreEpos(venta.producto_nombre)}`;
@@ -32,12 +59,13 @@ export async function auditarMapeoEpos(input: { negocioId: bigint; from?: Date; 
     else grouped.set(key, { nombre: venta.producto_nombre, epos_product_id: venta.epos_product_id, cantidad: Number(venta.cantidad), ventas: Number(venta.venta_bruta) });
   }
   return [...grouped.values()].map((venta) => {
-    const candidato = (venta.epos_product_id == null ? null : byId.get(venta.epos_product_id)) ?? byName.get(normalizarNombreEpos(venta.nombre)) ?? null;
+    const candidato = (venta.epos_product_id == null ? null : byId.get(venta.epos_product_id)) ?? byName.get(normalizarNombreMenu(venta.nombre)) ?? null;
     return {
       ...venta,
       menu_id: candidato ? Number(candidato.id) : null,
       menu_nombre: candidato?.nombre ?? null,
       menu_epos_product_id: candidato?.epos_product_id ?? null,
+      diferencia_nombre: candidato ? normalizarNombreEpos(venta.nombre) !== normalizarNombreEpos(candidato.nombre) : false,
       estado: candidato ? 'mapeado' as const : 'sin_mapeo' as const,
     };
   }).sort((a, b) => a.estado.localeCompare(b.estado) || a.nombre.localeCompare(b.nombre));

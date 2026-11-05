@@ -3,6 +3,15 @@ import { HttpError } from '../middleware/error.js';
 
 type JsonRecord = Record<string, unknown>;
 
+export interface EposProduct {
+  Id?: number | null;
+  ID?: number | null;
+  ProductID?: number | null;
+  Name?: string | null;
+  name?: string | null;
+  [key: string]: unknown;
+}
+
 export interface EposReportRow {
   Product?: string | null;
   ProductID?: number | null;
@@ -114,6 +123,11 @@ async function get<T>(path: string, params: Record<string, string | number | und
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Consulta una etiqueta de producto sin modificar el catálogo remoto. */
+export async function product(id: number) {
+  return get<EposProduct>(`V2/Product/${id}`, {});
 }
 
 /**

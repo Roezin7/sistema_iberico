@@ -2,10 +2,11 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
-import { reconcilePreview } from './client.js';
+import { product, reconcilePreview } from './client.js';
 import { importarVentasEpos, listarImportacionesEpos, listarVentasEpos, listarExcepcionesEpos, resumirExcepcionesEpos } from './imports.js';
 import { confirmarConciliacionDiaria, listarConciliacionesDiarias } from './reconciliation.js';
 import { env } from '../env.js';
+import { prisma } from '../db.js';
 import { aplicarMapeoEpos, auditarMapeoEpos } from './mapeo-menu.js';
 
 export const eposRouter = Router();
@@ -93,6 +94,38 @@ eposRouter.get('/mapeo-menu', asyncHandler(async (req, res) => {
   const from = req.query.from === undefined ? undefined : new Date(z.string().datetime({ offset: true }).parse(req.query.from));
   const to = req.query.to === undefined ? undefined : new Date(z.string().datetime({ offset: true }).parse(req.query.to));
   res.json(await auditarMapeoEpos({ negocioId: req.auth!.negocioId, from, to }));
+}));
+
+/**
+ * Compara el nombre remoto de Epos con el catálogo canónico local. Es una
+ * lectura explícita: no actualiza Epos ni reescribe ventas históricas.
+ */
+eposRouter.get('/catalogo-live', asyncHandler(async (req, res) => {
+  const menu = await prisma.productos_menu.findMany({
+    where: { negocio_id: req.auth!.negocioId, activo: true, epos_product_id: { not: null } },
+    select: { id: true, nombre: true, epos_product_id: true },
+    orderBy: { nombre: 'asc' },
+  });
+  const resultados: Array<Record<string, unknown>> = [];
+  for (const item of menu) {
+    const eposId = item.epos_product_id!;
+    try {
+      const remoto = await product(eposId);
+      const nombreRemoto = String(remoto.Name ?? remoto.name ?? '').trim() || null;
+      resultados.push({
+        menu_id: Number(item.id), epos_product_id: eposId, nombre_canonico: item.nombre,
+        nombre_epos: nombreRemoto,
+        estado: nombreRemoto && nombreRemoto !== item.nombre ? 'diferente' : nombreRemoto ? 'coincide' : 'sin_nombre',
+      });
+    } catch (error) {
+      resultados.push({
+        menu_id: Number(item.id), epos_product_id: eposId, nombre_canonico: item.nombre,
+        nombre_epos: null, estado: 'no_disponible',
+        error: error instanceof Error ? error.message : 'No se pudo consultar Epos',
+      });
+    }
+  }
+  res.json({ fuente: 'Epos Now', lectura: true, total: resultados.length, diferencias: resultados.filter((row) => row.estado === 'diferente').length, productos: resultados });
 }));
 
 eposRouter.post('/mapeo-menu/aplicar', asyncHandler(async (req, res) => {

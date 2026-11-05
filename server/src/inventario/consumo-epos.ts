@@ -4,7 +4,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { convertirCantidad } from '../recetas/costeo.js';
 import { consumirFIFO } from './fifo.js';
-import { normalizarNombreEpos } from '../epos/mapeo-menu.js';
+import { normalizarNombreMenu } from '../epos/mapeo-menu.js';
 import { filtroConsumoFifoActivo } from './fuentes.js';
 import { referenciaDiaMexico } from './cronologia.js';
 import { efectivaLote, ordenLote } from './libro-fisico.js';
@@ -152,8 +152,8 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
       include: includeReceta,
     }));
   const menu = menuExacto ?? (context
-    ? context.menus.find((candidate) => normalizarNombreEpos(candidate.nombre) === normalizarNombreEpos(venta.producto_nombre)) ?? null
-    : (await client.productos_menu.findMany({ where: { negocio_id: negocioId, activo: true }, include: includeReceta })).find((candidate) => normalizarNombreEpos(candidate.nombre) === normalizarNombreEpos(venta.producto_nombre)) ?? null);
+    ? context.menus.find((candidate) => normalizarNombreMenu(candidate.nombre) === normalizarNombreMenu(venta.producto_nombre)) ?? null
+    : (await client.productos_menu.findMany({ where: { negocio_id: negocioId, activo: true }, include: includeReceta })).find((candidate) => normalizarNombreMenu(candidate.nombre) === normalizarNombreMenu(venta.producto_nombre)) ?? null);
   if (!menu) return { estado: 'excepcion', error: `Producto Epos sin mapeo: ${venta.producto_nombre}`, costoTotal: 0, consumos: [] };
   const receta = menu.recetas.find(r => r.vigente_desde == null || r.vigente_desde.toISOString().slice(0, 10) <= fechaISO(venta.fecha));
   // Una receta todavía no validada es un pendiente de configuración, no una

@@ -82,14 +82,14 @@ function serialize(p: any) {
 const ORDEN_MENU = [
   'Montado Mediterraneo', 'Montado Castellano', 'Montado Ibérico', 'Montado Sevillano', 'Montado Ateca',
   'Papas a la francesa', 'Papas Ibéricas', 'Tabla de Tapas', 'Tabla de Quesos y Embutidos',
-  'Pizza Margarita', 'Pizza Castellana', 'Pizza Ibérica', 'Pizza Madrileña', 'Pizza Catalana', 'Pizza Gallega', 'Pizza Canaria', 'Pizza Dos Carnes',
+  'Pizza Margarita', 'Pizza Castellana', 'Pizza Ibérica', 'Pizza Madrileña (4 quesos)', 'Pizza Catalana', 'Pizza Gallega', 'Pizza Canaria', 'Pizza Dos Carnes',
   'Copa de la Casa', 'Piñada', 'Limonada', 'Limonada Ibérica', 'Naranjada', 'Refresco', 'Cubanito Grande', 'Affogato',
   'Gin Tonic Rojo', 'Gin Tonic Verde', 'Gin Tonic Rosa', 'Gin Tonic de Frutos Rojos', 'Gin Tonic de Pepino', 'Azulito Chico', 'Azulito Grande',
   'Negroni Ibérico', 'Mezcal-tonic', 'Mezcal Mule', 'Mezcalita Piña', 'Mezcalita Mango', 'Mezcalita Tamarindo', 'Mezcalita Jamaica',
   'Carajillo', 'Baileys', 'Ronchata', 'Mezcachata', 'Oro Blanco', 'Tinto de Verano', 'Sangría Española',
   'Mimosa Clásica', 'Mimosa Ibérica', 'Mojito Clásico', 'Mojito Tinto', 'Perla Negra', 'Toro Negro',
   'Margarita Clásica', 'Margarita de Fresa', 'Tequila Sunrise', 'Piña Colada',
-  'Paloma Chica', 'Paloma Grande', 'Vampiro Grande', 'Cuba/Shot Jagger', 'Cuba de hacienda de tepa', 'CBA Doble D',
+  'Paloma Chica', 'Paloma Grande', 'Paloma Grande Dobel', 'Vampiro Grande', 'Cuba/Shot Jagger', 'Cuba de Hacienda de Tepa', 'Cuba de Dobel Diamante',
   'Michelada Chica', 'Michelada Grande', 'Modelo', 'Stella Artois', 'Michelob Ultra',
   'Tequila 8 Botella', '1800 Cristalino Botella', 'Dobel Diamante Botella', 'Hacienda de Tepa Botella',
 ];
@@ -103,7 +103,7 @@ function seccionMenu(nombre: string) {
   if (n.startsWith('pizza')) return 'Pizzas';
   if (['modelo', 'stella artois', 'michelob ultra'].some((x) => n === x)) return 'Cervezas';
   if (n.endsWith('botella')) return 'Servicios y Copeo';
-  if (n.includes('cba doble d') || n.includes('copa de la casa') || n.includes('gin tonic') || n.includes('negroni') || n.includes('mezcal') || n.includes('carajillo') || n.includes('baileys') || n.includes('ronchata') || n.includes('mezcachata') || n.includes('oro blanco') || n.includes('tinto') || n.includes('sangria') || n.includes('mimosa') || n.includes('mojito') || n.includes('perla') || n.includes('toro') || n.includes('margarita') || n.includes('tequila') || n.includes('paloma') || n.includes('vampiro') || n.includes('cuba') || n.includes('azulito') || n.includes('michelada') || n.includes('chabela') || n.includes('cubanito')) return 'Bebidas con alcohol';
+  if (n.includes('cba doble d') || n.includes('cuba de dobel diamante') || n.includes('copa de la casa') || n.includes('gin tonic') || n.includes('negroni') || n.includes('mezcal') || n.includes('carajillo') || n.includes('baileys') || n.includes('ronchata') || n.includes('mezcachata') || n.includes('oro blanco') || n.includes('tinto') || n.includes('sangria') || n.includes('mimosa') || n.includes('mojito') || n.includes('perla') || n.includes('toro') || n.includes('margarita') || n.includes('tequila') || n.includes('paloma') || n.includes('vampiro') || n.includes('cuba') || n.includes('azulito') || n.includes('michelada') || n.includes('chabela') || n.includes('cubanito')) return 'Bebidas con alcohol';
   if (['pinada', 'limonada', 'naranjada', 'refresco', 'affogato'].some((x) => n.startsWith(x))) return 'Sin alcohol';
   return 'Otros';
 }
