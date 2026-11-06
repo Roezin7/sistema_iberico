@@ -1,0 +1,40 @@
+import { describe, expect, it } from 'vitest';
+import { cantidadBaseConteo, cantidadDesdeSaldo, cantidadEnConteo, medidaConteo } from './conteo-unidades';
+
+describe('unidades de apertura y cierre', () => {
+  const pepino = { unidad_base: 'g', unidad_compra: 'kg', contenido_compra: 1000, presentacion_modo: 'por_lote' };
+  it('440 g guardados con factor 1 son 0.44 kg, no 440 kg', () => {
+    expect(cantidadDesdeSaldo({ qty_captura: 440, factor: 1 }, pepino, {factor:1000})).toBe(.44);
+  });
+  it('un snapshot antiguo de 0.44 × 1000 da la misma cantidad', () => {
+    expect(cantidadDesdeSaldo({qty_captura:.44,factor:1000}, pepino)).toBe(.44);
+  });
+  it('el saldo normalizado de la API no vuelve a multiplicarse por catálogo', () => {
+    expect(cantidadDesdeSaldo({qty_captura:.44,factor:1000,cantidad_base:440}, pepino)).toBe(.44);
+  });
+  const casos = [
+    {nombre:'Pepino',p:pepino,base:440,visible:.44,unidad:'kg'},
+    {nombre:'Naranja',p:pepino,base:300,visible:.3,unidad:'kg'},
+    {nombre:'Manzana',p:{...pepino,unidad_compra:'pieza',contenido_compra:150},base:600,visible:.6,unidad:'kg'},
+    {nombre:'Fresas',p:{...pepino,unidad_compra:'bolsa congelada',contenido_compra:1810},base:1000,visible:1,unidad:'kg'},
+    {nombre:'Piña',p:pepino,base:1950,visible:1.95,unidad:'kg'},
+    {nombre:'Agua',p:{unidad_base:'ml',contenido_compra:5000,presentacion_modo:'por_lote'},base:5000,visible:5,unidad:'litro'},
+    {nombre:'Tónica',p:{unidad_base:'ml',contenido_compra:296,presentacion_modo:'por_lote'},base:1776,visible:1.776,unidad:'litro'},
+    {nombre:'Tequila',p:{unidad_base:'ml',unidad_compra:'botella',contenido_compra:700,presentacion_modo:'exacta'},base:350,visible:.5,unidad:'botella'},
+    {nombre:'Limón',p:{unidad_base:'pieza',unidad_compra:'kg',contenido_compra:14,presentacion_modo:'por_lote'},base:98,visible:98,unidad:'pieza'},
+    {nombre:'Hierbas',p:{unidad_base:'pieza',unidad_compra:'ramas',contenido_compra:20,presentacion_modo:'por_lote'},base:20,visible:20,unidad:'pieza'},
+    {nombre:'Chicharrón',p:{unidad_base:'g',unidad_compra:'porción',contenido_compra:20,presentacion_modo:'variable'},base:20,visible:20,unidad:'g'},
+    {nombre:'Mermelada',p:{unidad_base:'g',unidad_compra:'lote',contenido_compra:400,presentacion_modo:'exacta'},base:1200,visible:3,unidad:'lote'},
+    {nombre:'Papel',p:{unidad_base:'pieza',unidad_compra:'caja',contenido_compra:8},base:10,visible:10,unidad:'pieza'},
+    {nombre:'Cebolla con descripción ambigua',p:{unidad_base:'g',unidad_compra:'2 piezas',contenido_compra:400,presentacion_modo:'exacta'},base:200,visible:200,unidad:'g'},
+  ];
+  for (const c of casos) it(`${c.nombre}: etiqueta y cantidad conservan la unidad base al guardar`, () => {
+    expect(medidaConteo(c.p).unidad).toBe(c.unidad);
+    expect(cantidadEnConteo(c.base,c.p)).toBe(c.visible);
+    expect(cantidadDesdeSaldo({qty_captura:c.base,factor:1},c.p)).toBe(c.visible);
+    expect(cantidadBaseConteo(c.visible,c.p)).toBeCloseTo(c.base,8);
+  });
+  it('no pierde un peso pequeño por redondear a fracciones de envase', () => {
+    expect(cantidadBaseConteo(cantidadEnConteo(.0001,pepino),pepino)).toBeCloseTo(.0001,12);
+  });
+});

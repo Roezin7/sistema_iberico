@@ -7,6 +7,7 @@ import { Cargando } from '../../ui/Cargando';
 import WeekSelector from '../../components/WeekSelector';
 import Compras from '../compras/Compras';
 import { inputHoraMexico, isoDesdeHoraMexico } from '../../operating';
+import { medidaConteo, cantidadDesdeSaldo, cantidadEnConteo, cantidadBaseConteo } from './conteo-unidades';
 
 // --- Tipos de la API ---
 interface Zona { id: number; nombre: string; orden: number }
@@ -39,7 +40,7 @@ interface ProductoActual {
   costo_fifo_base: number | null; cantidad_con_lote: number; cantidad_sin_lote: number;
   fuente_valoracion: 'fifo' | 'catalogo' | 'mixta' | 'sin_costo';
   categoria_id: number | null; categoria: string | null;
-  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number; unidad_captura?: string; contado_at?: string | null }[];
+  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number; cantidad_base?: number; unidad_captura?: string; contado_at?: string | null }[];
 }
 
 // Agrupa por categoría, respetando el orden configurado; "Sin categoría" al final.
@@ -148,37 +149,10 @@ function pluralUnidad(unidad: string | null | undefined, cantidad?: number) {
   const plurales: Record<string, string> = {
     botella: 'botellas', lata: 'latas', bolsa: 'bolsas', bote: 'botes',
     envase: 'envases', frasco: 'frascos', paquete: 'paquetes', bloque: 'bloques',
-    pieza: 'piezas', unidad: 'unidades', kg: 'kg', litro: 'litros', garrafon: 'garrafones',
+    pieza: 'piezas', unidad: 'unidades', kg: 'kg', g: 'g', ml: 'ml', litro: 'litros', garrafon: 'garrafones',
     manojo: 'manojos', ramo: 'ramos', caja: 'cajas', pack: 'packs', lote: 'lotes',
   };
   return plurales[u] ?? `${u}s`;
-}
-
-/** Unidad que se muestra al operador. El contenido en g/ml sólo vive en el
- * cálculo interno; el conteo se expresa en unidades físicas comprables. */
-function unidadOperativaProducto(p: Producto, u: Unidad): string {
-  if (p.unidad_base === 'pieza') return 'pieza';
-  const texto = (p.unidad_compra || u.unidad_captura || 'unidad').trim().toLowerCase();
-  const primera = texto.split(/\s|\(|\//)[0] || 'unidad';
-  // El operador nunca debe ver la unidad técnica (g/ml) ni el contenido de
-  // la presentación; sólo la unidad física que puede contar.
-  return /^(g|gr|gramo|gramos|ml|cc|mililitro|mililitros)$/.test(primera) ? 'unidad' : primera;
-}
-
-/** Convierte una captura histórica (qty × factor = base) a unidades físicas. */
-function capturaAOperativa(qtyCaptura: number, p: Producto | undefined, u: Unidad): number {
-  const base = Number(qtyCaptura) * (Number(u.factor) || 1);
-  const directo = factorConteoDirecto(p);
-  if (directo != null) return base / directo;
-  if (!p || p.unidad_base === 'pieza') return base;
-  const contenido = Number(p.contenido_compra);
-  return Number.isFinite(contenido) && contenido > 0 ? base / contenido : Number(qtyCaptura);
-}
-
-function factorConteoDirecto(p?: Producto): number | null {
-  if (p?.presentacion_modo === 'variable' && (p.unidad_base === 'g' || p.unidad_base === 'ml')) return 1;
-  if (p?.presentacion_modo === 'por_lote' && (p.unidad_base === 'g' || p.unidad_base === 'ml')) return 1000;
-  return null;
 }
 
 type Tab = 'conteo' | 'actual' | 'compras';
@@ -264,6 +238,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [zonaActiva, setZonaActiva] = useState<number | null>(null);
   const [valores, setValores] = useState<Record<string, string>>({}); // `${pid}:${zid}` -> texto
+  const [valoresActuales, setValoresActuales] = useState<Record<string, string>>({});
+  const [semanaActualId, setSemanaActualId] = useState<number | null>(null);
   const [filtro, setFiltro] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [msg, setMsg] = useState('');
@@ -274,6 +250,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [zonasGuardadas, setZonasGuardadas] = useState<number[]>([]);
   const [horasZona, setHorasZona] = useState<Record<number, string>>({});
   const [cargandoConteo, setCargandoConteo] = useState(false);
+  const [errorConteo, setErrorConteo] = useState(false);
   // Durante la operación no se capturan conteos. El flujo válido es abrir,
   // cerrar o documentar un ajuste puntual.
   const [tipo, setTipo] = useState<TipoCaptura>(cierreGuiado ? 'cierre' : 'apertura');
@@ -295,6 +272,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       setCategorias(c);
       setSemanas(ss);
       const abierta = ss.find((s) => s.estado === 'abierta');
+      setSemanaActualId(abierta?.id ?? null);
       const semanaValida = semanaSolicitada != null && Number.isFinite(semanaSolicitada) && semanaSolicitada > 0
         ? ss.find((s) => s.id === semanaSolicitada)
         : null;
@@ -305,39 +283,55 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       // basta editar ese campo y guardar, sin recapturar todo de nuevo.
       const previos: Record<string, string> = {};
       for (const prod of actual.productos) {
-        const tieneMovimientos = (prod.entradas_posteriores_base ?? 0) > 0 || (prod.consumos_posteriores_base ?? 0) > 0;
         for (const pz of prod.por_zona) {
           const producto = p.find((item) => item.id === prod.product_id);
+          if (!producto) continue;
           const unidad = producto?.unidades.find((item) => item.zona_id === pz.zona_id)
             ?? { zona_id: pz.zona_id, unidad_captura: pz.unidad_captura ?? 'unidad', factor: pz.factor || 1 };
-          // Si sólo hay una zona contada, la existencia física operativa se
-          // puede prellenar sin ambigüedad después de aplicar entradas y
-          // consumos. Con varias zonas se conserva el último conteo por zona
-          // y el operador confirma la distribución real.
-          previos[`${prod.product_id}:${pz.zona_id}`] = String(tieneMovimientos && prod.por_zona.length === 1
-            ? (factorConteoDirecto(producto) != null ? (prod.existencia_fisica_base ?? prod.total_base) / factorConteoDirecto(producto)! : prod.existencia_fisica_operativa ?? capturaAOperativa(pz.qty_captura, producto, unidad))
-            : capturaAOperativa(pz.qty_captura, producto, unidad));
+          previos[`${prod.product_id}:${pz.zona_id}`] = String(cantidadDesdeSaldo(pz, producto, unidad));
         }
       }
-      setValores(previos);
-    });
+      setValoresActuales(previos);
+    }).catch(e => setMsg(e instanceof Error ? e.message : 'No se pudo cargar el inventario.'));
   }, []);
 
   useEffect(() => {
-    if (tipo === 'ajuste' || semanaId == null) { setHorasZona({}); setCargandoConteo(false); return; }
+    if (!productos.length) return;
+    if (tipo === 'ajuste' || semanaId == null) { setValores(valoresActuales); setHorasZona({}); setErrorConteo(false); setCargandoConteo(false); return; }
     let vigente = true;
     setCargandoConteo(true);
-    api<SnapshotHistorial[]>('/inventario/snapshots?semana_id=' + semanaId).then(rows => {
+    setErrorConteo(false);
+    api<SnapshotHistorial[]>('/inventario/snapshots?semana_id=' + semanaId).then(async rows => {
       if (!vigente) return;
       const oficial = rows.find(row => row.oficial_para?.some(c => c.tipo === tipo && c.semana_id === semanaId) || (!row.oficial_para && row.tipo === tipo && row.oficial));
+      let recuperados: Record<string, string> = semanaId === semanaActualId ? { ...valoresActuales } : {};
+      if (oficial) {
+        const detalle = await api<{ lineas: { product_id: number; zona_id: number; qty_captura: number; factor: number; cantidad_base: number }[] }>(`/inventario/snapshots/${oficial.id}`);
+        if (!vigente) return;
+        // Nunca sustituir un conteo histórico por el saldo de hoy. Una línea
+        // ausente no es un cero confirmado, incluso en una zona ya guardada.
+        recuperados = {};
+        for (const linea of detalle.lineas) {
+          const producto = productos.find(p => p.id === linea.product_id);
+          if (!producto) continue;
+          const unidad = producto.unidades.find(u => u.zona_id === linea.zona_id);
+          recuperados[`${linea.product_id}:${linea.zona_id}`] = String(cantidadDesdeSaldo(linea, producto, unidad));
+        }
+        // Al continuar un conteo parcial, sólo sugerir saldos en zonas aún no
+        // guardadas; jamás rellenar huecos del histórico silenciosamente.
+        if (semanaId === semanaActualId) for (const [key, value] of Object.entries(valoresActuales)) {
+          if (!(oficial.zonas ?? []).some(z => z.zona_id === Number(key.split(':')[1]))) recuperados[key] = value;
+        }
+      }
+      setValores(recuperados);
+      setMsg(oficial ? 'Conteo recuperado. Las zonas guardadas conservan su hora; completa las restantes o usa ajuste documentado para corregirlas.' : '');
       setContinuarSnapshotId(oficial?.id ?? null);
       setZonasGuardadas(oficial?.zonas?.map(z => z.zona_id) ?? []);
       setHorasZona(Object.fromEntries((oficial?.zonas ?? []).map(z => [z.zona_id, inputHoraMexico(z.contado_at)])));
-      if (oficial) setMsg('Conteo recuperado. Las zonas guardadas conservan su hora; completa las restantes o usa ajuste documentado para corregirlas.');
-    }).catch(e => { if (vigente) setMsg(e instanceof Error ? e.message : 'No se pudo recuperar el conteo.'); })
+    }).catch(e => { if (vigente) { setErrorConteo(true); setValores({}); setMsg(e instanceof Error ? e.message : 'No se pudo recuperar el conteo.'); } })
       .finally(() => { if (vigente) setCargandoConteo(false); });
     return () => { vigente = false; };
-  }, [tipo, semanaId]);
+  }, [tipo, semanaId, productos, valoresActuales, semanaActualId]);
 
   useEffect(() => {
     setCierrePreview(null);
@@ -365,6 +359,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
     setValores((prev) => ({ ...prev, [`${pid}:${zid}`]: v }));
 
   async function guardar() {
+    if (cargandoConteo || errorConteo) return;
     if (zonaActiva == null) {
       setMsg('Selecciona una zona para guardar el inventario.');
       return;
@@ -373,8 +368,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       .filter(([, v]) => v !== '' && !Number.isNaN(Number(v)))
       .map(([k, v]) => {
         const [product_id, zona_id] = k.split(':').map(Number);
-        const directo = factorConteoDirecto(productos.find((p) => p.id === product_id));
-        return { product_id, zona_id, qty_captura: Number(v), ...(directo == null ? {} : { cantidad_base: Number(v) * directo }) };
+        const producto = productos.find((p) => p.id === product_id)!;
+        return { product_id, zona_id, qty_captura: Number(v), cantidad_base: cantidadBaseConteo(Number(v), producto, unidadDe(producto, zona_id)) };
       })
       .filter((linea) => linea.zona_id === zonaActiva);
     if (lineas.length === 0) {
@@ -464,7 +459,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           />}
           {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}
         </div>
-        <p className="muted inventory-unit-help">Captura botellas, cajas, paquetes o piezas.</p>
+        <p className="muted inventory-unit-help">Usa la unidad indicada junto a cada producto. Ejemplo: 440 g de pepino se capturan como 0.44 kg.</p>
       </section>
       <div className="zona-tabs">
         {zonas.map((z) => (
@@ -479,7 +474,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>
         {cierreGuiado
           ? 'Los campos parten del último saldo físico disponible. Confirma que coincidan con el esperado y corrige sólo las diferencias reales.'
-          : 'Se muestra el último conteo por zona. Cuando sólo hay una zona, se prellena con el saldo físico después de entradas y consumos; confirma la cantidad real antes de guardar.'}
+          : 'Si ya guardaste esta apertura o cierre, se muestran sus cantidades originales. Para un conteo nuevo de la semana actual se sugiere la existencia disponible; confirma el físico antes de guardar. Un campo vacío no significa cero.'}
       </p>
 
       {zonaActiva != null && grupos.map((g) => (
@@ -490,15 +485,16 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
               const esperado = cierreGuiado ? cierrePreviewPorProducto.get(p.id) : undefined;
               const key = `${p.id}:${zonaActiva}`;
               const esBool = u.unidad_captura === 'boolean';
-              const directo = factorConteoDirecto(p);
-              const unidadOperativa = directo == null ? unidadOperativaProducto(p, u) : directo === 1000 ? (p.unidad_base === 'ml' ? 'litro' : 'kg') : p.unidad_base ?? 'unidad';
+              const medida = medidaConteo(p, u);
+              const unidadOperativa = medida.unidad;
+              const esperadoConteo = esperado ? cantidadEnConteo(esperado.esperado_base, p, u) : null;
               return (
                 <li key={p.id} className="conteo-row">
                   <div className="conteo-info">
                     <strong>{p.nombre}</strong>
                     <small className="muted">Se captura en {pluralUnidad(unidadOperativa, 2)} · {p.store}</small>
-                    {directo != null && <small className="muted">Suma el contenido de todos los envases{p.unidad_base === 'ml' && directo === 1000 ? ': 2 de 600 ml = 1.2 L' : ''}.</small>}
-                    {esperado && <small className="muted">Esperado al cierre: {formatoCantidad(esperado.esperado_operativo)} {pluralUnidad(esperado.unidad_operativa, esperado.esperado_operativo)}</small>}
+                    {medida.factor !== 1 && p.unidad_base && <small className="muted">1 {unidadOperativa} = {formatoCantidad(medida.factor)} {p.unidad_base}. {p.presentacion_modo === 'por_lote' ? 'Suma el contenido de todos los envases.' : ''}</small>}
+                    {esperadoConteo != null && <small className="muted">Esperado al cierre: {formatoCantidad(esperadoConteo)} {pluralUnidad(unidadOperativa, esperadoConteo)}</small>}
                   </div>
                   {esBool ? (
                     <div className="bool-toggle">
@@ -507,7 +503,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                     </div>
                   ) : (
                     <input
-                      disabled={tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva)}
+                      disabled={cargandoConteo || guardando || (tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva))}
+                      aria-label={`${p.nombre} (${unidadOperativa})`}
                       className="conteo-input"
                       data-conteo-input="true"
                       type="number"
@@ -527,13 +524,13 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         </SeccionCategoria>
       ))}
 
-      {msg && <p className="error-msg">{msg}</p>}
+      {msg && <p className={msg.startsWith('Conteo recuperado.') || msg.includes(' guardada.') ? 'info-box' : 'error-msg'}>{msg}</p>}
       <div className="sticky-action">
         <span className="muted">{capturados} capturados</span>
         <button className="btn-secondary" onClick={() => setValores({})} disabled={guardando || capturados === 0}>
           Limpiar
         </button>
-        <button className="btn-primary" onClick={guardar} disabled={guardando || cargandoConteo || (tipo !== 'ajuste' && zonaActiva != null && zonasGuardadas.includes(zonaActiva))}>
+        <button className="btn-primary" onClick={guardar} disabled={guardando || cargandoConteo || errorConteo || (tipo !== 'ajuste' && zonaActiva != null && zonasGuardadas.includes(zonaActiva))}>
           {guardando ? 'Guardando…' : cierreGuiado ? `Guardar ${zonas.find((zona) => zona.id === zonaActiva)?.nombre ?? 'zona'} y continuar` : `Guardar ${zonas.find((zona) => zona.id === zonaActiva)?.nombre ?? 'zona'}`}
         </button>
       </div>

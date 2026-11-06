@@ -19,7 +19,7 @@
     "prisma:introspect": "npm run prisma:introspect -w server",
     "prisma:studio": "npm run prisma:studio -w server",
     "seed": "npm run seed -w server",
-    "test": "npm run test -w server",
+    "test": "npm run test -w server && npm run test -w client",
     "render-build": "npm install && npm run build && npm run prisma:generate -w server && npx --workspace server prisma migrate deploy"
   },
   "devDependencies": {

@@ -9,6 +9,7 @@ import { num, num0 } from '../lib/num.js';
 import { HttpError } from '../middleware/error.js';
 import {
   totalBaseProducto,
+  saldoZonaNormalizado,
   faltanteCompra,
   minimoBaseDesdePresentacion,
   presentacionesNecesarias,
@@ -87,7 +88,7 @@ export interface ProductoActual {
   valor: number;
   categoria_id: number | null;
   categoria: string | null;
-  por_zona: { zona_id: number; zona: string; qty_captura: number; factor: number; unidad_captura: string; contado_at?: string | null }[];
+  por_zona: { zona_id: number; zona: string; cantidad_base: number; qty_captura: number; factor: number; unidad_captura: string; contado_at?: string | null }[];
 }
 
 export interface InventarioActual {
@@ -576,15 +577,11 @@ async function inventarioActualCalculado(negocioId: bigint, options: { semanaId?
       categoria_id: p.categoria_id ? Number(p.categoria_id) : null,
       categoria: p.categorias_inventario?.nombre ?? null,
       por_zona: zonasConEntradas.map((zona) => {
-        const referencia = ls.find((linea) => Number(linea.zona_id) === zona.zona_id);
         const unidad = unidadCapturaPorPar.get(`${p.id}:${zona.zona_id}`);
-        const factor = referencia ? num0(referencia.factor) : unidad?.factor == null ? 1 : num0(unidad.factor);
         return {
           zona_id: zona.zona_id,
           zona: zona.zona,
-          qty_captura: Math.max(0, (repartoFisico.saldos.get(zona.zona_id) ?? zona.qty_base) / Math.max(factor, 0.0000001)),
-          factor,
-          unidad_captura: unidad?.unidad ?? (referencia ? 'unidad base' : p.unidad_base ?? 'unidad base'),
+          ...saldoZonaNormalizado(Math.max(0, repartoFisico.saldos.get(zona.zona_id) ?? zona.qty_base), p.unidad_base, unidad),
           contado_at: ultimoPorZona.get(String(zona.zona_id))?.created_at.toISOString() ?? null,
         };
       }),

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   totalBaseProducto,
+  saldoZonaNormalizado,
   faltanteCompra,
   valorProducto,
   costoBaseDesdePresentacion,
@@ -16,6 +17,19 @@ import {
   type ProductoFaltante,
 } from './logic.js';
 import { costoUnitarioBaseDesdeCatalogo, conversionAperturaDesdeCatalogo, cantidadBaseDesdeLineaSnapshot } from './apertura-fifo.js';
+
+describe('unidad coherente del saldo por zona', () => {
+  it('440 g se devuelven como 0.44 × 1000 kg, no 440 × 1 kg', () => {
+    expect(saldoZonaNormalizado(440,'g',{factor:1000,unidad:'kg'})).toEqual({cantidad_base:440,qty_captura:.44,factor:1000,unidad_captura:'kg'});
+  });
+  it('sin configuración sólo etiqueta la unidad base, sin fingir envases', () => {
+    expect(saldoZonaNormalizado(1950,'g')).toEqual({cantidad_base:1950,qty_captura:1950,factor:1,unidad_captura:'g'});
+  });
+  it('la representación de envases mantiene el mismo saldo físico', () => {
+    const r=saldoZonaNormalizado(1000,'g',{factor:1810,unidad:'bolsa'});
+    expect(r.qty_captura*r.factor).toBeCloseTo(1000,8);
+  });
+});
 
 describe('costo de apertura FIFO', () => {
   it('normaliza el precio de presentación a la unidad base', () => {

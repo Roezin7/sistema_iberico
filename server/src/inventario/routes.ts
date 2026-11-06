@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { prisma } from '../db.js';
 import { z } from 'zod';
 import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
@@ -65,6 +66,21 @@ inventarioRouter.get(
 inventarioRouter.get('/snapshots', asyncHandler(async (req, res) => {
   const semanaId = req.query.semana_id ? BigInt(z.coerce.number().int().positive().parse(req.query.semana_id)) : undefined;
   res.json(await listarSnapshots(req.auth!.negocioId, semanaId));
+}));
+
+/** Cantidades originales del conteo, sin movimientos posteriores ni factores actuales. */
+inventarioRouter.get('/snapshots/:id', soloAdmin, asyncHandler(async (req, res) => {
+  const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
+  const snapshot = await prisma.inventory_snapshot.findFirst({
+    where: { id, negocio_id: req.auth!.negocioId }, include: { inventory_lines: true },
+  });
+  if (!snapshot) throw new HttpError(404, 'Conteo no encontrado');
+  res.json({ id: Number(snapshot.id), tipo: snapshot.tipo, semana_id: snapshot.semana_id == null ? null : Number(snapshot.semana_id),
+    lineas: snapshot.inventory_lines.map(l => ({ product_id: Number(l.product_id), zona_id: Number(l.zona_id),
+      qty_captura: Number(l.qty_captura), factor: Number(l.factor), cantidad_base: Number(l.qty_captura) * Number(l.factor),
+      contado_at: (l.contado_at ?? snapshot.created_at).toISOString(),
+    })),
+  });
 }));
 
 /** GET /inventario/cierre-preview — expectativa independiente para confirmar el cierre. */

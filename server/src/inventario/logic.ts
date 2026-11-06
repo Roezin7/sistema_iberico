@@ -10,6 +10,14 @@ export interface LineaConteo {
   factor: number;
 }
 
+/** La cantidad, factor y etiqueta de una zona deben pertenecer a la misma
+ * presentación. Un factor histórico 1 (base) no puede llevar etiqueta kg. */
+export function saldoZonaNormalizado(base: number, unidadBase: string | null, unidad?: { factor: number; unidad: string }) {
+  const valida = unidad && Number.isFinite(unidad.factor) && unidad.factor > 0;
+  const factor = valida ? unidad.factor : 1;
+  return { cantidad_base: base, qty_captura: base / factor, factor, unidad_captura: (valida ? unidad.unidad : null) || unidadBase || 'unidad base' };
+}
+
 /** Unidades en las que se expresa el inventario y las recetas.
  * Las presentaciones comerciales (botella, bolsa, paquete, caja, etc.)
  * nunca deben convertirse en una unidad base distinta: se describen con
