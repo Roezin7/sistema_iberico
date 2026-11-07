@@ -1,4 +1,4 @@
-import { cantidadBaseCompra, formatoCantidad, type ProductoPresentacion } from './fifo-form';
+import { cantidadBaseCompra, formatoCantidad, normalizarUnidad, type ProductoPresentacion } from './fifo-form';
 
 export interface ProductoCompra extends ProductoPresentacion { id: number; nombre: string; active?: boolean }
 export interface CamposLineaCompra {
@@ -26,6 +26,8 @@ export function LineaCompra({ linea, productos, numero, editar, quitar }: {
   const calculada = cantidadBaseCompra(linea, producto);
   const variable = producto?.presentacion_modo === 'variable';
   const porLote = producto?.presentacion_modo === 'por_lote';
+  const fuente = normalizarUnidad(linea.unidad_fuente || linea.unidad_compra);
+  const metrica = (producto?.unidad_base === 'g' && (fuente === 'g' || fuente === 'kg')) || (producto?.unidad_base === 'ml' && (fuente === 'ml' || fuente === 'l'));
   const cantidad = calculada ?? (linea.cantidad_base ? Number(linea.cantidad_base) : null);
   const importe = Number(linea.importe);
   const costo = cantidad && importe >= 0 ? importe / cantidad : null;
@@ -45,12 +47,12 @@ export function LineaCompra({ linea, productos, numero, editar, quitar }: {
       {linea.tipo_linea === 'inventario' && <label>{etiqueta}<input aria-label={etiqueta} type="number" inputMode="decimal" min="0" step="any"
         value={variable ? linea.cantidad_base ?? '' : linea.cantidad_fuente ?? ''}
         placeholder={variable ? 'Peso medido o estimado' : 'Ej. 2'} onChange={(e) => editar(variable ? 'cantidad_base' : 'cantidad_fuente', e.target.value)} /></label>}
-      {linea.tipo_linea === 'inventario' && porLote && <label>Contenido de cada unidad ({producto?.unidad_base})<input type="number" inputMode="decimal" min="0" step="any"
+      {linea.tipo_linea === 'inventario' && porLote && !metrica && <label>Contenido de cada unidad ({producto?.unidad_base})<input type="number" inputMode="decimal" min="0" step="any"
         value={linea.contenido_compra ?? ''} placeholder="Ej. 600, 1700 o 2000" onChange={(e) => editar('contenido_compra', e.target.value)} /></label>}
       <label>Importe de esta línea<input type="number" min="0" step="0.01" inputMode="decimal" value={linea.importe} placeholder="Total de las unidades" onChange={(e) => editar('importe', e.target.value)} /></label>
     </div>
     {producto && linea.tipo_linea === 'inventario' && <>
-      {porLote && <small className="muted">Lee el tamaño en el envase. Si es un paquete, indica el contenido total del paquete.</small>}
+      {porLote && <small className="muted">{metrica ? `Cantidad expresada directamente en ${fuente}; no se multiplica por el tamaño del envase.` : 'Lee el tamaño en el envase. Si es un paquete, indica el contenido total del paquete.'}</small>}
       {variable && <small className="muted">{producto.presentacion_nota || 'Captura la cantidad observada o tu estimación. No se calcula desde el tamaño del catálogo.'}</small>}
       {cantidad != null && cantidad > 0 && <p className="purchase-item__result">Entran <strong>{formatoCantidad(cantidad)} {producto.unidad_base}</strong> a bodega{costo != null && ` · ${money(costo)} por ${producto.unidad_base}`}</p>}
       <details className="purchase-item__details"><summary>{porLote ? 'Unidad de compra y detalle del ticket' : 'Presentación y detalle del ticket'}</summary>
@@ -60,7 +62,7 @@ export function LineaCompra({ linea, productos, numero, editar, quitar }: {
           <small className="muted">Para servicios de tamaño exacto. No cambia la cantidad base recibida. Déjalo vacío si no conoces la presentación.</small>
           <label>Texto original del ticket<input value={linea.descripcion_fuente} onChange={(e) => editar('descripcion_fuente', e.target.value)} /></label>
           {!variable && <label>Unidad de compra<input value={linea.unidad_fuente || linea.unidad_compra || ''} placeholder="botella, paquete, kg…" onChange={(e) => { editar('unidad_fuente', e.target.value); editar('unidad_compra', e.target.value); }} /></label>}
-          {!porLote && !variable && <label>Contenido por unidad ({producto.unidad_base})<input type="number" min="0" step="any" value={linea.contenido_compra ?? ''} onChange={(e) => editar('contenido_compra', e.target.value)} /></label>}
+          {!porLote && !variable && !metrica && <label>Contenido por unidad ({producto.unidad_base})<input type="number" min="0" step="any" value={linea.contenido_compra ?? ''} onChange={(e) => editar('contenido_compra', e.target.value)} /></label>}
           {!variable && calculada == null && <label>Cantidad base recibida ({producto.unidad_base})<input type="number" min="0" step="any" value={linea.cantidad_base ?? ''} onChange={(e) => editar('cantidad_base', e.target.value)} /></label>}
         </div>
       </details>

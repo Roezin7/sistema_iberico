@@ -1,3 +1,4 @@
+import { fechaCivilSchema } from '../lib/fechas.js';
 import { Router } from 'express';
 import { prisma } from '../db.js';
 import { z } from 'zod';
@@ -148,7 +149,7 @@ inventarioRouter.get('/compras/referencias', asyncHandler(async (req, res) => {
 }));
 
 inventarioRouter.get('/compras', asyncHandler(async (req, res) => {
-  const fecha = req.query.fecha ? z.string().regex(/^\d{4}-\d{2}-\d{2}$/).parse(req.query.fecha) : undefined;
+  const fecha = req.query.fecha ? fechaCivilSchema.parse(req.query.fecha) : undefined;
   res.json(await listarCompras(req.auth!.negocioId, fecha));
 }));
 
@@ -178,7 +179,7 @@ inventarioRouter.post('/lotes/:id/transferir', soloAdmin, asyncHandler(async (re
   const body = z.object({
     zona_destino_id: z.coerce.number().int().positive(),
     efectiva_at: z.string().datetime({ offset: true }).nullable().optional(),
-    fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    fecha: fechaCivilSchema.optional(),
     motivo: z.string().trim().max(500).optional().nullable(),
   }).parse(req.body);
   res.status(201).json(await transferirLote({ negocioId: req.auth!.negocioId, loteId, zonaDestinoId: BigInt(body.zona_destino_id), fecha: body.fecha, efectiva_at: body.efectiva_at, motivo: body.motivo, usuarioId: req.auth!.usuarioId }));
@@ -198,7 +199,7 @@ inventarioRouter.post(
     const body = z.object({
       recibida_at: z.string().datetime({ offset: true }).nullable().optional(),
       confirmada: z.literal(true),
-      fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      fecha_recepcion: fechaCivilSchema,
       proveedor: z.string().trim().min(1).optional().nullable(),
       ticket_ref: z.string().trim().min(1).optional().nullable(),
       total: z.coerce.number().nonnegative().optional().nullable(),
@@ -232,7 +233,7 @@ inventarioRouter.post('/compras/rapidas', asyncHandler(async (req, res) => {
   const body = z.object({
     solicitud_id: z.string().uuid().optional(),
     recibida_at: z.string().datetime({ offset: true }).nullable().optional(),
-    fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    fecha_recepcion: fechaCivilSchema,
     proveedor: z.string().trim().max(160).optional().nullable(),
     ticket_ref: z.string().trim().max(120).optional().nullable(),
     total: z.coerce.number().nonnegative().optional().nullable(),
@@ -325,7 +326,7 @@ inventarioRouter.patch('/compras/:id/pago', soloAdmin, asyncHandler(async (req, 
 inventarioRouter.patch('/compras/:id', soloAdmin, asyncHandler(async (req, res) => {
   const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
   const body = z.object({
-    fecha_recepcion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    fecha_recepcion: fechaCivilSchema.optional(),
     proveedor: z.string().trim().max(160).nullable().optional(),
     ticket_ref: z.string().trim().max(120).nullable().optional(),
     total: z.coerce.number().nonnegative().optional(),

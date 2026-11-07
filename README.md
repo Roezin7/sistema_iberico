@@ -10,6 +10,8 @@ aunque la selección dinámica del negocio todavía no está expuesta en la inte
 
 ## Estado y prioridades actuales
 
+La [auditoría integral del 6 de noviembre](docs/AUDITORIA_INTEGRAL_2026-11-06.md) documenta las correcciones de unidades, compras, cortes, costos y permisos, las pruebas realizadas y los pendientes reales.
+
 La revisión de producción del 3 de noviembre está en [Revisión ejecutiva y plan de Ibérico](docs/REVISION_EJECUTIVA_Y_PLAN_IBERICO_2026-11-03.md). Describe lo comprobado, las limitaciones de datos y el plan de cuatro semanas. La app se organiza en Operación, Abasto, Finanzas y Administración.
 
 La arquitectura tiene separación por negocio, pero aún requiere adaptar marca, reglas, conexión Epos y selección de negocio para replicarla. No se presenta un porcentaje de reutilización sin un ensayo de réplica.
@@ -249,7 +251,7 @@ El servicio completo queda en el puerto configurado por `PORT` (3000 por defecto
 | `npm run dev` | Cliente y servidor con recarga en desarrollo |
 | `npm run build` | Compila la PWA y el servidor |
 | `npm start` | Sirve API y PWA compilada |
-| `npm test` | Ejecuta pruebas unitarias del servidor |
+| `npm test` | Ejecuta pruebas del servidor y cliente |
 | `npm run seed` | Crea el negocio y datos iniciales de Ibérico |
 | `npm run prisma:generate` | Genera Prisma Client |
 | `npm run prisma:migrate` | Crea/aplica migraciones de desarrollo |
@@ -279,9 +281,9 @@ Las pruebas actuales cubren las reglas puras más sensibles:
 
 Límites que deben considerarse:
 
-- Hay pruebas de contrato HTTP y una verificación de API contra una copia local restaurada
-  (server/scripts/verificar-flujo-compras.ts). La revisión visual en navegador se documenta
-  en el informe; todavía no forma parte de la ejecución automática en CI.
+- Hay pruebas de contrato HTTP y cuatro verificaciones integrales en CI: cronología de zonas,
+  ciclo FIFO, trazabilidad de cierre e integridad de aplicación. También se ejecutan contra
+  una copia local restaurada. La revisión visual se documenta en el informe; todavía no está automatizada en CI.
 - La experiencia visual selecciona el negocio inicial; no existe selector o resolución por
   subdominio.
 - La autenticación por PIN es adecuada para operación interna, no sustituye SSO/MFA.

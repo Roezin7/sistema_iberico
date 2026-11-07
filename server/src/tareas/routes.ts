@@ -1,3 +1,4 @@
+import { fechaCivilSchema, hoyMexico } from '../lib/fechas.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/error.js';
@@ -12,13 +13,18 @@ const tipoChecklist = z.enum(['apertura', 'cierre']);
 
 // --- Día de tareas (ambos roles) ---
 tareasRouter.get('/dia', asyncHandler(async (req, res) => {
-  const fecha = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).catch(new Date().toISOString().slice(0, 10)).parse(req.query.fecha);
+  const fecha = fechaCivilSchema.default(hoyMexico()).parse(req.query.fecha);
   res.json(await svc.diaDeTareas(req.auth!.negocioId, fecha));
 }));
 
 tareasRouter.patch('/resultados', asyncHandler(async (req, res) => {
   const b = z.object({ instancia_id: id, item_id: id, completado: z.boolean() }).parse(req.body);
   res.json(await svc.marcarResultado(req.auth!.negocioId, req.auth!.usuarioId, BigInt(b.instancia_id), BigInt(b.item_id), b.completado));
+}));
+
+tareasRouter.post('/evento', soloAdmin, asyncHandler(async (req, res) => {
+  const b = z.object({ fecha: fechaCivilSchema }).parse(req.body);
+  res.status(201).json(await svc.diaDeTareas(req.auth!.negocioId, b.fecha, true));
 }));
 
 // --- Gestión de checklists (solo admin) ---

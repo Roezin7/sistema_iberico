@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { asyncHandler, HttpError } from '../middleware/error.js';
 import { firmarToken } from './jwt.js';
 import { requireAuth, soloAdmin } from './middleware.js';
+import { bloquearLibro } from '../inventario/control-cierre.js';
 
 export const authRouter = Router();
 
@@ -128,12 +129,6 @@ authRouter.post(
   }),
 );
 
-/** Evita dejar al negocio sin ningún admin activo. */
-async function quedaAlgunAdmin(negocioId: bigint, exceptoId: bigint): Promise<boolean> {
-  const n = await prisma.usuarios.count({ where: { negocio_id: negocioId, rol: 'admin', activo: true, id: { not: exceptoId } } });
-  return n > 0;
-}
-
 /** PATCH /auth/admin/usuarios/:id { nombre?, rol?, activo? } */
 authRouter.patch(
   '/admin/usuarios/:id',
@@ -142,14 +137,17 @@ authRouter.patch(
   asyncHandler(async (req, res) => {
     const id = BigInt(idParam.parse(req.params.id));
     const b = z.object({ nombre: z.string().min(1).optional(), rol: rol.optional(), activo: z.boolean().optional() }).parse(req.body);
-    const usuario = await prisma.usuarios.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
+    await prisma.$transaction(async tx => {
+    await bloquearLibro(tx, req.auth!.negocioId);
+    const usuario = await tx.usuarios.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
     if (!usuario) throw new HttpError(404, 'Usuario no encontrado');
     // No permitir quitar el último admin (ni desactivándolo ni cambiándolo a empleado).
     const dejaDeSerAdmin = (b.rol && b.rol !== 'admin') || b.activo === false;
-    if (usuario.rol === 'admin' && dejaDeSerAdmin && !(await quedaAlgunAdmin(req.auth!.negocioId, id))) {
+    if (usuario.rol === 'admin' && dejaDeSerAdmin && !await tx.usuarios.count({ where: { negocio_id: req.auth!.negocioId, rol: 'admin', activo: true, id: { not: id } } })) {
       throw new HttpError(409, 'No puedes dejar el negocio sin ningún administrador activo.');
     }
-    await prisma.usuarios.update({ where: { id }, data: { nombre: b.nombre, rol: b.rol, activo: b.activo } });
+    await tx.usuarios.update({ where: { id }, data: { nombre: b.nombre, rol: b.rol, activo: b.activo } });
+    });
     res.json({ ok: true });
   }),
 );

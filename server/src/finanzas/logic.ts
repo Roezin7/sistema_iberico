@@ -252,7 +252,7 @@ export function estadoResultadosMensual(
       inv && inv.inicial != null && inv.final != null ? redondear(inv.final - inv.inicial) : null;
     // Cuando existe ledger FIFO, éste es la única fuente del costo de ventas.
     // La variación física queda como control, no como sustituto contable.
-    const tieneCostoFifo = Object.prototype.hasOwnProperty.call(costoVentasFifoPorMes, mes);
+    const tieneCostoFifo = costoVentasFifoPorMes[mes] != null && Number.isFinite(costoVentasFifoPorMes[mes]);
     const costoFifo = costoVentasFifoPorMes[mes] ?? null;
     const costoVentas = tieneCostoFifo
       ? (costoFifo ?? 0)
@@ -275,7 +275,10 @@ export function estadoResultadosMensual(
     // normal ya vienen restadas de la venta en efectivo del día.
     const propinasPagadas = porTipo('propina_pagada');
     const costoSalidas = salidasSinVentaPorMes[mes] ?? 0;
-    const utilidadOperativa = redondear(utilidadBruta - sueldos - gastosTotales - propinasPagadas - costoSalidas);
+    // Apertura + compras − cierre ya incluye las salidas sin venta. Restarlas
+    // otra vez duplicaría la pérdida. Sólo FIFO de ventas las excluye.
+    const costoSalidasAdicional = !tieneCostoFifo && variacion != null ? 0 : costoSalidas;
+    const utilidadOperativa = redondear(utilidadBruta - sueldos - gastosTotales - propinasPagadas - costoSalidasAdicional);
 
     const facturadoTarjeta = redondear(tarjeta + propinas);
     const facturadoGastos = suma((m) => m.facturado);
@@ -304,7 +307,7 @@ export function estadoResultadosMensual(
         balance: redondear(facturadoTarjeta - facturadoGastos),
       },
       inventario: inv,
-      sin_movimientos: delMes.length === 0,
+      sin_movimientos: delMes.length === 0 && !tieneCostoFifo && costoSalidas === 0,
     };
   });
 }

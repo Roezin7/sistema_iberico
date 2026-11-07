@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run src/screens/inventario/conteo-unidades.test.ts",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {

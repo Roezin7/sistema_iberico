@@ -74,7 +74,7 @@
 .marketing-toolbar select { max-width: 260px; }
 .marketing-piece { gap: 0.9rem; }
 .marketing-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.75rem; }
-.marketing-fields label { display: flex; flex-direction: column; gap: 0.35rem; color: var(--ink-2); font-size: 0.78rem; }
+.marketing-fields label { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; color: var(--ink-2); font-size: 0.78rem; }
 .marketing-fields input { width: 100%; min-width: 0; }
 .marketing-actions { display: flex; justify-content: flex-end; gap: 0.5rem; flex-wrap: wrap; }
 .badge-neutral { display: inline-flex; align-items: center; padding: 0.25rem 0.55rem; border-radius: var(--r-pill); background: var(--surface-2); color: var(--ink-2); font-size: 0.72rem; font-weight: 600; }
@@ -117,6 +117,7 @@
 .config-advanced > .resumen-card { margin: 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; box-shadow: none; }
 .product-filters { display: grid; grid-template-columns: minmax(15rem, 1fr) repeat(3, minmax(11rem, .35fr)) auto; align-items: center; gap: .55rem; margin-bottom: .8rem; }
 .product-filters .buscador { margin: 0; }
+.product-filters > *, .config-quality-filters > * { min-width: 0; max-width: 100%; }
 .config-quality-filters { display: grid; grid-template-columns: minmax(15rem, 1fr) minmax(12rem, .45fr); gap: .55rem; align-items: center; }
 .config-quality-filters .buscador { margin: 0; }
 .config-check { display: flex; align-items: center; gap: .35rem; white-space: nowrap; color: var(--ink-2); font-size: .8rem; }
@@ -226,13 +227,13 @@
   .config-intro { grid-template-columns: 1fr; }
   .config-stats { justify-content: stretch; }
   .config-stats span { flex: 1; }
-  .product-filters { grid-template-columns: 1fr 1fr; }
+  .product-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .product-filters .buscador { grid-column: 1 / -1; }
   .config-quality-filters { grid-template-columns: 1fr; }
   .product-editor { grid-template-columns: 1fr; }
   .product-list { position: static; max-height: 18rem; }
   .marketing-alert { grid-template-columns: 1fr; }
-  .marketing-fields { grid-template-columns: 1fr 1fr; }
+  .marketing-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .marketing-toolbar { align-items: stretch; flex-direction: column; }
   .marketing-toolbar select { max-width: none; }
   .response-row { grid-template-columns: 1fr; }

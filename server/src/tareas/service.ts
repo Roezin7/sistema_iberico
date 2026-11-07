@@ -1,6 +1,7 @@
 import { Prisma, type TipoChecklist } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { fechaCivilUTC } from '../lib/fechas.js';
 
 function iso(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -108,12 +109,19 @@ export async function eliminarItem(negocioId: bigint, itemId: bigint) {
 // ---------------------------------------------------------------------------
 
 /** Para una fecha, devuelve cada checklist activo con su instancia y el estado de cada ítem. */
-export async function diaDeTareas(negocioId: bigint, fechaStr: string) {
-  const fecha = new Date(fechaStr + 'T00:00:00Z');
+export async function diaDeTareas(negocioId: bigint, fechaStr: string, activarEvento = false) {
+  const fecha = fechaCivilUTC(fechaStr);
   // Ibérico opera regularmente viernes, sábado y domingo. No crear instancias
   // artificiales para lunes–jueves: esos días no deben parecer tareas vencidas.
-  if (![0, 5, 6].includes(fecha.getUTCDay())) {
-    return { fecha: iso(fecha), checklists: [] };
+  const regular = [0, 5, 6].includes(fecha.getUTCDay());
+  if (!regular && !activarEvento) {
+    const desde = new Date(`${fechaStr}T00:00:00-06:00`), hasta = new Date(desde.getTime() + 86400000);
+    const [instancia, venta, movimiento] = await Promise.all([
+      prisma.checklist_instancias.findFirst({ where: { fecha, checklists: { negocio_id: negocioId } }, select: { id: true } }),
+      prisma.epos_ventas.findFirst({ where: { negocio_id: negocioId, fecha: { gte: desde, lt: hasta } }, select: { id: true } }),
+      prisma.movimientos.findFirst({ where: { negocio_id: negocioId, fecha, tipo: { in: ['venta_efectivo', 'venta_tarjeta'] }, monto: { gt: 0 } }, select: { id: true } }),
+    ]);
+    if (!instancia && !venta && !movimiento) return { fecha: iso(fecha), checklists: [], operativo: false, evento_especial: false };
   }
   const checklists = await prisma.checklists.findMany({
     where: { negocio_id: negocioId, activo: true },
@@ -144,7 +152,7 @@ export async function diaDeTareas(negocioId: bigint, fechaStr: string) {
       progreso: { hechos, total: items.length },
     });
   }
-  return { fecha: iso(fecha), checklists: resultado };
+  return { fecha: iso(fecha), checklists: resultado, operativo: true, evento_especial: !regular };
 }
 
 /** Marca/desmarca un ítem en una instancia. */

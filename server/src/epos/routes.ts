@@ -1,3 +1,4 @@
+import { fechaCivilSchema } from '../lib/fechas.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/error.js';
@@ -54,7 +55,7 @@ eposRouter.post('/sync', asyncHandler(async (req, res) => {
  * persiste las líneas y devuelve los métodos de pago listos para confirmar. */
 eposRouter.post('/sync-daily', asyncHandler(async (req, res) => {
   const body = z.object({
-    fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    fecha: fechaCivilSchema,
     offset: z.string().regex(/^[+-]\d{2}:\d{2}$/).default('-06:00'),
     location_id: z.coerce.number().int().positive().optional(),
   }).parse(req.body);
@@ -135,10 +136,11 @@ eposRouter.post('/mapeo-menu/aplicar', asyncHandler(async (req, res) => {
 
 const dailySchema = z.object({
   semana_id: z.coerce.number().int().positive(),
-  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  fecha: fechaCivilSchema,
   epos: z.object({ ventas: z.coerce.number().min(0), efectivo: z.coerce.number().min(0), tarjeta: z.coerce.number().min(0), otros: z.coerce.number().min(0) }),
   confirmado: z.object({ ventas: z.coerce.number().min(0), efectivo: z.coerce.number().min(0), tarjeta: z.coerce.number().min(0), otros: z.coerce.number().min(0) }),
-  cuentas_abiertas: z.coerce.number().min(0).default(0),
+  cuentas_abiertas: z.coerce.number().int().min(0).default(0),
+  diario: z.object({ venta_efectivo: z.number().finite().nonnegative(), venta_tarjeta: z.number().finite().nonnegative(), propina_tarjeta: z.number().finite().nonnegative(), gasto_efectivo: z.number().finite().nonnegative(), sueldos: z.number().finite().nonnegative() }).optional(),
   excepciones: z.array(z.record(z.unknown())).default([]),
   notas: z.string().max(2000).optional(),
 });
@@ -154,6 +156,7 @@ eposRouter.post('/conciliaciones-diarias', asyncHandler(async (req, res) => {
     negocioId: req.auth!.negocioId, usuarioId: req.auth!.usuarioId, semanaId: BigInt(body.semana_id),
     fecha: body.fecha, epos: body.epos, confirmado: body.confirmado,
     cuentasAbiertas: body.cuentas_abiertas, excepciones: body.excepciones, notas: body.notas,
+    diario: body.diario,
   });
   res.status(201).json(row);
 }));

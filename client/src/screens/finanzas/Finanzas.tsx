@@ -1,5 +1,5 @@
 import { ControlCiclo } from '../inventario/ControlInventario';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   finanzas, epos, mxn, TIPOS, type Referencias, type Semana, type Resumen, type FilaCuadre,
@@ -15,6 +15,7 @@ import { api } from '../../api';
 import { cantidadBaseCompra } from '../compras/fifo-form';
 import { LineaCompra, type ProductoCompra } from '../compras/LineaCompra';
 import WeekSelector from '../../components/WeekSelector';
+import { repartoMixto } from './reparto-mixto';
 
 function sumarDias(fechaIso: string, n: number): string {
   const d = new Date(fechaIso + 'T00:00:00Z');
@@ -33,7 +34,7 @@ function esEventoEspecial(fecha: string) {
   return new Date(`${fecha}T12:00:00Z`).getUTCDay() === 4;
 }
 
-type MetodoMixto = 'cash' | 'card';
+type MetodoMixto = 'cash' | 'card' | 'dividido';
 
 function claveMetodoEpos(metodo: string) {
   return metodo.trim().toLowerCase().replace(/[\s_-]/g, '');
@@ -121,7 +122,7 @@ export default function Finanzas() {
       {!semana ? (
         <p className="muted">No hay semanas. Crea una para empezar.</p>
       ) : (
-        <SemanaPanel ref_={ref} semana={semana} onCambio={recargar} />
+        <SemanaPanel key={semana.id} ref_={ref} semana={semana} onCambio={recargar} />
       )}
     </Marco>
   );
@@ -158,6 +159,7 @@ function SetupSaldos({ ref_, onListo }: { ref_: Referencias; onListo: () => void
       {error && <p className="error-msg">{error}</p>}
       <button className="btn-primary" style={{ marginTop: '1rem' }} onClick={async () => {
         try {
+          if (ref_.ubicaciones.some(u => montos[u.id] == null || montos[u.id].trim() === '')) { setError('Captura cada saldo inicial. Escribe 0 explícitamente donde no haya dinero.'); return; }
           await finanzas.fijarSaldosIniciales(ref_.ubicaciones.map((u) => ({ ubicacion_id: u.id, monto: Number(montos[u.id] ?? 0) })));
           onListo();
         } catch (e) { setError(e instanceof Error ? e.message : 'Error'); }
@@ -176,25 +178,36 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
   const [cuadre, setCuadre] = useState<FilaCuadre[]>([]);
   const [dias, setDias] = useState<DiaFila[]>([]);
   const [conciliaciones, setConciliaciones] = useState<ConciliacionDiaria[]>([]);
+  const lectura = useRef(0);
+  const [cargando, setCargando] = useState(true);
+  const [errorLectura, setErrorLectura] = useState('');
   const confirmar = useConfirm();
   const { error } = useToast();
 
   async function cargar() {
+    const revision = ++lectura.current;
+    setCargando(true); setErrorLectura('');
+    try {
     const [r, m, c, d, conciliacionesData] = await Promise.all([
       finanzas.resumen(semana.id), finanzas.movimientos(semana.id), finanzas.cuadre(semana.id), finanzas.dias(semana.id),
-      epos.conciliaciones(semana.id).catch(() => []),
+      epos.conciliaciones(semana.id),
     ]);
+    if (lectura.current !== revision) return;
     setResumen(r); setMovs(m); setCuadre(c.ubicaciones); setDias(d.dias); setConciliaciones(conciliacionesData);
+    } catch (e) { if (lectura.current === revision) setErrorLectura(e instanceof Error ? e.message : 'No se pudo leer la semana'); }
+    finally { if (lectura.current === revision) setCargando(false); }
   }
-  useEffect(() => { void cargar(); }, [semana.id]);
+  useEffect(() => { void cargar(); return () => { lectura.current++; }; }, [semana.id]);
 
   const abierta = semana.estado === 'abierta';
   const inventarioListo = resumen?.inventario.estado === 'cerrado' && resumen.inventario.cierre_snapshot_id != null;
   const costeoListo = resumen != null && resumen.ventas_epos_pendientes === 0 && resumen.excepciones_costeo.length === 0;
   const puedeCerrar = abierta && inventarioListo && resumen?.conciliacion_inventario.estado === 'calculada';
+  if (cargando && !resumen) return <Cargando etiqueta="Cargando la semana seleccionada…" />;
+  if (errorLectura) return <div className="empty-state" role="alert"><p>{errorLectura}</p><button className="btn-secondary" onClick={() => void cargar()}>Reintentar lectura de esta semana</button></div>;
 
   return (
-    <>
+    <fieldset disabled={cargando} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
       <div className="kv" style={{ borderBottom: 'none', marginTop: 0, paddingTop: 0 }}>
         <span className="muted">{semana.fecha_inicio} → {semana.fecha_fin}</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
@@ -247,7 +260,7 @@ function SemanaPanel({ ref_, semana, onCambio }: { ref_: Referencias; semana: Se
           }}>Cerrar semana</button>
         </>
       )}
-    </>
+    </fieldset>
   );
 }
 
@@ -310,6 +323,9 @@ function DiaCard({ semana, dia, abierta, operativo, eventoEspecial = false, conc
   const [eposCorte, setEposCorte] = useState<Awaited<ReturnType<typeof epos.syncDaily>> | null>(null);
   const [eposMetodos, setEposMetodos] = useState({ efectivo: 0, tarjeta: 0, mixto: 0, noReconocido: 0 });
   const [eposMetodoMixto, setEposMetodoMixto] = useState<MetodoMixto | null>(null);
+  const [mixtoEfectivo, setMixtoEfectivo] = useState('');
+  const [mixtoTarjeta, setMixtoTarjeta] = useState('');
+  const mixtoRepartido = eposMetodoMixto === 'cash' ? { efectivo: eposMetodos.mixto, tarjeta: 0 } : eposMetodoMixto === 'card' ? { efectivo: 0, tarjeta: eposMetodos.mixto } : repartoMixto(eposMetodos.mixto, mixtoEfectivo, mixtoTarjeta);
   const [ventasDetalle, setVentasDetalle] = useState<EposVenta[]>([]);
   const [costeoPreview, setCosteoPreview] = useState<Map<number, CosteoVentaPreview>>(new Map());
   const [verVentas, setVerVentas] = useState(false);
@@ -336,6 +352,7 @@ function DiaCard({ semana, dia, abierta, operativo, eventoEspecial = false, conc
   const egresos = dia.total_egresos;
 
   async function guardar() {
+    if (guardando) return;
     setGuardando(true); setOk(false);
     try {
       await finanzas.guardarDia(semana.id, {
@@ -344,7 +361,8 @@ function DiaCard({ semana, dia, abierta, operativo, eventoEspecial = false, conc
       });
       setOk(true); onSaved();
       setTimeout(() => setOk(false), 1500);
-    } finally { setGuardando(false); }
+    } catch (e) { error(e instanceof Error ? e.message : 'No se pudo guardar el día'); }
+    finally { setGuardando(false); }
   }
 
   async function consultarEpos() {
@@ -390,27 +408,26 @@ function DiaCard({ semana, dia, abierta, operativo, eventoEspecial = false, conc
   }
 
   async function confirmarCorte() {
-    if (!eposCorte) return;
-    if (eposMetodos.mixto > 0 && !eposMetodoMixto) {
-      setEposNota(`Clasifica ${mxn(eposMetodos.mixto)} de Card/Cash como efectivo o tarjeta antes de confirmar.`);
+    if (!eposCorte || guardando) return;
+    if (eposMetodos.mixto > 0 && !mixtoRepartido) {
+      setEposNota(`El reparto de efectivo y tarjeta debe sumar ${mxn(eposMetodos.mixto)} antes de confirmar.`);
       return;
     }
+    if (eposMetodos.noReconocido > 0) { setEposNota('Resuelve los métodos de pago no reconocidos antes de confirmar el corte financiero.'); return; }
+    setGuardando(true);
     try {
       // La confirmación es el punto único que convierte la revisión del corte
       // en el registro diario financiero. El botón manual sigue disponible
       // cuando no se consultó Epos.
-      await finanzas.guardarDia(semana.id, {
-        fecha: dia.fecha, venta_efectivo: n(efectivo), venta_tarjeta: n(tarjeta),
-        propina_tarjeta: n(propina), gasto_efectivo: n(gasto), sueldos: n(sueldos),
-      });
-      const efectivoEpos = eposMetodos.efectivo + (eposMetodoMixto === 'cash' ? eposMetodos.mixto : 0);
-      const tarjetaEpos = eposMetodos.tarjeta + (eposMetodoMixto === 'card' ? eposMetodos.mixto : 0);
+      const efectivoEpos = eposMetodos.efectivo + (mixtoRepartido?.efectivo ?? 0);
+      const tarjetaEpos = eposMetodos.tarjeta + (mixtoRepartido?.tarjeta ?? 0);
       const noReconocidoEpos = eposMetodos.noReconocido;
-      const clasificacion = eposMetodos.mixto > 0 ? `Card/Cash clasificado como ${eposMetodoMixto === 'cash' ? 'efectivo' : 'tarjeta'}` : '';
+      const clasificacion = eposMetodos.mixto > 0 ? `Card/Cash: efectivo ${mxn(mixtoRepartido!.efectivo)} y tarjeta ${mxn(mixtoRepartido!.tarjeta)}; reparto diario confirmado, no inferido por venta` : '';
       const notaFinal = [eposNota, clasificacion, noReconocidoEpos > 0 ? `Método Epos no reconocido: ${mxn(noReconocidoEpos)}` : ''].filter(Boolean).join(' · ');
       await epos.confirmarConciliacion({
         semana_id: semana.id,
         fecha: dia.fecha,
+        diario: { venta_efectivo: n(efectivo), venta_tarjeta: n(tarjeta), propina_tarjeta: n(propina), gasto_efectivo: n(gasto), sueldos: n(sueldos) },
         epos: {
           ventas: eposCorte.bookkeeping.ventas,
           efectivo: efectivoEpos,
@@ -429,10 +446,11 @@ function DiaCard({ semana, dia, abierta, operativo, eventoEspecial = false, conc
       setEposCorte(null);
       onSaved();
     } catch (e) { error(e instanceof Error ? e.message : 'No se pudo confirmar el corte'); }
+    finally { setGuardando(false); }
   }
 
   const campo = (emoji: string, label: string, val: string, set: (v: string) => void, bloqueado = !abierta) => (
-    <label>{emoji} {label}<input type="number" inputMode="decimal" value={val} disabled={bloqueado} onChange={(e) => set(e.target.value)} placeholder="0" /></label>
+    <label>{emoji} {label}<input type="number" inputMode="decimal" min="0" step="0.01" value={val} disabled={bloqueado || guardando} onChange={(e) => set(e.target.value)} placeholder="0" /></label>
   );
   const corteConfirmado = conciliacion != null;
   // La conciliación guardada es evidencia histórica, no debe impedir volver
@@ -471,18 +489,24 @@ function DiaCard({ semana, dia, abierta, operativo, eventoEspecial = false, conc
             {eposCorte && <button className="link-btn" style={{ marginTop: '0.45rem' }} onClick={() => setCorreccionManual((v) => !v)}>{correccionManual ? 'Ocultar corrección manual' : 'Corregir manualmente'}</button>}
             {eposCorte && <>
               {eposMetodos.mixto > 0 && <div className="info-box info-box--compact epos-metodo-mixto">
-                <strong>Clasifica el importe Card/Cash</strong>
-                <span className="muted">Epos no indica si estos {mxn(eposMetodos.mixto)} fueron efectivo o tarjeta.</span>
+                <strong>Reparte el importe Card/Cash</strong>
+                <span className="muted">No hay desglose verificable para estos {mxn(eposMetodos.mixto)}. Confirma cuánto fue efectivo y cuánto tarjeta; no se asumirá todo un método.</span>
                 <div className="epos-metodo-mixto__actions">
                   <button className={eposMetodoMixto === 'cash' ? 'btn-primary' : 'btn-secondary'} onClick={() => { setEposMetodoMixto('cash'); setEfectivo(String(eposMetodos.efectivo + eposMetodos.mixto)); setTarjeta(String(eposMetodos.tarjeta)); }}>Efectivo</button>
                   <button className={eposMetodoMixto === 'card' ? 'btn-primary' : 'btn-secondary'} onClick={() => { setEposMetodoMixto('card'); setEfectivo(String(eposMetodos.efectivo)); setTarjeta(String(eposMetodos.tarjeta + eposMetodos.mixto)); }}>Tarjeta</button>
+                  <button className={eposMetodoMixto === 'dividido' ? 'btn-primary' : 'btn-secondary'} onClick={() => { setEposMetodoMixto('dividido'); setMixtoEfectivo(''); setMixtoTarjeta(''); setEfectivo(String(eposMetodos.efectivo)); setTarjeta(String(eposMetodos.tarjeta)); }}>Parte efectivo / parte tarjeta</button>
                 </div>
+                {eposMetodoMixto === 'dividido' && <div className="form-grid form-grid--two">
+                  <label>Efectivo del importe mixto<input type="number" min="0" step="0.01" value={mixtoEfectivo} onChange={e => { setMixtoEfectivo(e.target.value); setEfectivo(String(eposMetodos.efectivo + n(e.target.value))); }} /></label>
+                  <label>Tarjeta del importe mixto<input type="number" min="0" step="0.01" value={mixtoTarjeta} onChange={e => { setMixtoTarjeta(e.target.value); setTarjeta(String(eposMetodos.tarjeta + n(e.target.value))); }} /></label>
+                  <small>Debe sumar {mxn(eposMetodos.mixto)}. {mixtoRepartido ? 'Reparto completo.' : 'Reparto pendiente.'}</small>
+                </div>}
               </div>}
               {eposMetodos.noReconocido > 0 && <div className="info-box info-box--compact"><strong>Hay métodos Epos no reconocidos por {mxn(eposMetodos.noReconocido)}.</strong><span className="muted">Revisa el origen antes de confirmar; no se asignarán silenciosamente a efectivo o tarjeta.</span></div>}
               <label className="inline-field">Cuentas abiertas al cierre
                 <input type="number" min="0" step="1" value={cuentasAbiertas} onChange={(e) => setCuentasAbiertas(e.target.value)} />
               </label>
-              <button className="btn-primary" style={{ marginTop: '0.55rem' }} disabled={eposMetodos.mixto > 0 && !eposMetodoMixto} onClick={() => void confirmarCorte()}>Confirmar corte y guardar</button>
+              <button className="btn-primary" style={{ marginTop: '0.55rem' }} disabled={guardando || consultandoEpos || eposMetodos.noReconocido > 0 || (eposMetodos.mixto > 0 && !mixtoRepartido)} onClick={() => void confirmarCorte()}>{guardando ? 'Guardando…' : 'Confirmar corte y guardar'}</button>
             </>}
           </div>
         )}
@@ -563,7 +587,7 @@ function DetalleVentasEpos({ filas, preview, metodoMixto }: { filas: EposVenta[]
       excepciones: previo.excepciones + (esExcepcion ? 1 : 0),
     });
     const metodoVisible = esMetodoMixtoEpos(fila.metodo_pago)
-      ? (metodoMixto === 'cash' ? 'Efectivo' : metodoMixto === 'card' ? 'Tarjeta' : 'Card/Cash · clasificar')
+      ? (metodoMixto === 'cash' ? 'Efectivo' : metodoMixto === 'card' ? 'Tarjeta' : metodoMixto === 'dividido' ? 'Card/Cash · reparto diario, sin desglose por venta' : 'Card/Cash · clasificar')
       : fila.metodo_pago;
     porMetodo.set(metodoVisible, (porMetodo.get(metodoVisible) ?? 0) + (fila.venta_neta ?? fila.venta_bruta));
   });
@@ -765,9 +789,10 @@ function ResumenView({ r, semana, movs, conciliaciones, dias, onCambio }: {
       />
       <CorreccionInventarioCard semana={semana} cierreId={r.inventario.cierre_snapshot_id} onSaved={onCambio} />
       <div className="resumen-card">
-        <strong>Facturado (cuadre fiscal)</strong>
+        <strong>Marcas de facturación · referencia</strong>
+        <p className="muted">Este balance usa las marcas de los movimientos; no confirma recepción ni validez de CFDI. Verifica los comprobantes en Facturación.</p>
         {fila('Tarjeta facturable', mxn(r.facturado.tarjeta_facturable))}
-        {fila('Gastos facturados', mxn(r.facturado.gastos_facturados))}
+        {fila('Gastos marcados como facturados', mxn(r.facturado.gastos_facturados))}
         {fila('(+/−)', mxn(r.facturado.balance))}
       </div>
       <div className="resumen-card">

@@ -1,6 +1,6 @@
 import ControlInventario from './ControlInventario';
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { Cargando } from '../../ui/Cargando';
@@ -239,6 +239,9 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [zonaActiva, setZonaActiva] = useState<number | null>(null);
   const [valores, setValores] = useState<Record<string, string>>({}); // `${pid}:${zid}` -> texto
   const [valoresActuales, setValoresActuales] = useState<Record<string, string>>({});
+  const [existenciasActuales, setExistenciasActuales] = useState<ProductoActual[]>([]);
+  const [conteoRecuperado, setConteoRecuperado] = useState<SnapshotHistorial | null>(null);
+  const [baseRecuperada, setBaseRecuperada] = useState<Record<number, number>>({});
   const [semanaActualId, setSemanaActualId] = useState<number | null>(null);
   const [filtro, setFiltro] = useState('');
   const [guardando, setGuardando] = useState(false);
@@ -292,18 +295,20 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         }
       }
       setValoresActuales(previos);
+      setExistenciasActuales(actual.productos);
     }).catch(e => setMsg(e instanceof Error ? e.message : 'No se pudo cargar el inventario.'));
   }, []);
 
   useEffect(() => {
     if (!productos.length) return;
-    if (tipo === 'ajuste' || semanaId == null) { setValores(valoresActuales); setHorasZona({}); setErrorConteo(false); setCargandoConteo(false); return; }
+    if (tipo === 'ajuste' || semanaId == null) { setConteoRecuperado(null); setValores(valoresActuales); setHorasZona({}); setErrorConteo(false); setCargandoConteo(false); return; }
     let vigente = true;
     setCargandoConteo(true);
     setErrorConteo(false);
     api<SnapshotHistorial[]>('/inventario/snapshots?semana_id=' + semanaId).then(async rows => {
       if (!vigente) return;
       const oficial = rows.find(row => row.oficial_para?.some(c => c.tipo === tipo && c.semana_id === semanaId) || (!row.oficial_para && row.tipo === tipo && row.oficial));
+      const totalesGuardados: Record<number, number> = {};
       let recuperados: Record<string, string> = semanaId === semanaActualId ? { ...valoresActuales } : {};
       if (oficial) {
         const detalle = await api<{ lineas: { product_id: number; zona_id: number; qty_captura: number; factor: number; cantidad_base: number }[] }>(`/inventario/snapshots/${oficial.id}`);
@@ -316,6 +321,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           if (!producto) continue;
           const unidad = producto.unidades.find(u => u.zona_id === linea.zona_id);
           recuperados[`${linea.product_id}:${linea.zona_id}`] = String(cantidadDesdeSaldo(linea, producto, unidad));
+          totalesGuardados[linea.product_id] = (totalesGuardados[linea.product_id] ?? 0) + linea.cantidad_base;
         }
         // Al continuar un conteo parcial, sólo sugerir saldos en zonas aún no
         // guardadas; jamás rellenar huecos del histórico silenciosamente.
@@ -324,6 +330,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         }
       }
       setValores(recuperados);
+      setConteoRecuperado(oficial ?? null);
+      setBaseRecuperada(totalesGuardados);
       setMsg(oficial ? 'Conteo recuperado. Las zonas guardadas conservan su hora; completa las restantes o usa ajuste documentado para corregirlas.' : '');
       setContinuarSnapshotId(oficial?.id ?? null);
       setZonasGuardadas(oficial?.zonas?.map(z => z.zona_id) ?? []);
@@ -461,6 +469,11 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         </div>
         <p className="muted inventory-unit-help">Usa la unidad indicada junto a cada producto. Ejemplo: 440 g de pepino se capturan como 0.44 kg.</p>
       </section>
+      {conteoRecuperado && !cargandoConteo && <div className="info-box" role="status">
+        <strong>{tipo === 'apertura' ? 'Apertura guardada' : 'Cierre guardado'} · no es la existencia actual</strong>
+        <span>Estos campos conservan lo que había al corte de cada zona. Las compras y ventas posteriores se reflejan en la existencia actual; no se suman retroactivamente al conteo guardado.</span>
+        <Link to="/inventario?tab=actual">Ver existencia actual y compras incorporadas</Link>
+      </div>}
       <div className="zona-tabs">
         {zonas.map((z) => (
           <button key={z.id} className={z.id === zonaActiva ? 'pill pill--on' : 'pill'} onClick={() => setZonaActiva(z.id)}>
@@ -468,6 +481,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           </button>
         ))}
       </div>
+      {zonaActiva != null && <p className="muted">Capturando sólo <strong>{zonas.find(z => z.id === zonaActiva)?.nombre}</strong>. Las compras entran a Bodega; el total del negocio suma todas las zonas.</p>}
       {zonaActiva != null && <label className="field-block inventory-time-field">Momento del conteo (México)<input type="datetime-local" value={horasZona[zonaActiva] ?? ''} disabled={zonasGuardadas.includes(zonaActiva) || guardando || cargandoConteo} onChange={e => setHorasZona(prev => ({ ...prev, [zonaActiva]: e.target.value }))} /><small className="muted">Si lo dejas vacío, se usa la hora de guardar esta zona. Las ventas anteriores ya están incluidas; las posteriores sí se descuentan.</small></label>}
       {zonaActiva != null && zonasGuardadas.includes(zonaActiva) && tipo !== 'ajuste' && <p className="info-box">Esta zona ya está guardada. Para corregirla, elige Ajuste documentado.</p>}
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
@@ -488,6 +502,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
               const medida = medidaConteo(p, u);
               const unidadOperativa = medida.unidad;
               const esperadoConteo = esperado ? cantidadEnConteo(esperado.esperado_base, p, u) : null;
+              const actual = existenciasActuales.find(a => a.product_id === p.id);
+              const cambioPosterior = conteoRecuperado && actual && baseRecuperada[p.id] != null && Math.abs(actual.existencia_actual_base - baseRecuperada[p.id]) > .00001;
               return (
                 <li key={p.id} className="conteo-row">
                   <div className="conteo-info">
@@ -495,6 +511,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                     <small className="muted">Se captura en {pluralUnidad(unidadOperativa, 2)} · {p.store}</small>
                     {medida.factor !== 1 && p.unidad_base && <small className="muted">1 {unidadOperativa} = {formatoCantidad(medida.factor)} {p.unidad_base}. {p.presentacion_modo === 'por_lote' ? 'Suma el contenido de todos los envases.' : ''}</small>}
                     {esperadoConteo != null && <small className="muted">Esperado al cierre: {formatoCantidad(esperadoConteo)} {pluralUnidad(unidadOperativa, esperadoConteo)}</small>}
+                    {cambioPosterior && actual && <small className="info-box--compact">Existencia actual: <b>{formatoCantidad(cantidadEnConteo(actual.existencia_actual_base, p, u))} {pluralUnidad(unidadOperativa, 2)} en total</b> · {actual.por_zona.map(z => `${z.zona}: ${formatoCantidad(cantidadDesdeSaldo(z, p, u))}`).join(' · ')}</small>}
                   </div>
                   {esBool ? (
                     <div className="bool-toggle">
@@ -693,17 +710,18 @@ export function BorradorIA({ onGuardado }: { onGuardado: () => void }) {
 // ===========================================================================
 function InventarioActual() {
   const [data, setData] = useState<Actual | null>(null);
+  const [error, setError] = useState('');
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [historial, setHistorial] = useState<SnapshotHistorial[]>([]);
   useEffect(() => {
-    const recargar = () => { void api<Actual>('/inventario/current?vista=fisica').then(setData); };
+    const recargar = () => { setError(''); void api<Actual>('/inventario/current?vista=fisica').then(setData).catch(e => setError(e instanceof Error ? e.message : 'No se pudo cargar la existencia')); };
     recargar();
     window.addEventListener('iberico-inventario-cambio', recargar);
     api<Categoria[]>('/catalogo/categorias-inventario').then(setCategorias).catch(() => {});
     api<SnapshotHistorial[]>('/inventario/snapshots').then(setHistorial).catch(() => {});
     return () => window.removeEventListener('iberico-inventario-cambio', recargar);
   }, []);
-  if (!data) return <Cargando />;
+  if (!data) return error ? <div role="alert"><p>{error}</p><button className="btn-secondary" onClick={() => window.dispatchEvent(new Event('iberico-inventario-cambio'))}>Reintentar lectura</button></div> : <Cargando />;
   const grupos = agruparPorCategoria(data.productos, categorias);
   const diferenciasCantidad = data.productos.filter(p=>Math.abs((p.cantidad_fifo_base??0)-(p.existencia_fisica_base??p.total_base))>0.0001).length;
   const bajoMinimo = data.productos.filter((p) => existenciaOperativaProducto(p) < minimoOperativoProducto(p)).length;
@@ -713,6 +731,7 @@ function InventarioActual() {
 
   return (
     <>
+      {error && <p className="error-msg" role="alert">{error}. Se conservan los datos de la última lectura válida; no están actualizados.</p>}
       <div className="resumen-card inventory-overview">
         <div className="inventory-overview__head">
           <div><span className="eyebrow">Inventario actual · costo FIFO</span><strong className="big-number">{mxn(data.valor_fifo_actual_total)}</strong></div>

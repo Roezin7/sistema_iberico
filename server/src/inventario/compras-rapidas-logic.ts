@@ -1,3 +1,4 @@
+import { convertirCompraABase, normalizarUnidadCompra, unidadesMetricasIncompatibles } from '../lib/unidades-compra.js';
 export type TipoLineaCompra = 'inventario' | 'gasto' | 'pendiente';
 
 export interface LineaCompraResumen {
@@ -65,14 +66,7 @@ function normalizarTexto(value: string) {
 }
 
 function normalizarUnidad(value?: string | null) {
-  const unidad = normalizarTexto(value ?? '');
-  if (!unidad) return null;
-  if (/^(ml|mililitro|mililitros|cc)$/.test(unidad)) return 'ml';
-  if (/^(g|gramo|gramos|gr)$/.test(unidad)) return 'g';
-  if (/^(kg|kilo|kilos)$/.test(unidad)) return 'kg';
-  if (/^(pieza|piezas|pz|pzas|unidad|unidades|ud)$/.test(unidad)) return 'pieza';
-  if (/^(l|litro|litros)$/.test(unidad)) return 'l';
-  return unidad;
+  return normalizarUnidadCompra(value);
 }
 
 /** Convierte la presentación capturada a la unidad base del catálogo. */
@@ -83,18 +77,7 @@ export function cantidadBaseDesdePresentacion(input: {
   unidadBase?: string | null;
   rendimientoUtil?: number | null;
 }) {
-  const cantidad = Number(input.cantidadCompra);
-  if (!Number.isFinite(cantidad) || cantidad <= 0) return null;
-  const contenido = Number(input.contenidoPorPresentacion);
-  const rendimiento = Number(input.rendimientoUtil ?? 1);
-  const factor = Number.isFinite(rendimiento) && rendimiento > 0 && rendimiento <= 1 ? rendimiento : 1;
-  if (Number.isFinite(contenido) && contenido > 0) return cantidad * contenido * factor;
-  const origen = normalizarUnidad(input.unidadCompra);
-  const destino = normalizarUnidad(input.unidadBase);
-  if (origen === destino) return cantidad;
-  if (origen === 'kg' && destino === 'g') return cantidad * 1000;
-  if (origen === 'l' && destino === 'ml') return cantidad * 1000;
-  return null;
+  return convertirCompraABase(input);
 }
 
 /** Misma regla en validación, confirmación y edición. Un peso variable sólo
@@ -181,6 +164,9 @@ export function validarDiscrepanciasCompra(total: number, lineas: LineaCompraVal
     const contenido = Number(linea.contenido_compra ?? producto.contenido_compra ?? 0);
     const origen = normalizarUnidad(linea.unidad_fuente || linea.unidad_compra);
     const destino = normalizarUnidad(producto.unidad_base);
+    if (unidadesMetricasIncompatibles(origen, destino)) {
+      errores.push(discrepancia('UNIDAD_DIMENSION_INCOMPATIBLE', 'error', 'No se puede convertir peso a volumen (ni volumen a peso) usando el tamaño del envase.', n, producto.name));
+    }
     const metricaDirecta = origen === destino || (origen === 'kg' && destino === 'g') || (origen === 'l' && destino === 'ml');
     if (producto.presentacion_modo === 'por_lote' && (!linea.contenido_compra || Number(linea.contenido_compra) <= 0) && !metricaDirecta) {
       errores.push(discrepancia('PRESENTACION_REQUERIDA', 'error', 'Este producto cambia de tamaño por proveedor o ticket; captura el contenido real de esta compra.', n, producto.name));

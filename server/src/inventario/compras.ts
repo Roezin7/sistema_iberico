@@ -1,4 +1,5 @@
 import { envaseCompra } from './envase-compra.js';
+import { fechaCivilUTC } from '../lib/fechas.js';
 import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
@@ -35,9 +36,7 @@ export interface CompraInput {
 }
 
 function fechaUTC(fecha: string): Date {
-  const value = new Date(`${fecha}T00:00:00.000Z`);
-  if (Number.isNaN(value.getTime())) throw new HttpError(400, 'fecha_recepcion inválida');
-  return value;
+  return fechaCivilUTC(fecha);
 }
 
 /**

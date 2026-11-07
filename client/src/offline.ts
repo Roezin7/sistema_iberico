@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { openDB, type IDBPDatabase } from 'idb';
+import { puedeEncolar, propietarioToken } from './offline-policy';
 
 // Cola de escrituras offline. Cuando no hay red, las mutaciones (POST/PATCH/PUT/DELETE)
 // se encolan en IndexedDB y se reenvían al recuperar conexión (FIFO). Las lecturas (GET)
@@ -76,16 +77,25 @@ export async function sincronizar(): Promise<void> {
     for (const key of keys) {
       const req = (await d.get(STORE, key)) as PendingReq | undefined;
       if (!req) continue;
+      const tokenActual = localStorage.getItem('iberico_token');
+      const propietario = propietarioToken(tokenActual);
+      if (!propietario) break; // No reproducir una sesión cerrada o expirada.
+      if (!puedeEncolar(req.method, req.path) || propietarioToken(req.token) !== propietario) {
+        // Conservar el original sin ejecutarlo ni borrarlo. Un dato legado o
+        // de otro usuario requiere revisión; no bloquea el resto de la cola.
+        if (!fallidos.some(f => f.path === req.path && f.ts === req.ts)) fallidos.push({ method: req.method, path: req.path, ts: req.ts, error: 'Pendiente conservado en este dispositivo: requiere la sesión de origen y una acción compatible con trabajo sin conexión.' });
+        continue;
+      }
       try {
         const res = await fetch(`/api${req.path}`, {
           method: req.method,
           headers: {
             ...(req.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-            ...(req.token ? { Authorization: `Bearer ${req.token}` } : {}),
+            Authorization: `Bearer ${tokenActual}`,
           },
           body: req.body !== undefined ? JSON.stringify(req.body) : undefined,
         });
-        if (!res.ok && res.status >= 500) {
+        if (!res.ok && (res.status >= 500 || res.status === 401 || res.status === 429)) {
           // error de servidor transitorio: NO borrar; reintentaremos luego.
           break;
         }

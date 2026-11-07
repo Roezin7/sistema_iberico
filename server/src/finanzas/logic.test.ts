@@ -14,6 +14,23 @@ import {
   type MovimientoPnl,
 } from './logic.js';
 
+describe('salidas sin venta y método contable del mes', () => {
+  const movimientos = [{ fecha:'2026-10-01',tipo:'venta_efectivo' as const,monto:1000,categoria:null,facturado:false },{fecha:'2026-10-01',tipo:'compra_inventario' as const,monto:500,categoria:null,facturado:false}];
+  it('no resta dos veces una merma incluida en apertura + compras − cierre', () => {
+    const [r] = estadoResultadosMensual(['2026-10'],movimientos,{'2026-10':{inicial:1000,final:1200,fecha_inicial:'2026-09-30',fecha_final:'2026-10-31'}},{},{'2026-10':50});
+    expect(r!.costo_ventas).toBe(300);expect(r!.utilidad_operativa).toBe(700);
+  });
+  it('sí añade la merma cuando el costo FIFO sólo corresponde a ventas', () => {
+    const [r] = estadoResultadosMensual(['2026-10'],movimientos,{}, {'2026-10':250},{'2026-10':50});
+    expect(r!.utilidad_operativa).toBe(700);
+  });
+  it('no oculta un mes que sólo tiene costos no ligados a pagos', () => {
+    const [r] = estadoResultadosMensual(['2026-10'],[],{}, {},{'2026-10':50});
+    expect(r!.sin_movimientos).toBe(false);
+    expect(r!.utilidad_operativa).toBe(-50);
+  });
+});
+
 describe('seleccionarValorPatrimonio', () => {
   it('prefiere el cierre físico de la semana', () => {
     expect(seleccionarValorPatrimonio(35237.42, 36100)).toEqual({ valor: 35237.42, fuente: 'inventario_fisico_cierre' });

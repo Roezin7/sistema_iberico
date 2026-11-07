@@ -1,3 +1,4 @@
+import { convertirCompraABase, normalizarUnidadCompra } from '../../../../server/src/lib/unidades-compra';
 export interface ProductoPresentacion {
   unidad_base?: string | null;
   unidad_compra?: string | null;
@@ -9,14 +10,7 @@ export interface ProductoPresentacion {
 }
 
 export function normalizarUnidad(valor?: string | null) {
-  const unidad = (valor ?? '').trim().toLowerCase();
-  if (!unidad) return null;
-  if (/^(g|gr|gramo|gramos)$/.test(unidad)) return 'g';
-  if (/^(kg|kilo|kilos)$/.test(unidad)) return 'kg';
-  if (/^(ml|cc|mililitro|mililitros)$/.test(unidad)) return 'ml';
-  if (/^(l|litro|litros)$/.test(unidad)) return 'l';
-  if (/^(pz|pza|pzas|pieza|piezas|unidad|unidades|ud)$/.test(unidad)) return 'pieza';
-  return unidad;
+  return normalizarUnidadCompra(valor);
 }
 
 export function formatoCantidad(valor: number | null | undefined) {
@@ -76,19 +70,7 @@ export function cantidadBaseDesdePresentacion(input: {
   unidadBase?: string | null;
   rendimientoUtil?: number | null;
 }) {
-  const cantidad = Number(input.cantidadCompra);
-  const contenido = Number(input.contenidoPorPresentacion);
-  if (!Number.isFinite(cantidad) || cantidad <= 0) return null;
-  const rendimiento = Number(input.rendimientoUtil ?? 1);
-  const factorRendimiento = Number.isFinite(rendimiento) && rendimiento > 0 && rendimiento <= 1 ? rendimiento : 1;
-  if (Number.isFinite(contenido) && contenido > 0) return cantidad * contenido * factorRendimiento;
-
-  const origen = normalizarUnidad(input.unidadCompra);
-  const destino = normalizarUnidad(input.unidadBase);
-  if (origen === destino) return cantidad;
-  if (origen === 'kg' && destino === 'g') return cantidad * 1000;
-  if (origen === 'l' && destino === 'ml') return cantidad * 1000;
-  return null;
+  return convertirCompraABase(input);
 }
 
 export function costoBase(importe: number | null | undefined, cantidadBase: number | null | undefined) {

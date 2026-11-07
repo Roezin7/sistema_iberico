@@ -8,7 +8,8 @@ import { prisma } from '../db.js';
 import { num } from '../lib/num.js';
 import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
-import { costoLinea } from './costeo.js';
+import { costoLinea, convertirCantidad } from './costeo.js';
+import { costoVisibleMenu } from './presentacion-costos.js';
 import { consumirFIFO } from '../inventario/fifo.js';
 import { filtroConsumoFifoActivo } from '../inventario/fuentes.js';
 
@@ -115,7 +116,7 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
     where: { negocio_id: req.auth!.negocioId, activo: true },
     include: {
       recetas: {
-        where: { estado: 'validada' }, orderBy: { version: 'desc' }, take: 1,
+        where: { estado: 'validada', OR: [{ vigente_desde: null }, { vigente_desde: { lte: new Date(`${fechaMexico(new Date())}T00:00:00Z`) } }] }, orderBy: { version: 'desc' }, take: 1,
         include: { lineas: { include: { products: { select: { name: true, unit_cost: true, unidad_base: true, contenido_compra: true, rendimiento_util: true } } } } },
       },
     },
@@ -220,15 +221,16 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
       costo_fifo_referencia: costoFifoReferencia,
       margen_fifo_referencia: costoFifoReferencia != null && precio != null ? precio - costoFifoReferencia : null,
       food_cost_fifo_referencia_pct: costoFifoReferencia != null && precio && precio > 0 ? (costoFifoReferencia / precio) * 100 : null,
-      fifo_referencia_disponible: costoFifoCompleto,
+      fifo_referencia_disponible: costoFifoReferenciaCompleto,
       fifo_disponible: costoFifoCompleto, receta_id: receta ? Number(receta.id) : null, version: receta?.version ?? null,
       estado: receta?.estado ?? 'sin_receta', completa: !!receta && lineas.length > 0 && lineas.every((l) => l.falta_configuracion.length === 0), lineas,
     };
   }).sort((a, b) => a.orden - b.orden || a.nombre.localeCompare(b.nombre, 'es'));
-  const costeados = items.filter((i) => i.costo_fifo_actual != null || i.costo_receta != null);
-  const priced = items.filter((i) => i.food_cost_fifo_pct != null || i.food_cost_pct != null);
+  const visibles = items.map(costoVisibleMenu);
+  const costeados = visibles.filter(i => i.costo != null);
+  const priced = visibles.filter(i => i.foodCost != null);
   const sections = [...new Set(items.map((i) => i.seccion))];
-  res.json({ fuente: 'Lotes FIFO abiertos + receta validada (costo actual)', moneda: 'MXN', generado_at: new Date().toISOString(), resumen: { productos: items.length, costeados: costeados.length, pendientes: items.length - costeados.length, food_cost_promedio: priced.length ? priced.reduce((s, i) => s + (i.food_cost_fifo_pct ?? i.food_cost_pct ?? 0), 0) / priced.length : null, margen_promedio: priced.length ? priced.reduce((s, i) => s + (i.margen_fifo_actual ?? i.margen_unitario ?? 0), 0) / priced.length : null }, secciones: sections, productos: items });
+  res.json({ fuente: 'FIFO disponible; referencia documentada o catálogo si no alcanza el saldo', moneda: 'MXN', generado_at: new Date().toISOString(), resumen: { productos: items.length, costeados: costeados.length, pendientes: items.length - costeados.length, food_cost_promedio: priced.length ? priced.reduce((s, i) => s + i.foodCost!, 0) / priced.length : null, margen_promedio: priced.length ? priced.reduce((s, i) => s + i.margen!, 0) / priced.length : null }, secciones: sections, productos: items });
 }));
 
 /** GET /recetas — menú, versiones y líneas; solo datos del negocio autenticado. */
@@ -285,14 +287,28 @@ recetasRouter.post('/', soloAdmin, asyncHandler(async (req, res) => {
   const ids = [...new Set(b.lineas.map((l) => l.product_id))];
   if(ids.length!==b.lineas.length) throw new HttpError(400,'Agrupa cada ingrediente en una sola línea para no duplicar consumo');
   if(b.lineas.some(l=>l.envases_completos&&(!l.contenido_requerido||!l.unidad_requerida)))throw new HttpError(400,'Los envases completos requieren tamaño y unidad explícitos');
-  const insumos = await prisma.products.findMany({ where: { id: { in: ids.map(BigInt) }, negocio_id: negocioId, active: true }, select: { id: true } });
+  const insumos = await prisma.products.findMany({ where: { id: { in: ids.map(BigInt) }, negocio_id: negocioId, active: true }, select: { id: true, unidad_base: true } });
   if (insumos.length !== ids.length) throw new HttpError(400, 'Una o más líneas no pertenecen al catálogo activo de Ibérico.');
+  if (b.estado === 'validada') {
+    if (!b.lineas.length) throw new HttpError(400, 'Una receta validada debe tener ingredientes');
+    for (const l of b.lineas) {
+      const p = insumos.find(p => Number(p.id) === l.product_id)!;
+      const base = p.unidad_base ? convertirCantidad(l.cantidad, l.unidad, p.unidad_base) : null;
+      if (base == null) throw new HttpError(400, `Unidad incompatible en ingrediente ${l.product_id}: ${l.unidad} no se convierte a ${p.unidad_base ?? 'unidad sin configurar'}`);
+      if (l.envases_completos) {
+        const envase = p.unidad_base === 'pieza' ? 1 : l.contenido_requerido!;
+        if ((p.unidad_base !== 'pieza' && l.unidad_requerida !== p.unidad_base) || Math.abs(base / envase - Math.round(base / envase)) > .00001) throw new HttpError(400, 'Los envases completos requieren una cantidad equivalente a un número entero de envases de la misma unidad');
+      }
+    }
+  }
 
   const producto = await prisma.$transaction(async (tx) => {
     await bloquearLibro(tx, negocioId);
     let menu = b.producto_menu_id == null
       ? await tx.productos_menu.findFirst({ where: { negocio_id: negocioId, nombre: b.nombre } })
       : await tx.productos_menu.findFirst({ where: { id: BigInt(b.producto_menu_id), negocio_id: negocioId } });
+    if (b.producto_menu_id != null && !menu) throw new HttpError(404, 'El producto de menú no pertenece al negocio');
+    if (b.epos_product_id != null && await tx.productos_menu.findFirst({ where: { negocio_id: negocioId, activo: true, epos_product_id: b.epos_product_id, ...(menu ? { id: { not: menu.id } } : {}) }, select: { id: true } })) throw new HttpError(409, 'Ese ID Epos ya está asociado a otro producto activo. Unifica el duplicado antes de vincularlo.');
     if (!menu) {
       menu = await tx.productos_menu.create({ data: {
         negocio_id: negocioId,
@@ -326,8 +342,22 @@ recetasRouter.post('/', soloAdmin, asyncHandler(async (req, res) => {
 recetasRouter.patch('/:id/estado', soloAdmin, asyncHandler(async (req, res) => {
   const recetaId = BigInt(id.parse(req.params.id));
   const { estado } = z.object({ estado: z.enum(['borrador', 'validada', 'retirada']) }).parse(req.body);
-  const receta = await prisma.recetas.findFirst({ where: { id: recetaId, productos_menu: { negocio_id: req.auth!.negocioId } } });
+  await prisma.$transaction(async tx => {
+  await bloquearLibro(tx, req.auth!.negocioId);
+  const receta = await tx.recetas.findFirst({ where: { id: recetaId, productos_menu: { negocio_id: req.auth!.negocioId } }, include: { lineas: { include: { products: { select: { active: true, unidad_base: true } } } } } });
   if (!receta) throw new HttpError(404, 'Receta no encontrada');
-  await prisma.recetas.update({ where: { id: recetaId }, data: { estado } });
+  if (estado === 'validada') {
+    if (!receta.lineas.length || new Set(receta.lineas.map(l=>String(l.product_id))).size !== receta.lineas.length) throw new HttpError(400, 'La receta necesita ingredientes, sin duplicados');
+    for (const l of receta.lineas) {
+      const base = l.products.unidad_base ? convertirCantidad(Number(l.cantidad), l.unidad, l.products.unidad_base) : null;
+      if (!l.products.active || base == null || !(base > 0)) throw new HttpError(400, 'La receta contiene un producto inactivo o una cantidad/unidad incompatible');
+      if (l.envases_completos) {
+        const envase = l.products.unidad_base === 'pieza' ? 1 : Number(l.contenido_requerido);
+        if (!(Number(l.contenido_requerido) > 0) || !l.unidad_requerida || (l.products.unidad_base !== 'pieza' && l.unidad_requerida !== l.products.unidad_base) || Math.abs(base/envase - Math.round(base/envase)) > .00001) throw new HttpError(400, 'Falta una presentación compatible o un número entero de envases completos');
+      }
+    }
+  }
+  await tx.recetas.update({ where: { id: recetaId }, data: { estado } });
+  });
   res.json({ ok: true });
 }));

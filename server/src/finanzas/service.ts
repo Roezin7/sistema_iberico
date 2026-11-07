@@ -2,7 +2,8 @@ import { controlInventario } from '../inventario/operaciones.js';
 import { costosSinVenta } from '../inventario/costo-no-venta.js';
 import { Prisma, type TipoMovimiento } from '@prisma/client';
 import { prisma } from '../db.js';
-import { prepararControlCierre, confirmarControlCierre } from '../inventario/control-cierre.js';
+import { prepararControlCierre, confirmarControlCierre, bloquearLibro } from '../inventario/control-cierre.js';
+import { fechaCivilUTC } from '../lib/fechas.js';
 import crypto from 'node:crypto';
 import { registrarAuditoria } from '../lib/auditoria.js';
 import { num0 } from '../lib/num.js';
@@ -285,8 +286,8 @@ function serializarSemana(s: { id: bigint; etiqueta: string; fecha_inicio: Date;
   };
 }
 
-async function getSemanaAbierta(negocioId: bigint, semanaId: bigint) {
-  const s = await prisma.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId } });
+async function getSemanaAbierta(negocioId: bigint, semanaId: bigint, db: Pick<typeof prisma, 'semanas'> = prisma) {
+  const s = await db.semanas.findFirst({ where: { id: semanaId, negocio_id: negocioId } });
   if (!s) throw new HttpError(404, 'Semana no encontrada');
   return s;
 }
@@ -1003,22 +1004,24 @@ export interface MovimientoInput {
 }
 
 export async function crearMovimiento(negocioId: bigint, usuarioId: bigint, m: MovimientoInput) {
-  const semana = await getSemanaAbierta(negocioId, BigInt(m.semana_id));
+  return prisma.$transaction(async tx => {
+  await bloquearLibro(tx, negocioId);
+  const semana = await getSemanaAbierta(negocioId, BigInt(m.semana_id), tx);
   if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana está cerrada; no admite movimientos');
 
-  const fechaMovimiento = m.fecha ? new Date(`${m.fecha}T00:00:00Z`) : fechaOperativaHoy();
+  const fechaMovimiento = m.fecha ? fechaCivilUTC(m.fecha) : fechaOperativaHoy();
   if (Number.isNaN(fechaMovimiento.getTime()) || fechaMovimiento < semana.fecha_inicio || fechaMovimiento > semana.fecha_fin) {
     throw new HttpError(400, 'La fecha del movimiento debe estar dentro de la semana seleccionada');
   }
 
   const regla = REGLAS_MOVIMIENTO[m.tipo];
   if (regla.autogenerado) throw new HttpError(400, 'La comisión de terminal se genera automáticamente al cerrar');
-  if (m.monto <= 0) throw new HttpError(400, 'El monto debe ser mayor a cero');
+  if (!Number.isFinite(m.monto) || m.monto <= 0) throw new HttpError(400, 'El monto debe ser mayor a cero');
 
   // Validar ubicaciones del negocio.
   const ubicIds = [m.ubicacion_origen_id, m.ubicacion_destino_id].filter((x): x is number => x != null);
   const ubic = ubicIds.length
-    ? await prisma.ubicaciones_fondos.findMany({ where: { id: { in: ubicIds.map(BigInt) }, negocio_id: negocioId } })
+    ? await tx.ubicaciones_fondos.findMany({ where: { id: { in: ubicIds.map(BigInt) }, negocio_id: negocioId, activo: true } })
     : [];
   const ubicById = new Map(ubic.map((u) => [Number(u.id), u]));
   for (const id of ubicIds) if (!ubicById.has(id)) throw new HttpError(400, `Ubicación ${id} inválida`);
@@ -1027,6 +1030,11 @@ export async function crearMovimiento(negocioId: bigint, usuarioId: bigint, m: M
   if (regla.requiereDestino && m.ubicacion_destino_id == null) throw new HttpError(400, `${m.tipo} requiere ubicación de destino`);
   if (regla.requiereCategoria && m.categoria_id == null) throw new HttpError(400, `${m.tipo} requiere categoría`);
   if (regla.requiereSocio && m.socio_id == null) throw new HttpError(400, `${m.tipo} requiere socio`);
+  if (!regla.requiereOrigen && m.ubicacion_origen_id != null) throw new HttpError(400, 'Este tipo de movimiento no debe descontar una ubicación de origen');
+  if (!regla.requiereDestino && m.ubicacion_destino_id != null) throw new HttpError(400, 'Este tipo de movimiento no debe acreditar una ubicación de destino');
+  if (m.ubicacion_origen_id != null && m.ubicacion_origen_id === m.ubicacion_destino_id) throw new HttpError(400, 'Origen y destino deben ser distintos');
+  if (m.categoria_id != null && !await tx.categorias_gasto.findFirst({ where: { id: BigInt(m.categoria_id), negocio_id: negocioId, activo: true } })) throw new HttpError(400, 'La categoría no pertenece al negocio o está inactiva');
+  if (m.socio_id != null && !await tx.socios.findFirst({ where: { id: BigInt(m.socio_id), negocio_id: negocioId, activo: true } })) throw new HttpError(400, 'El socio no pertenece al negocio o está inactivo');
 
   // Transferencia a una caja fuerte (ubicación con socio) -> exige socio.
   if (m.tipo === 'transferencia' && m.ubicacion_destino_id != null) {
@@ -1034,6 +1042,7 @@ export async function crearMovimiento(negocioId: bigint, usuarioId: bigint, m: M
     if (dest.socio_id != null && m.socio_id == null) {
       throw new HttpError(400, 'Transferencia a caja fuerte requiere indicar el socio');
     }
+    if (dest.socio_id != null && dest.socio_id !== BigInt(m.socio_id!)) throw new HttpError(400, 'El socio no corresponde a la caja fuerte de destino');
   }
 
   // facturado: por defecto true si el gasto/compra sale del Banco (tarjeta).
@@ -1043,7 +1052,7 @@ export async function crearMovimiento(negocioId: bigint, usuarioId: bigint, m: M
     facturado = (m.tipo === 'compra_inventario' || m.tipo === 'gasto') && origen?.tipo === 'banco';
   }
 
-  const creado = await prisma.movimientos.create({
+  const creado = await tx.movimientos.create({
     data: {
       negocio_id: negocioId,
       semana_id: semana.id,
@@ -1059,8 +1068,9 @@ export async function crearMovimiento(negocioId: bigint, usuarioId: bigint, m: M
       usuario_id: usuarioId,
     },
   });
-  await registrarAuditoria({ negocioId, usuarioId, entidad: 'movimiento', entidadId: creado.id, accion: 'crear', despues: { tipo: creado.tipo, monto: Number(creado.monto), fecha: iso(creado.fecha), semana_id: creado.semana_id } });
+  await registrarAuditoria({ negocioId, usuarioId, entidad: 'movimiento', entidadId: creado.id, accion: 'crear', despues: { tipo: creado.tipo, monto: Number(creado.monto), fecha: iso(creado.fecha), semana_id: creado.semana_id } }, tx);
   return { id: Number(creado.id), facturado };
+  });
 }
 
 async function movimientosDeSemana(negocioId: bigint, semanaId: bigint) {
@@ -1100,6 +1110,7 @@ export interface EditarMovimientoInput {
  * sincronizados. */
 export async function editarMovimiento(negocioId: bigint, movimientoId: bigint, input: EditarMovimientoInput) {
   return prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
     const actual = await tx.movimientos.findFirst({
       where: { id: movimientoId, negocio_id: negocioId },
       include: { semanas: { select: { estado: true, fecha_inicio: true, fecha_fin: true } } },
@@ -1109,7 +1120,7 @@ export async function editarMovimiento(negocioId: bigint, movimientoId: bigint, 
     if (actual.compra_id != null) throw new HttpError(409, 'Este gasto pertenece a una compra; corrígelo desde el ticket');
     if (actual.semanas.estado !== 'abierta') throw new HttpError(409, 'La semana está cerrada; reábrela antes de editar');
 
-    const fecha = input.fecha ? new Date(`${input.fecha}T00:00:00Z`) : actual.fecha;
+    const fecha = input.fecha ? fechaCivilUTC(input.fecha) : actual.fecha;
     if (Number.isNaN(fecha.getTime()) || iso(fecha) < iso(actual.semanas.fecha_inicio) || iso(fecha) > iso(actual.semanas.fecha_fin)) {
       throw new HttpError(400, 'La fecha está fuera de la semana');
     }
@@ -1123,9 +1134,8 @@ export async function editarMovimiento(negocioId: bigint, movimientoId: bigint, 
       ? actual.ubicacion_destino_id
       : input.ubicacion_destino_id == null ? null : BigInt(input.ubicacion_destino_id);
     const idsUbicacion = [origenId, destinoId].filter((v): v is bigint => v != null);
-    const ubicaciones = await tx.ubicaciones_fondos.findMany({ where: { id: { in: idsUbicacion }, negocio_id: negocioId, activo: true }, select: { id: true, tipo: true } });
+    const ubicaciones = await tx.ubicaciones_fondos.findMany({ where: { id: { in: idsUbicacion }, negocio_id: negocioId, activo: true }, select: { id: true, tipo: true, socio_id: true } });
     if (ubicaciones.length !== idsUbicacion.length) throw new HttpError(400, 'La ubicación de origen o destino no es válida');
-    const origen = ubicaciones.find((u) => u.id === origenId);
 
     const categoriaId = input.categoria_id === undefined
       ? actual.categoria_id
@@ -1134,12 +1144,17 @@ export async function editarMovimiento(negocioId: bigint, movimientoId: bigint, 
     if (regla.requiereOrigen && !origenId) throw new HttpError(400, `${actual.tipo} requiere ubicación de origen`);
     if (regla.requiereDestino && !destinoId) throw new HttpError(400, `${actual.tipo} requiere ubicación de destino`);
     if (regla.requiereCategoria && !categoriaId) throw new HttpError(400, `${actual.tipo} requiere categoría`);
+    if (!regla.requiereOrigen && origenId) throw new HttpError(400, 'Este movimiento no admite origen');
+    if (!regla.requiereDestino && destinoId) throw new HttpError(400, 'Este movimiento no admite destino');
+    if (origenId != null && origenId === destinoId) throw new HttpError(400, 'Origen y destino deben ser distintos');
+    const destino = ubicaciones.find(u => u.id === destinoId);
+    if (actual.tipo === 'transferencia' && destino?.socio_id != null && destino.socio_id !== actual.socio_id) throw new HttpError(400, 'El socio del movimiento no corresponde a la caja fuerte de destino');
     if (categoriaId) {
       const categoria = await tx.categorias_gasto.findFirst({ where: { id: categoriaId, negocio_id: negocioId, activo: true }, select: { id: true } });
       if (!categoria) throw new HttpError(400, 'La categoría no es válida');
     }
 
-    const facturado = input.facturado ?? ((actual.tipo === 'gasto' || actual.tipo === 'compra_inventario') && origen?.tipo === 'banco');
+    const facturado = input.facturado ?? actual.facturado;
     const actualizado = await tx.movimientos.update({
       where: { id: actual.id },
       data: {
@@ -1169,9 +1184,9 @@ const MARCA_SUELDO = 'Sueldo del día';
 const MARCAS_DIA = [MARCA_VENTA, MARCA_GASTO, MARCA_SUELDO];
 
 /** Ubicaciones por defecto para ventas: Caja (efectivo sin socio) y Banco. */
-async function ubicacionesVenta(negocioId: bigint) {
-  const ubic = await prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true }, orderBy: { id: 'asc' } });
-  const caja = ubic.find((u) => u.tipo === 'efectivo' && u.socio_id == null) ?? ubic.find((u) => u.tipo === 'efectivo');
+async function ubicacionesVenta(negocioId: bigint, db: Pick<typeof prisma, 'ubicaciones_fondos'> = prisma) {
+  const ubic = await db.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true }, orderBy: { id: 'asc' } });
+  const caja = ubic.find((u) => u.tipo === 'efectivo' && u.socio_id == null);
   const banco = ubic.find((u) => u.tipo === 'banco');
   if (!caja || !banco) throw new HttpError(400, 'Faltan ubicaciones Caja/Banco configuradas');
   return { caja, banco };
@@ -1220,16 +1235,23 @@ export interface DiaInput {
  * itemizados de Otros mov. no se tocan.
  */
 export async function registrarDia(negocioId: bigint, usuarioId: bigint, semanaId: bigint, fecha: string, datos: DiaInput) {
-  const semana = await getSemanaAbierta(negocioId, semanaId);
+  await prisma.$transaction(tx => escribirDiaEnTx(tx, negocioId, usuarioId, semanaId, fecha, datos));
+  return resumenDiario(negocioId, semanaId);
+}
+
+/** El corte Epos y los importes diarios comparten la misma transacción. */
+export async function escribirDiaEnTx(tx: Prisma.TransactionClient, negocioId: bigint, usuarioId: bigint, semanaId: bigint, fecha: string, datos: DiaInput) {
+  await bloquearLibro(tx, negocioId);
+  if (['venta_efectivo', 'venta_tarjeta', 'propina_tarjeta', 'gasto_efectivo', 'sueldos'].some(k => !Number.isFinite(datos[k as keyof DiaInput]) || datos[k as keyof DiaInput] < 0)) throw new HttpError(400, 'Captura explícitamente los cinco importes del día, incluso si son cero');
+  const semana = await getSemanaAbierta(negocioId, semanaId, tx);
   if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana está cerrada');
   if (fecha < iso(semana.fecha_inicio) || fecha > iso(semana.fecha_fin)) {
     throw new HttpError(400, 'La fecha está fuera de la semana');
   }
-  const { caja, banco } = await ubicacionesVenta(negocioId);
-  const otros = await prisma.categorias_gasto.findFirst({ where: { negocio_id: negocioId, nombre: 'Otros' } });
-  const fechaDate = new Date(fecha + 'T00:00:00Z');
+  const { caja, banco } = await ubicacionesVenta(negocioId, tx);
+  const otros = await tx.categorias_gasto.findFirst({ where: { negocio_id: negocioId, nombre: 'Otros', activo: true } });
+  const fechaDate = fechaCivilUTC(fecha);
 
-  await prisma.$transaction(async (tx) => {
     // Borra solo lo capturado como "del día" en esa fecha.
     await tx.movimientos.deleteMany({
       where: { negocio_id: negocioId, semana_id: semanaId, fecha: fechaDate, descripcion: { in: MARCAS_DIA } },
@@ -1253,8 +1275,6 @@ export async function registrarDia(negocioId: bigint, usuarioId: bigint, semanaI
       });
     }
     await registrarAuditoria({ negocioId, usuarioId, entidad: 'dia_operativo', entidadId: fecha, accion: 'reemplazar', despues: datos }, tx);
-  });
-  return resumenDiario(negocioId, semanaId);
 }
 
 // ---------------------------------------------------------------------------
@@ -1304,8 +1324,12 @@ export async function cuadre(negocioId: bigint, semanaId: bigint) {
 }
 
 export async function crearArqueo(negocioId: bigint, usuarioId: bigint, semanaId: bigint, ubicacionId: number, montoReal: number, fecha?: string) {
-  const semana = await getSemanaAbierta(negocioId, semanaId);
-  const ubic = await prisma.ubicaciones_fondos.findFirst({ where: { id: BigInt(ubicacionId), negocio_id: negocioId } });
+  if (!Number.isFinite(montoReal)) throw new HttpError(400, 'El saldo real debe ser un número válido');
+  return prisma.$transaction(async tx => {
+  await bloquearLibro(tx, negocioId);
+  const semana = await getSemanaAbierta(negocioId, semanaId, tx);
+  if (semana.estado !== 'abierta') throw new HttpError(409, 'La semana está cerrada; reábrela antes de registrar un arqueo');
+  const ubic = await tx.ubicaciones_fondos.findFirst({ where: { id: BigInt(ubicacionId), negocio_id: negocioId, activo: true } });
   if (!ubic) throw new HttpError(400, 'Ubicación inválida');
   // Si el operador está cerrando una semana que terminó antes de hoy (por
   // ejemplo, una semana domingo cuando el servidor ya está en lunes), usar
@@ -1314,11 +1338,11 @@ export async function crearArqueo(negocioId: bigint, usuarioId: bigint, semanaId
   // fecha operativa dentro de la semana seleccionada.
   const hoy = fechaOperativaHoy();
   const fechaPorDefecto = hoy < semana.fecha_inicio ? semana.fecha_inicio : hoy > semana.fecha_fin ? semana.fecha_fin : hoy;
-  const fechaArqueo = fecha ? new Date(`${fecha}T00:00:00Z`) : fechaPorDefecto;
+  const fechaArqueo = fecha ? fechaCivilUTC(fecha) : fechaPorDefecto;
   if (Number.isNaN(fechaArqueo.getTime()) || fechaArqueo < semana.fecha_inicio || fechaArqueo > semana.fecha_fin) {
     throw new HttpError(400, 'La fecha del arqueo debe estar dentro de la semana seleccionada');
   }
-  const a = await prisma.arqueos.create({
+  const a = await tx.arqueos.create({
     data: {
       negocio_id: negocioId,
       semana_id: semana.id,
@@ -1329,6 +1353,7 @@ export async function crearArqueo(negocioId: bigint, usuarioId: bigint, semanaId
     },
   });
   return { id: Number(a.id) };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1900,6 +1925,8 @@ export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaI
   await persistirConciliacionInventarioSemana(negocioId, semanaId);
 
   await prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
+    if ((await getSemanaAbierta(negocioId, semanaId, tx)).estado !== 'abierta') throw new HttpError(409, 'La semana ya está cerrada');
     const movs = await tx.movimientos.findMany({ where: { negocio_id: negocioId, semana_id: semanaId } });
 
     // Reutiliza el snapshot de cierre ya capturado. Si fue detectado por tipo
@@ -2015,6 +2042,10 @@ export async function reabrirSemana(negocioId: bigint, semanaId: bigint) {
   }
 
   await prisma.$transaction(async (tx) => {
+    await bloquearLibro(tx, negocioId);
+    const vigente = await getSemanaAbierta(negocioId, semanaId, tx);
+    if (vigente.estado !== 'cerrada') throw new HttpError(409, 'La semana ya no está cerrada');
+    if (await tx.semanas.findFirst({ where: { negocio_id: negocioId, estado: 'cerrada', fecha_inicio: { gt: vigente.fecha_inicio } }, select: { id: true } })) throw new HttpError(409, 'Reabre primero las semanas posteriores');
     await tx.cierres_semana.deleteMany({ where: { semana_id: semanaId, semanas: { negocio_id: negocioId } } });
     // La comisión de terminal solo se crea automáticamente al cerrar: se puede borrar sin riesgo.
     await tx.movimientos.deleteMany({ where: { negocio_id: negocioId, semana_id: semanaId, tipo: 'comision_terminal' } });
@@ -2131,15 +2162,20 @@ export async function editarSocio(negocioId: bigint, id: bigint, data: { nombre?
 
 /** Borra un movimiento. Solo en semana abierta (las cerradas tienen saldos congelados). */
 export async function borrarMovimiento(negocioId: bigint, id: bigint) {
-  const mov = await prisma.movimientos.findFirst({ where: { id, negocio_id: negocioId } });
+  return prisma.$transaction(async tx => {
+  await bloquearLibro(tx, negocioId);
+  const mov = await tx.movimientos.findFirst({ where: { id, negocio_id: negocioId } });
   if (!mov) throw new HttpError(404, 'Movimiento no encontrado');
-  const semana = await prisma.semanas.findFirst({ where: { id: mov.semana_id, negocio_id: negocioId } });
+  const semana = await tx.semanas.findFirst({ where: { id: mov.semana_id, negocio_id: negocioId } });
   if (!semana || semana.estado !== 'abierta') {
     throw new HttpError(409, 'No se pueden borrar movimientos de una semana cerrada');
   }
   if (mov.compra_id != null) throw new HttpError(409, 'Este movimiento pertenece a una compra; edita o elimina el ticket completo');
-  await prisma.movimientos.delete({ where: { id } });
+  if (mov.tipo === 'comision_terminal') throw new HttpError(409, 'La comisión se genera automáticamente al cerrar');
+  await tx.movimientos.delete({ where: { id } });
+  await registrarAuditoria({ negocioId, entidad: 'movimiento', entidadId: id, accion: 'borrar', antes: { tipo: mov.tipo, monto: Number(mov.monto), semana_id: mov.semana_id } }, tx);
   return { ok: true };
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -20,6 +20,11 @@ const Ctx = createContext<AuthCtx>(null as unknown as AuthCtx);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [usuario, setUsuario] = useState<Usuario | null>(null);
   const [cargando, setCargando] = useState(true);
+  useEffect(() => {
+    const expirar = () => { setToken(null); setUsuario(null); };
+    window.addEventListener('iberico-sesion-expirada', expirar);
+    return () => window.removeEventListener('iberico-sesion-expirada', expirar);
+  }, []);
 
   // Al montar: si hay token, validar con /me.
   useEffect(() => {

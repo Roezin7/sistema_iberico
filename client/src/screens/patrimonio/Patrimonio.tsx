@@ -33,7 +33,10 @@ export default function Patrimonio() {
 
 function Tendencia() {
   const [data, setData] = useState<{ serie: Snapshot[]; ultimo: Snapshot | null } | null>(null);
-  useEffect(() => { api<{ serie: Snapshot[]; ultimo: Snapshot | null }>('/patrimonio/tendencia').then(setData); }, []);
+  const [error, setError] = useState('');
+  const cargar = async () => { setError(''); try { setData(await api<{ serie: Snapshot[]; ultimo: Snapshot | null }>('/patrimonio/tendencia')); } catch(e) { setError(e instanceof Error ? e.message : 'No se pudo cargar el patrimonio'); } };
+  useEffect(() => { void cargar(); }, []);
+  if (error) return <div role="alert"><p>{error}</p><button className="btn-secondary" onClick={() => void cargar()}>Reintentar</button></div>;
   if (!data) return <Cargando />;
   if (!data.ultimo) return <p className="muted">Aún no hay snapshots. Se generan automáticamente al cerrar cada semana.</p>;
   const u = data.ultimo;
@@ -49,7 +52,7 @@ function Tendencia() {
   return (
     <>
       <div className="resumen-card">
-        <span className="muted">Patrimonio neto actual</span>
+        <span className="muted">Patrimonio neto al último cierre</span>
         <strong className="big-number">{mxn(u.patrimonio_neto)}</strong>
         <small className="muted">al {u.fecha}</small>
       </div>

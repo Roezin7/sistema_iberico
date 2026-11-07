@@ -1,6 +1,7 @@
 import { envaseCompra } from './envase-compra.js';
 import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import crypto from 'node:crypto';
+import { fechaCivilUTC } from '../lib/fechas.js';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
@@ -113,9 +114,7 @@ export async function actualizarRecepcionReal(negocioId: bigint, usuarioId: bigi
 }
 
 function fechaUTC(fecha: string): Date {
-  const value = new Date(`${fecha}T00:00:00.000Z`);
-  if (Number.isNaN(value.getTime())) throw new HttpError(400, 'Fecha de compra inválida');
-  return value;
+  return fechaCivilUTC(fecha);
 }
 
 function totalDeLineasCapturadas(lineas: Array<{ importe: unknown }>) {

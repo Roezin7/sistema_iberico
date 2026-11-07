@@ -9,6 +9,7 @@ import rateLimit from 'express-rate-limit';
 import { env, isProd } from './env.js';
 import { apiRouter } from './routes/index.js';
 import { errorHandler } from './middleware/error.js';
+import { limitarComplejidadJson } from './middleware/complejidad-json.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, '../public');
@@ -86,6 +87,7 @@ const limiteLogin = rateLimit({
 // --- API ---
 app.use('/api/auth/login', limiteLogin);
 app.use('/api', limiteGeneral);
+app.use('/api', limitarComplejidadJson);
 app.use('/api', apiRouter);
 
 // --- PWA estática (single-service) ---

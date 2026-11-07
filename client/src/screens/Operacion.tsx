@@ -99,7 +99,7 @@ export default function Operacion() {
       <div className="page-head__actions"><span className="sync-label"><span className="sync-dot sync-dot--ok" /> Datos actualizados {actualizado ? actualizado.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' }) : '—'}</span><button className="btn-secondary" onClick={() => void cargar()} disabled={cargando}><Icono name="refresh" size={16} className={cargando ? 'cargando__spin' : undefined} /> Actualizar</button></div>
     </header>
     {error && <div className="operation-error" role="alert"><Icono name="alertCircle" size={18} /><div><strong>No se pudo completar la lectura</strong><p>{error}</p></div><button className="btn-secondary" onClick={() => void cargar()}>Reintentar</button></div>}
-    {cargando && !inventario && !resumen ? <section className="card operation-loading"><Cargando etiqueta="Preparando operación…" /></section> : <>
+    {!inventario && !resumen ? error ? null : <section className="card operation-loading"><Cargando etiqueta="Preparando operación…" /></section> : <>
       <section className={`operation-status operation-status--${estado}`}><div><span className="eyebrow">Estado del sistema</span><h2>{estadoLabel}</h2><p>{semana ? `${weekLabel(semana)} · ${weekStateLabel(semana)}` : 'La operación diaria sigue disponible para registrar actividad.'}</p></div><div className="operation-status__actions"><Link className="btn-primary" to={admin && semana ? `/finanzas?semana=${semana.id}&tab=dia` : '/'}>{admin ? 'Abrir jornada' : 'Ver operación'}</Link>{admin && semana && <Link className="btn-secondary" to={`/finanzas?semana=${semana.id}&tab=cuadre`}>Preparar cierre</Link>}</div></section>
 
       <section className="operation-metrics" aria-label="Resumen operativo">

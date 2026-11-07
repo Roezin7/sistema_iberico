@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { Cargando } from '../../ui/Cargando';
+import { costoVisibleMenu } from '../../../../server/src/recetas/presentacion-costos';
 
 type Linea = {
   producto: string;
@@ -195,9 +196,10 @@ function ResultadoMensual({ data }: { data: RespuestaResultado }) {
 function ProductCard({ product }: { product: ProductoCosto }) {
   const status = product.receta_id == null ? 'Sin receta' : product.completa ? 'Completo' : 'Pendiente';
   const statusClass = product.receta_id == null ? 'is-missing' : product.completa ? 'is-ok' : 'is-pending';
-  const costoVisible = product.costo_fifo_actual ?? product.costo_fifo_referencia ?? product.costo_receta;
-  const margenVisible = product.margen_fifo_actual ?? product.margen_fifo_referencia ?? product.margen_unitario;
-  const foodCostVisible = product.food_cost_fifo_pct ?? product.food_cost_fifo_referencia_pct ?? product.food_cost_pct;
+  const seleccion = costoVisibleMenu(product);
+  const costoVisible = seleccion.costo;
+  const margenVisible = seleccion.margen;
+  const foodCostVisible = seleccion.foodCost;
   const etiquetaCosto = product.costo_fifo_actual != null
     ? 'Costo FIFO disponible'
     : product.costo_fifo_referencia != null
@@ -226,7 +228,7 @@ function ProductCard({ product }: { product: ProductoCosto }) {
             {product.lineas.map((line, index) => (
               <div className="menu-costos-line" key={`${line.producto}-${index}`}>
                 <span><strong>{line.producto}</strong><small>{line.cantidad} {line.unidad}{line.nota ? ` · ${line.nota}` : ''}</small></span>
-                <strong>{money(line.costo_fifo ?? line.costo_fifo_aplicado ?? line.costo)}</strong>
+                <strong>{money(seleccion.fuente === 'fifo_actual' ? line.costo_fifo : seleccion.fuente === 'fifo_referencia' ? line.costo_fifo_referencia : line.costo)}</strong>
               </div>
             ))}
           </div>

@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import type { Prisma } from '@prisma/client';
+import { bloquearLibro } from '../inventario/control-cierre.js';
 import { z } from 'zod';
 import { prisma } from '../db.js';
 import { num } from '../lib/num.js';
@@ -95,12 +97,19 @@ const productoBody = z.object({
 });
 
 /** POST /catalogo/products (admin) */
+async function validarReferenciasProducto(tx: Prisma.TransactionClient, negocioId: bigint, b: { store_id?: number; categoria_id?: number | null }) {
+  if (b.store_id != null && !await tx.stores.findFirst({ where: { id: BigInt(b.store_id), negocio_id: negocioId }, select: { id: true } })) throw new HttpError(400, 'El proveedor no pertenece a este negocio');
+  if (b.categoria_id != null && !await tx.categorias_inventario.findFirst({ where: { id: BigInt(b.categoria_id), negocio_id: negocioId }, select: { id: true } })) throw new HttpError(400, 'La categoría no pertenece a este negocio');
+}
 catalogoRouter.post(
   '/products',
   soloAdmin,
   asyncHandler(async (req, res) => {
     const b = productoBody.parse(req.body);
-    const creado = await prisma.products.create({
+    const creado = await prisma.$transaction(async tx => {
+      await bloquearLibro(tx, req.auth!.negocioId);
+      await validarReferenciasProducto(tx, req.auth!.negocioId, b);
+      return tx.products.create({
       data: {
         negocio_id: req.auth!.negocioId,
         name: b.nombre,
@@ -116,6 +125,7 @@ catalogoRouter.post(
         active: b.active ?? true,
         categoria_id: b.categoria_id != null ? BigInt(b.categoria_id) : null,
       },
+      });
     });
     res.status(201).json({ id: Number(creado.id) });
   }),
@@ -129,9 +139,19 @@ catalogoRouter.patch(
     const id = BigInt(z.coerce.number().int().positive().parse(req.params.id));
     const b = productoBody.partial().parse(req.body);
     await prisma.$transaction(async tx => {
+      await bloquearLibro(tx, req.auth!.negocioId);
       await tx.$queryRaw`SELECT id FROM products WHERE id = ${id} AND negocio_id = ${req.auth!.negocioId} FOR UPDATE`;
       const prod = await tx.products.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
       if (!prod) throw new HttpError(404, 'Producto no encontrado');
+      await validarReferenciasProducto(tx, req.auth!.negocioId, b);
+      if (b.unidad_base !== undefined && b.unidad_base !== prod.unidad_base) {
+        const usado = await tx.products.findFirst({ where: { id, OR: [
+          { inventory_lines: { some: {} } }, { inventory_lots: { some: {} } },
+          { receta_lineas: { some: {} } }, { purchase_capture_lines: { some: {} } },
+          { purchase_lines: { some: {} } }, { product_zone_units: { some: {} } },
+        ] }, select: { id: true } });
+        if (usado) throw new HttpError(409, 'La unidad base ya tiene conteos, lotes, recetas o conversiones. Cambiarla reinterpretaría el histórico; requiere una migración de unidades verificada, no editar la etiqueta.');
+      }
       const actualizado = await tx.products.update({
         where: { id },
         data: {

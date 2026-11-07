@@ -1,3 +1,4 @@
+import { fechaCivilSchema } from '../lib/fechas.js';
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../middleware/error.js';
@@ -67,7 +68,7 @@ finanzasRouter.get('/semanas/actual', asyncHandler(async (req, res) => {
 
 finanzasRouter.post('/semanas', asyncHandler(async (req, res) => {
   const body = z.object({
-    fecha_inicio: z.string().optional(),
+    fecha_inicio: fechaCivilSchema.optional(),
     excepcion_inventario_anterior: z.boolean().optional().default(false),
   }).parse(req.body);
   res.status(201).json(await svc.crearSemana(req.auth!.negocioId, body.fecha_inicio, {
@@ -145,12 +146,12 @@ finanzasRouter.get('/semanas/:id/dias', asyncHandler(async (req, res) => {
 
 finanzasRouter.put('/semanas/:id/dias', asyncHandler(async (req, res) => {
   const body = z.object({
-    fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    venta_efectivo: z.coerce.number().min(0).default(0),
-    venta_tarjeta: z.coerce.number().min(0).default(0),
-    propina_tarjeta: z.coerce.number().min(0).default(0),
-    gasto_efectivo: z.coerce.number().min(0).default(0),
-    sueldos: z.coerce.number().min(0).default(0),
+    fecha: fechaCivilSchema,
+    venta_efectivo: z.number().finite().nonnegative(),
+    venta_tarjeta: z.number().finite().nonnegative(),
+    propina_tarjeta: z.number().finite().nonnegative(),
+    gasto_efectivo: z.number().finite().nonnegative(),
+    sueldos: z.number().finite().nonnegative(),
   }).parse(req.body);
   const semanaId = BigInt(id.parse(req.params.id));
   res.json(await svc.registrarDia(req.auth!.negocioId, req.auth!.usuarioId, semanaId, body.fecha, body));
@@ -162,7 +163,7 @@ finanzasRouter.post('/movimientos', asyncHandler(async (req, res) => {
     semana_id: id,
     tipo: tipoMovimiento,
     monto: z.coerce.number().positive(),
-    fecha: z.string().optional(),
+    fecha: fechaCivilSchema.optional(),
     ubicacion_origen_id: id.nullable().optional(),
     ubicacion_destino_id: id.nullable().optional(),
     categoria_id: id.nullable().optional(),
@@ -181,7 +182,7 @@ finanzasRouter.delete('/movimientos/:id', asyncHandler(async (req, res) => {
 finanzasRouter.patch('/movimientos/:id', asyncHandler(async (req, res) => {
   const body = z.object({
     monto: z.coerce.number().positive().optional(),
-    fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    fecha: fechaCivilSchema.optional(),
     ubicacion_origen_id: id.nullable().optional(),
     ubicacion_destino_id: id.nullable().optional(),
     categoria_id: id.nullable().optional(),
@@ -196,8 +197,8 @@ finanzasRouter.post('/arqueos', asyncHandler(async (req, res) => {
   const body = z.object({
     semana_id: id,
     ubicacion_id: id,
-    monto_real: z.coerce.number(),
-    fecha: z.string().optional(),
+    monto_real: z.number().finite(),
+    fecha: fechaCivilSchema.optional(),
   }).parse(req.body);
   res.status(201).json(
     await svc.crearArqueo(req.auth!.negocioId, req.auth!.usuarioId, BigInt(body.semana_id), body.ubicacion_id, body.monto_real, body.fecha),

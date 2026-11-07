@@ -282,6 +282,7 @@ export const epos = {
     epos: { ventas: number; efectivo: number; tarjeta: number; otros: number };
     confirmado: { ventas: number; efectivo: number; tarjeta: number; otros: number };
     cuentas_abiertas: number; excepciones: Record<string, unknown>[]; notas?: string;
+    diario?: { venta_efectivo: number; venta_tarjeta: number; propina_tarjeta: number; gasto_efectivo: number; sueldos: number };
   }) => api<ConciliacionDiaria>('/epos/conciliaciones-diarias', { method: 'POST', body }),
 };
 

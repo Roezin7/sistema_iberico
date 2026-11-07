@@ -1,5 +1,6 @@
 // Cliente HTTP mínimo para la API. Guarda el JWT en localStorage.
 import { encolar } from './offline';
+import { puedeEncolar } from './offline-policy';
 
 const TOKEN_KEY = 'iberico_token';
 const GET_TIMEOUT_MS = 12_000;
@@ -29,10 +30,6 @@ export const fueEncolado = (r: unknown): r is Encolado =>
 // Sólo se pueden capturar offline acciones que no cierran ni afectan saldos
 // irreversibles. Los conteos requieren conexión para evitar que una apertura,
 // cierre o ajuste quede pendiente y se aplique con una semana distinta.
-function puedeGuardarOffline(path: string, _body: unknown) {
-  return path === '/tareas/resultados' || path === '/inventario/compras/rapidas';
-}
-
 async function requestApi<T = unknown>(
   path: string,
   opts: { method?: string; body?: unknown; auth?: boolean } = {},
@@ -61,7 +58,7 @@ async function requestApi<T = unknown>(
       throw new ApiError(0, 'La API tardó demasiado en responder. Verifica la conexión e intenta de nuevo.');
     }
     // Fallo de red. Si es una mutación, la encolamos para sincronizar luego.
-    if (esMutacion && puedeGuardarOffline(path, body)) {
+    if (esMutacion && puedeEncolar(method, path)) {
       await encolar({ method, path, body, token: auth ? getToken() : null });
       return { queued: true } as T;
     }
@@ -71,9 +68,11 @@ async function requestApi<T = unknown>(
   }
 
   if (res.status === 204) return undefined as T;
-  const data = await res.json().catch(() => ({}));
+  const data = await res.json().catch(() => {
+    throw new ApiError(res.status, 'La respuesta no tiene un formato válido. No repitas un pago; comprueba primero si se guardó.');
+  });
   if (!res.ok) {
-    if (res.status === 401) setToken(null); // token inválido -> forzar re-login
+    if (res.status === 401 && auth) { setToken(null); window.dispatchEvent(new Event('iberico-sesion-expirada')); }
     throw new ApiError(res.status, (data as { error?: string }).error ?? 'Error de red');
   }
   return data as T;

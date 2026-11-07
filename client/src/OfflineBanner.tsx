@@ -18,7 +18,7 @@ export default function OfflineBanner() {
           {!online && <span>Sin conexión. Puedes conservar borradores de compra; confirma inventario, pagos y cierres al reconectar.</span>}
           {online && pendientes > 0 && (
             <span onClick={() => void sincronizar()}>
-              🔄 Sincronizando {pendientes} cambio{pendientes !== 1 ? 's' : ''}…
+              {fallidos.length ? '⚠️ Revisión pendiente: ' : '🔄 Por sincronizar: '}{pendientes} cambio{pendientes !== 1 ? 's' : ''}.
             </span>
           )}
           {pendientes > 0 && <strong className="offline-pill">{pendientes}</strong>}
@@ -27,7 +27,7 @@ export default function OfflineBanner() {
       {fallidos.length > 0 && (
         <div className="offline-banner offline-banner--error">
           <span>
-            ⚠️ {fallidos.length} cambio{fallidos.length !== 1 ? 's' : ''} no se guardó: {fallidos[fallidos.length - 1]!.error}. Revísalo y vuelve a capturarlo.
+            ⚠️ {fallidos.length} aviso{fallidos.length !== 1 ? 's' : ''}: {fallidos[fallidos.length - 1]!.error}. Revisa el estado antes de volver a capturar para evitar duplicados.
           </span>
           <button className="offline-pill" onClick={descartarFallos} style={{ border: 'none', cursor: 'pointer' }}>Entendido</button>
         </div>
