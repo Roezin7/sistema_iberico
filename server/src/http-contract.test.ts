@@ -30,6 +30,16 @@ afterAll(async () => {
 });
 
 describe('contrato HTTP de seguridad', () => {
+  it.each([null, '', false])('no convierte una cantidad de conteo vacía (%s) en cero', async (qty) => {
+    const token = firmarToken({ sub: '1', negocio_id: '1', rol: 'admin', nombre: 'QA' });
+    const r = await fetch(`${base}/api/inventario/snapshots`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ tipo: 'cierre', semana_id: 75, lineas: [{ product_id: 19, zona_id: 1, qty_captura: qty }] }) });
+    expect(r.status).toBe(400);
+  });
+  it('una cantidad base null no representa inventario cero confirmado', async () => {
+    const token = firmarToken({ sub: '1', negocio_id: '1', rol: 'admin', nombre: 'QA' });
+    const r = await fetch(`${base}/api/inventario/snapshots`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ tipo: 'cierre', semana_id: 75, lineas: [{ product_id: 19, zona_id: 1, qty_captura: 0, cantidad_base: null }] }) });
+    expect(r.status).toBe(400);
+  });
   it('limita colecciones antes de la validación de los campos', async () => {
     const r = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sobrante: Array(1001).fill(null) }) });
     expect(r.status).toBe(413);

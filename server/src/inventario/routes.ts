@@ -112,8 +112,8 @@ const conteoSchema = z.object({
       z.object({
         product_id: z.coerce.number().int().positive(),
         zona_id: z.coerce.number().int().positive(),
-        qty_captura: z.coerce.number().min(0),
-        cantidad_base: z.coerce.number().nonnegative().optional(),
+        qty_captura: z.number().finite().nonnegative(),
+        cantidad_base: z.number().finite().nonnegative().optional(),
       }),
     )
     .min(1),

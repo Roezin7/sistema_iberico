@@ -39,7 +39,7 @@ Las compras entran a Bodega; la apertura ya guardada no se modifica retroactivam
 | Mismo total con métodos diferentes se marcaba conciliado | El estado compara también efectivo, tarjeta y otros. |
 | Edición financiera podía cambiar facturación implícitamente | Se conserva la marca anterior salvo cambio explícito. |
 | Transferencias/fondos/categorías podían tener referencias ambiguas | Mismo negocio y cuentas activas, origen distinto al destino, campos compatibles con el tipo, socio correspondiente a caja fuerte; validación también al editar. |
-| Arqueos en semanas cerradas, o null convertido en cero | Se rechazan; cero debe ser una cifra explícita. Escrituras financieras y cierre usan bloqueo común y revalidación de estado. |
+| Arqueos en semanas cerradas, o null convertido en cero | Se rechazan; cero debe ser una cifra explícita, también en cantidades del conteo. Escrituras financieras y cierre usan bloqueo común y revalidación de estado. |
 | Fechas inexistentes normalizadas por JavaScript | Validación de fecha civil real y predeterminado México; 30 de febrero se rechaza. |
 | Promedios de menú, tarjetas y desglose mezclaban fuentes de costo | Una selección común: FIFO disponible, referencia documentada, catálogo o pendiente. Indicadores y desglose usan la misma fuente. |
 | Recetas futuras influían en costo actual; validación podía aceptar unidades incompatibles | Se respeta vigencia y se comprueban ingredientes activos, dimensiones, duplicados y envases enteros. ID Epos no se duplica entre artículos activos. |
@@ -60,7 +60,7 @@ Las compras entran a Bodega; la apertura ya guardada no se modifica retroactivam
 - Cero consumos duplicados por venta/producto/lote, lotes con saldo fuera de rango,
   referencias cruzadas entre negocios revisadas, ID Epos duplicados en menú activo,
   tickets confirmados descuadrados contra líneas o sumas internas de métodos incoherentes.
-- **254 pruebas automatizadas**: 213 servidor y 41 cliente; typecheck y build de producción.
+- **258 pruebas automatizadas**: 217 servidor y 41 cliente; typecheck y build de producción.
 - **35 grupos de escenarios integrales** en cuatro scripts: cronología de zonas (11),
   ciclo FIFO (12), trazabilidad de cierre (3), integridad de aplicación (9).
   Ejecutados sobre copia local restaurada; los de integridad comparan huellas de datos
