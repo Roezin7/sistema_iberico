@@ -376,6 +376,7 @@ function DiaCard({ semana, dia, abierta, operativo, eventoEspecial = false, conc
       setEfectivo(String(metodos.efectivo));
       setTarjeta(String(metodos.tarjeta));
       const avisos = [
+        ...(corte.advertencias_post_guardado ?? []).map(a => a.mensaje),
         metodos.mixto > 0 ? `${mxn(metodos.mixto)} aparece como Card/Cash y debe clasificarse` : '',
         metodos.noReconocido > 0 ? `${mxn(metodos.noReconocido)} con método Epos no reconocido` : '',
       ].filter(Boolean);

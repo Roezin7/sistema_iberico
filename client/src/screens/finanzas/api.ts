@@ -167,6 +167,7 @@ export interface DiaFila {
 export interface ResumenDiario { estado: string; dias: DiaFila[] }
 
 export interface EposCorteDiario {
+  advertencias_post_guardado?: { etapa: string; mensaje: string }[];
   periodo: { from: string; to: string };
   daily_sales: { ventas: number; descuentos: number; devoluciones: number };
   bookkeeping: { ventas: number; metodos_pago: { metodo: string; total: number }[] };

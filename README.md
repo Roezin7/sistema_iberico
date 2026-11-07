@@ -12,6 +12,8 @@ aunque la selección dinámica del negocio todavía no está expuesta en la inte
 
 La [auditoría integral del 6 de noviembre](docs/AUDITORIA_INTEGRAL_2026-11-06.md) documenta las correcciones de unidades, compras, cortes, costos y permisos, las pruebas realizadas y los pendientes reales.
 
+La [corrección FIFO del 7 de noviembre](docs/FIX_FIFO_DECIMALES_2026-11-07.md) elimina el falso conflicto de cantidades decimales y distingue guardado exitoso de costeo posterior pendiente.
+
 La revisión de producción del 3 de noviembre está en [Revisión ejecutiva y plan de Ibérico](docs/REVISION_EJECUTIVA_Y_PLAN_IBERICO_2026-11-03.md). Describe lo comprobado, las limitaciones de datos y el plan de cuatro semanas. La app se organiza en Operación, Abasto, Finanzas y Administración.
 
 La arquitectura tiene separación por negocio, pero aún requiere adaptar marca, reglas, conexión Epos y selección de negocio para replicarla. No se presenta un porcentaje de reutilización sin un ensayo de réplica.

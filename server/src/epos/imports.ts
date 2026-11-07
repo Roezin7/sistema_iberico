@@ -2,6 +2,7 @@ import { bloquearLibro } from '../inventario/control-cierre.js';
 import { createHash } from 'node:crypto';
 import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
+import { intentarPostGuardado } from '../lib/post-guardado.js';
 import { consumirVentasEpos } from '../inventario/consumo-epos.js';
 import { aplicarMapeoEpos } from './mapeo-menu.js';
 import {
@@ -127,30 +128,33 @@ export async function importarVentasEpos(input: {
   // en el libro local, se intenta costearlas contra todos los lotes abiertos.
   // La operación es idempotente y no modifica Epos; una receta sin validar o
   // una existencia realmente insuficiente queda visible como excepción.
-  const costeoEnVivo = await consumirVentasEpos({
+  const costeo = await intentarPostGuardado('costeo_fifo', () => consumirVentasEpos({
     negocioId: input.negocioId,
     from: input.from,
     to: input.to,
     confirmar: true,
     modo: 'normal',
-  });
+  }));
   // Cada sincronización completa las asociaciones determinísticas por ID y
   // nombre. Los productos ambiguos permanecen visibles en la auditoría y no
   // se asignan de forma silenciosa.
-  const mapeo = await aplicarMapeoEpos({ negocioId: input.negocioId, from: fromDate, to: toDate });
+  const revisionMapeo = await intentarPostGuardado('mapeo_epos', () => aplicarMapeoEpos({ negocioId: input.negocioId, from: fromDate, to: toDate }));
+  const costeoEnVivo = costeo.resultado, mapeo = revisionMapeo.resultado;
+  const advertencias = [costeo.advertencia, revisionMapeo.advertencia].filter(a => a != null);
 
   return {
     ...preview, tender_breakdown: tenderBreakdown, persistido: true, importacion_id: Number(result.importacion.id),
     filas_persistidas: result.nuevas, filas_duplicadas: result.duplicadas,
-    costeo_en_vivo: {
+    costeo_en_vivo: costeoEnVivo ? {
       ventas: costeoEnVivo.ventas,
       costeadas: costeoEnVivo.costeadas,
       excepciones: costeoEnVivo.excepciones,
       pendientes: costeoEnVivo.pendientes,
       costo_fifo: costeoEnVivo.costo_fifo,
-    },
-    mapeo_epos: { aplicadas: mapeo.aplicadas.length, sin_mapeo: mapeo.propuestas.filter((p) => p.estado === 'sin_mapeo').length },
-    nota: 'Las ventas se costean automáticamente contra el libro FIFO abierto; sólo quedan pendientes las recetas o productos que requieren revisión.',
+    } : null,
+    mapeo_epos: mapeo ? { aplicadas: mapeo.aplicadas.length, sin_mapeo: mapeo.propuestas.filter((p) => p.estado === 'sin_mapeo').length } : null,
+    advertencias_post_guardado: advertencias,
+    nota: advertencias.length ? 'Ventas importadas; hay tareas posteriores pendientes. Puedes revisar y confirmar el corte sin recapturar las ventas; el costo permanece provisional.' : 'Las ventas se costean automáticamente contra el libro FIFO abierto; sólo quedan pendientes las recetas o productos que requieren revisión.',
   };
 }
 

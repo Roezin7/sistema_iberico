@@ -154,7 +154,7 @@ export default function Compras({ embebida = false }: { embebida?: boolean }) {
     {esAdmin && tab === 'tickets' && <Tickets compras={comprasSemana} cargando={cargandoCompras} />}
     {esAdmin && tab === 'lotes' && <Lotes lotes={lotesSemana} />}
     {esAdmin && tab === 'epos' && <EposPanel from={from} setFrom={setFrom} to={to} setTo={setTo} preview={preview} consultando={consultando} consultar={consultarEpos} focus={focoInicial} />}
-    {esAdmin && tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={productosOrdenados} onChange={() => void cargar()} />}
+    {esAdmin && tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={productosOrdenados} onChange={(msg) => { if (msg) setMensaje(msg); void cargar(); }} />}
   </div>;
 }
 
@@ -385,14 +385,14 @@ export function RegistroComprasPanel({ semana, onChange }: { semana: Semana; onC
       <button className={tab === 'lotes' ? 'tab tab--on' : 'tab'} onClick={() => setTab('lotes')}>Lotes FIFO ({lotesSemana.length})</button>
     </nav>
     {cargando ? <section className="card"><Cargando etiqueta="Cargando compras y lotes…" /></section> : <>
-      {tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={[...productos].sort((a, b) => a.nombre.localeCompare(b.nombre))} onChange={() => { void cargar(); onChange(); }} />}
+      {tab === 'pendientes' && <Pendientes filas={pendientesSemana} productos={[...productos].sort((a, b) => a.nombre.localeCompare(b.nombre))} onChange={(msg) => { if (msg) setMensaje(msg); void cargar(); onChange(); }} />}
       {tab === 'tickets' && <Tickets compras={comprasSemana} cargando={false} />}
       {tab === 'lotes' && <Lotes lotes={lotesSemana} />}
     </>}
   </section>;
 }
 
-function Pendientes({ filas, productos, onChange }: { filas: Pendiente[]; productos: Producto[]; onChange: () => void }) {
+function Pendientes({ filas, productos, onChange }: { filas: Pendiente[]; productos: Producto[]; onChange: (mensaje?: string) => void }) {
   const [ubicaciones, setUbicaciones] = useState<RefCompra['ubicaciones']>([]);
   const [productosEstado, setProductosEstado] = useState<Producto[]>(productos);
 
@@ -407,7 +407,7 @@ function Pendientes({ filas, productos, onChange }: { filas: Pendiente[]; produc
   return <section className="quick-pending">{filas.map((f) => <PendienteCardV2 key={f.id} fila={f} productos={productosEstado} ubicaciones={ubicaciones} onChange={onChange} />)}</section>;
 }
 
-function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pendiente; productos: Producto[]; ubicaciones: RefCompra['ubicaciones']; onChange: () => void }) {
+function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pendiente; productos: Producto[]; ubicaciones: RefCompra['ubicaciones']; onChange: (mensaje?: string) => void }) {
   const [lineas, setLineas] = useState(fila.lineas);
   const totalInicial = fila.total == null && fila.fuente !== 'orden_manuscrita' ? totalDeLineas(fila.lineas) : fila.total;
   const [total, setTotal] = useState(totalInicial == null ? '' : String(totalInicial));
@@ -512,9 +512,10 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
     if (!validacion?.valida) return;
     setGuardando(true);
     try {
-      const confirmada = await api<{ discrepancias?: ValidacionCompra['advertencias'] }>(`/inventario/compras/${fila.id}/confirmar`, { method: 'POST', body: {} });
-      setMensaje(confirmada.discrepancias?.length ? `Compra confirmada con ${confirmada.discrepancias.length} advertencia(s) registrada(s).` : 'Compra confirmada: FIFO y cierre actualizados.');
-      onChange();
+      const confirmada = await api<{ discrepancias?: ValidacionCompra['advertencias']; advertencias_post_guardado?: { mensaje: string }[] }>(`/inventario/compras/${fila.id}/confirmar`, { method: 'POST', body: {} });
+      const mensaje = ['Compra y pago confirmados.', ...(confirmada.advertencias_post_guardado ?? []).map(a => a.mensaje), ...(confirmada.discrepancias?.length ? [`${confirmada.discrepancias.length} advertencia(s) de captura registrada(s).`] : [])].join(' ');
+      setMensaje(mensaje);
+      onChange(mensaje);
     } catch (e) { setMensaje(e instanceof Error ? e.message : 'No se pudo confirmar'); }
     finally { setGuardando(false); }
   }

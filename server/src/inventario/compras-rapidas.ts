@@ -1,4 +1,5 @@
 import { envaseCompra } from './envase-compra.js';
+import { intentarPostGuardado } from '../lib/post-guardado.js';
 import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import crypto from 'node:crypto';
 import { fechaCivilUTC } from '../lib/fechas.js';
@@ -352,8 +353,8 @@ export async function editarCompraConfirmada(negocioId: bigint, usuarioId: bigin
     } else if (gastoMov) await tx.movimientos.delete({ where: { id: gastoMov.id } });
     return { purchase_id: Number(purchaseId), actualizado: true, inventario: invTotal, gasto: gastoTotal, total };
   }, { timeout: 30_000, maxWait: 15_000 });
-  const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
-  return { ...resultado, costeo_en_vivo: costeoEnVivo };
+  const { resultado: costeoEnVivo, advertencia } = await intentarPostGuardado('costeo_fifo', () => costearVentasPendientesEnVivo({ negocioId }));
+  return { ...resultado, costeo_en_vivo: costeoEnVivo, advertencias_post_guardado: advertencia ? [advertencia] : [] };
 }
 
 /** Corrige el origen de pago de una compra ya confirmada sin tocar sus lotes. */
@@ -537,8 +538,8 @@ export async function confirmarBorradorCompra(negocioId: bigint, usuarioId: bigi
     await registrarAuditoria({ negocioId, usuarioId, entidad: 'compra', entidadId: compra.id, accion: 'confirmar', despues: { total, inventario: inventarioTotal, gasto: gastoTotal, origen_pago_id: origen.id } }, tx);
     return { purchase_id: Number(compra.id), estado: 'confirmada', inventario: inventarioTotal, gasto: gastoTotal, movimientos: (inventarioTotal > 0 ? 1 : 0) + (gastoTotal > 0 ? 1 : 0), discrepancias: validacion.advertencias };
   }, { timeout: 30_000, maxWait: 15_000 });
-  const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
-  return { ...resultado, costeo_en_vivo: costeoEnVivo };
+  const { resultado: costeoEnVivo, advertencia } = await intentarPostGuardado('costeo_fifo', () => costearVentasPendientesEnVivo({ negocioId }));
+  return { ...resultado, costeo_en_vivo: costeoEnVivo, advertencias_post_guardado: advertencia ? [advertencia] : [] };
 }
 
 export async function actualizarBorradorLineas(negocioId: bigint, purchaseId: bigint, lineas: CapturaCompraLinea[], total?: number | null) {

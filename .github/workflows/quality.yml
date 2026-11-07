@@ -37,4 +37,5 @@ jobs:
       - run: npx tsx server/scripts/verificar-ciclo-inventario.ts
       - run: npx tsx server/scripts/verificar-trazabilidad-cierre.ts
       - run: npx tsx server/scripts/verificar-integridad-aplicacion.ts
+      - run: npx tsx server/scripts/verificar-decimales-fifo.ts
       - run: npm run build

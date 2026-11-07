@@ -1,4 +1,5 @@
 import { envaseCompra } from './envase-compra.js';
+import { intentarPostGuardado } from '../lib/post-guardado.js';
 import { fechaCivilUTC } from '../lib/fechas.js';
 import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import { Prisma } from '@prisma/client';
@@ -197,8 +198,8 @@ export async function registrarCompra(negocioId: bigint, input: CompraInput) {
   }, { timeout: 30_000, maxWait: 15_000 });
   // Una compra confirmada puede resolver excepciones anteriores. El lote queda
   // disponible de inmediato y el recálculo respeta la fecha de recepción.
-  const costeoEnVivo = await costearVentasPendientesEnVivo({ negocioId });
-  return { ...resultado, costeo_en_vivo: costeoEnVivo };
+  const { resultado: costeoEnVivo, advertencia } = await intentarPostGuardado('costeo_fifo', () => costearVentasPendientesEnVivo({ negocioId }));
+  return { ...resultado, costeo_en_vivo: costeoEnVivo, advertencias_post_guardado: advertencia ? [advertencia] : [] };
 }
 
 export async function listarLotes(negocioId: bigint, productId?: bigint) {

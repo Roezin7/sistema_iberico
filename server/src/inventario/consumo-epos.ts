@@ -10,6 +10,7 @@ import { referenciaDiaMexico } from './cronologia.js';
 import { efectivaLote, ordenLote } from './libro-fisico.js';
 import { bloquearLibro } from './control-cierre.js';
 import { loteElegibleParaReceta, saldoEnvasesCompletos } from './presentaciones.js';
+import { decimalSql } from '../lib/decimal-sql.js';
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
@@ -307,14 +308,14 @@ async function consumirVentasEposEnLibro(input: { negocioId: bigint; from: strin
         epos_venta_id: venta.id,
         fecha: fechaDb(venta.fecha),
         efectiva_at: venta.fecha,
-        cantidad: consumo.cantidad,
-        costo_unitario: consumo.costoUnitario,
-        costo_total: consumo.costoTotal,
+        cantidad: decimalSql(consumo.cantidad),
+        costo_unitario: decimalSql(consumo.costoUnitario, 6),
+        costo_total: decimalSql(consumo.costoTotal),
         fuente: modo === 'historico_prueba' ? 'venta_receta_historica' : 'venta_receta',
       })));
       if (lotes.size) {
         const entradas = [...lotes.entries()];
-        const params = entradas.flatMap(([id, cantidad]) => [id, cantidad]);
+        const params = entradas.flatMap(([id, cantidad]) => [id, decimalSql(cantidad)]);
         const values = entradas.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::numeric)`).join(',');
         const actualizados = await tx.$executeRawUnsafe(
           `UPDATE inventory_lots AS l SET cantidad_restante = l.cantidad_restante - v.cantidad
@@ -329,7 +330,7 @@ async function consumirVentasEposEnLibro(input: { negocioId: bigint; from: strin
       }
       if (consumos.length) await tx.inventory_consumptions.createMany({ data: consumos });
       if (costeables.length) {
-        const params = costeables.flatMap(({ venta, plan }) => [venta.id.toString(), plan.costoTotal]);
+        const params = costeables.flatMap(({ venta, plan }) => [venta.id.toString(), decimalSql(plan.costoTotal)]);
         const values = costeables.map((_, i) => `($${i * 2 + 1}::bigint, $${i * 2 + 2}::numeric)`).join(',');
         await tx.$executeRawUnsafe(
           `UPDATE epos_ventas AS e SET costo_fifo = v.costo, costeo_estado = 'costeada', costeo_error = NULL, costeado_at = NOW()
