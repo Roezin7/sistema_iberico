@@ -48,6 +48,11 @@ catalogoRouter.get(
       include: { stores: true, product_zone_units: true, categorias_inventario: true, presentaciones_observadas: { where: { observaciones: { gt: 0 } }, orderBy: { ultima_fecha: 'desc' } } },
       orderBy: { name: 'asc' },
     });
+    const envases = await prisma.inventory_lots.findMany({
+      where: { negocio_id: req.auth!.negocioId, purchase_id: { not: null }, estado: { not: 'cancelado' }, contenido_presentacion: { gt: 0 }, unidad_presentacion: { in: ['g','ml','pieza'] } },
+      distinct: ['product_id','contenido_presentacion','unidad_presentacion'], orderBy: { id: 'desc' },
+      select: { product_id: true, contenido_presentacion: true, unidad_presentacion: true, recibido_at: true },
+    });
     res.json(
       productos.map((p) => ({
         id: Number(p.id),
@@ -62,6 +67,7 @@ catalogoRouter.get(
         rendimiento_util: num(p.rendimiento_util),
         presentacion_modo: p.presentacion_modo,
         presentacion_nota: p.presentacion_nota,
+        formatos_envase: envases.filter(e => e.product_id === p.id).map(e => ({ contenido: Number(e.contenido_presentacion), unidad: e.unidad_presentacion, fecha: e.recibido_at.toISOString().slice(0,10) })),
         presentaciones_observadas: p.presentaciones_observadas.map((v) => ({
           id: Number(v.id), unidad_compra: v.unidad_compra, contenido_compra: num(v.contenido_compra), unidad_base: v.unidad_base,
           observaciones: v.observaciones, costo_base_medio: num(v.costo_base_medio), primera_fecha: v.primera_fecha?.toISOString().slice(0, 10) ?? null,

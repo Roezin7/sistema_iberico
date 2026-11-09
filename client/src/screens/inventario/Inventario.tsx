@@ -1,4 +1,5 @@
 import ControlInventario from './ControlInventario';
+import ConteoPresentaciones, { type PresentacionContada } from './ConteoPresentaciones';
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
@@ -7,7 +8,7 @@ import { Cargando } from '../../ui/Cargando';
 import WeekSelector from '../../components/WeekSelector';
 import Compras from '../compras/Compras';
 import { inputHoraMexico, isoDesdeHoraMexico } from '../../operating';
-import { medidaConteo, cantidadDesdeSaldo, cantidadEnConteo, cantidadBaseConteo } from './conteo-unidades';
+import { medidaConteo, cantidadDesdeSaldo, cantidadEnConteo } from './conteo-unidades';
 
 // --- Tipos de la API ---
 interface Zona { id: number; nombre: string; orden: number }
@@ -19,6 +20,9 @@ interface Producto {
   unit_cost: number | null; unidad_base: string | null; unidad_compra: string | null; contenido_compra: number | null;
   unidades: Unidad[]; categoria_id: number | null; categoria: string | null;
   presentacion_modo?: string;
+  active?: boolean;
+  presentaciones_observadas?: { unidad_compra: string; contenido_compra: number; observaciones: number; ultima_fecha?: string | null }[];
+  formatos_envase?: { contenido: number; unidad: string; fecha: string }[];
 }
 interface ProductoActual {
   product_id: number; nombre: string; store: string; base_qty: number;
@@ -238,6 +242,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [zonaActiva, setZonaActiva] = useState<number | null>(null);
   const [valores, setValores] = useState<Record<string, string>>({}); // `${pid}:${zid}` -> texto
+  const [detallesConteo, setDetallesConteo] = useState<Record<string, PresentacionContada[]>>({});
+  const [erroresPresentacion, setErroresPresentacion] = useState<Record<string, string>>({});
   const [valoresActuales, setValoresActuales] = useState<Record<string, string>>({});
   const [existenciasActuales, setExistenciasActuales] = useState<ProductoActual[]>([]);
   const [conteoRecuperado, setConteoRecuperado] = useState<SnapshotHistorial | null>(null);
@@ -289,9 +295,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         for (const pz of prod.por_zona) {
           const producto = p.find((item) => item.id === prod.product_id);
           if (!producto) continue;
-          const unidad = producto?.unidades.find((item) => item.zona_id === pz.zona_id)
-            ?? { zona_id: pz.zona_id, unidad_captura: pz.unidad_captura ?? 'unidad', factor: pz.factor || 1 };
-          previos[`${prod.product_id}:${pz.zona_id}`] = String(cantidadDesdeSaldo(pz, producto, unidad));
+          previos[`${prod.product_id}:${pz.zona_id}`] = String(pz.cantidad_base ?? pz.qty_captura * pz.factor);
         }
       }
       setValoresActuales(previos);
@@ -301,6 +305,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
 
   useEffect(() => {
     if (!productos.length) return;
+    setDetallesConteo({}); setErroresPresentacion({});
     if (tipo === 'ajuste' || semanaId == null) { setConteoRecuperado(null); setValores(valoresActuales); setHorasZona({}); setErrorConteo(false); setCargandoConteo(false); return; }
     let vigente = true;
     setCargandoConteo(true);
@@ -311,7 +316,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       const totalesGuardados: Record<number, number> = {};
       let recuperados: Record<string, string> = semanaId === semanaActualId ? { ...valoresActuales } : {};
       if (oficial) {
-        const detalle = await api<{ lineas: { product_id: number; zona_id: number; qty_captura: number; factor: number; cantidad_base: number }[] }>(`/inventario/snapshots/${oficial.id}`);
+        const detalle = await api<{ lineas: { product_id: number; zona_id: number; qty_captura: number; factor: number; cantidad_base: number; presentaciones?: PresentacionContada[] | null }[] }>(`/inventario/snapshots/${oficial.id}`);
         if (!vigente) return;
         // Nunca sustituir un conteo histórico por el saldo de hoy. Una línea
         // ausente no es un cero confirmado, incluso en una zona ya guardada.
@@ -319,10 +324,10 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
         for (const linea of detalle.lineas) {
           const producto = productos.find(p => p.id === linea.product_id);
           if (!producto) continue;
-          const unidad = producto.unidades.find(u => u.zona_id === linea.zona_id);
-          recuperados[`${linea.product_id}:${linea.zona_id}`] = String(cantidadDesdeSaldo(linea, producto, unidad));
+          recuperados[`${linea.product_id}:${linea.zona_id}`] = String(linea.cantidad_base);
           totalesGuardados[linea.product_id] = (totalesGuardados[linea.product_id] ?? 0) + linea.cantidad_base;
         }
+        setDetallesConteo(Object.fromEntries(detalle.lineas.filter(l => l.presentaciones?.length).map(l => [`${l.product_id}:${l.zona_id}`, l.presentaciones!])));
         // Al continuar un conteo parcial, sólo sugerir saldos en zonas aún no
         // guardadas; jamás rellenar huecos del histórico silenciosamente.
         if (semanaId === semanaActualId) for (const [key, value] of Object.entries(valoresActuales)) {
@@ -355,8 +360,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   );
 
   const filtrados = useMemo(
-    () => productos.filter((p) => p.nombre.toLowerCase().includes(filtro.toLowerCase())),
-    [productos, filtro],
+    () => productos.filter((p) => (p.active !== false || (conteoRecuperado && baseRecuperada[p.id] != null)) && p.nombre.toLowerCase().includes(filtro.toLowerCase())),
+    [productos, filtro, conteoRecuperado, baseRecuperada],
   );
   const grupos = useMemo(() => agruparPorCategoria(filtrados, categorias), [filtrados, categorias]);
 
@@ -368,6 +373,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
 
   async function guardar() {
     if (cargandoConteo || errorConteo) return;
+    const errorPresentacion = Object.entries(erroresPresentacion).find(([key,v]) => Number(key.split(':')[1]) === zonaActiva && !!v);
+    if (errorPresentacion) { setMsg(errorPresentacion[1]); return; }
     if (zonaActiva == null) {
       setMsg('Selecciona una zona para guardar el inventario.');
       return;
@@ -376,8 +383,10 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       .filter(([, v]) => v !== '' && !Number.isNaN(Number(v)))
       .map(([k, v]) => {
         const [product_id, zona_id] = k.split(':').map(Number);
-        const producto = productos.find((p) => p.id === product_id)!;
-        return { product_id, zona_id, qty_captura: Number(v), cantidad_base: cantidadBaseConteo(Number(v), producto, unidadDe(producto, zona_id)) };
+        const p = productos.find(p=>p.id===product_id)!;
+        const medida = medidaConteo(p,unidadDe(p,zona_id));
+        const presentaciones = detallesConteo[k] ?? [{ unidades: Number((Number(v)/medida.factor).toPrecision(15)), contenido_base: medida.factor, unidad_base:p.unidad_base || 'unidad', etiqueta:medida.etiqueta }];
+        return { product_id, zona_id, qty_captura: Number(v), cantidad_base: Number(v), presentaciones };
       })
       .filter((linea) => linea.zona_id === zonaActiva);
     if (lineas.length === 0) {
@@ -467,7 +476,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
           />}
           {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}
         </div>
-        <p className="muted inventory-unit-help">Usa la unidad indicada junto a cada producto. Ejemplo: 440 g de pepino se capturan como 0.44 kg.</p>
+        <p className="muted inventory-unit-help">Cuenta envases, piezas o fracciones con el tamaño indicado. Ejemplo: dos botellas de 600 ml se capturan como 2 unidades; media botella como 0.5.</p>
       </section>
       {conteoRecuperado && !cargandoConteo && <div className="info-box" role="status">
         <strong>{tipo === 'apertura' ? 'Apertura guardada' : 'Cierre guardado'} · no es la existencia actual</strong>
@@ -485,6 +494,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       {zonaActiva != null && <label className="field-block inventory-time-field">Momento del conteo (México)<input type="datetime-local" value={horasZona[zonaActiva] ?? ''} disabled={zonasGuardadas.includes(zonaActiva) || guardando || cargandoConteo} onChange={e => setHorasZona(prev => ({ ...prev, [zonaActiva]: e.target.value }))} /><small className="muted">Si lo dejas vacío, se usa la hora de guardar esta zona. Las ventas anteriores ya están incluidas; las posteriores sí se descuentan.</small></label>}
       {zonaActiva != null && zonasGuardadas.includes(zonaActiva) && tipo !== 'ajuste' && <p className="info-box">Esta zona ya está guardada. Para corregirla, elige Ajuste documentado.</p>}
       <input className="buscador" placeholder="Buscar producto…" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
+        <p className="info-box" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>Cuenta unidades completas o fracciones (0.5 = media unidad). El tamaño aparece junto al campo; usa “Otro tamaño” si hay envases distintos. Los saldos anteriores se convierten sin cambiar su cantidad real.</p>
         <p className="muted" style={{ fontSize: '0.82rem', margin: '0 0 0.4rem' }}>
         {cierreGuiado
           ? 'Los campos parten del último saldo físico disponible. Confirma que coincidan con el esperado y corrige sólo las diferencias reales.'
@@ -505,12 +515,11 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
               const actual = existenciasActuales.find(a => a.product_id === p.id);
               const cambioPosterior = conteoRecuperado && actual && baseRecuperada[p.id] != null && Math.abs(actual.existencia_actual_base - baseRecuperada[p.id]) > .00001;
               return (
-                <li key={p.id} className="conteo-row">
+                <li key={p.id} className={esBool ? 'conteo-row' : 'conteo-row conteo-row--unidades'}>
                   <div className="conteo-info">
                     <strong>{p.nombre}</strong>
-                    <small className="muted">Se captura en {pluralUnidad(unidadOperativa, 2)} · {p.store}</small>
-                    {medida.factor !== 1 && p.unidad_base && <small className="muted">1 {unidadOperativa} = {formatoCantidad(medida.factor)} {p.unidad_base}. {p.presentacion_modo === 'por_lote' ? 'Suma el contenido de todos los envases.' : ''}</small>}
-                    {esperadoConteo != null && <small className="muted">Esperado al cierre: {formatoCantidad(esperadoConteo)} {pluralUnidad(unidadOperativa, esperadoConteo)}</small>}
+                    <small className="muted">Se captura en unidades · {p.store}</small>
+                    {esperadoConteo != null && <small className="muted">Esperado (referencia): {formatoCantidad(esperadoConteo)} × {medida.etiqueta}</small>}
                     {cambioPosterior && actual && <small className="info-box--compact">Existencia actual: <b>{formatoCantidad(cantidadEnConteo(actual.existencia_actual_base, p, u))} {pluralUnidad(unidadOperativa, 2)} en total</b> · {actual.por_zona.map(z => `${z.zona}: ${formatoCantidad(cantidadDesdeSaldo(z, p, u))}`).join(' · ')}</small>}
                   </div>
                   {esBool ? (
@@ -519,20 +528,8 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                       <button className={valores[key] === '0' ? 'pill pill--on' : 'pill'} disabled={tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva)} onClick={() => setVal(p.id, zonaActiva, '0')}>No</button>
                     </div>
                   ) : (
-                    <input
-                      disabled={cargandoConteo || guardando || (tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva))}
-                      aria-label={`${p.nombre} (${unidadOperativa})`}
-                      className="conteo-input"
-                      data-conteo-input="true"
-                      type="number"
-                      inputMode="decimal"
-                      step="any"
-                      min="0"
-                      placeholder="0"
-                      value={valores[key] ?? ''}
-                      onChange={(e) => setVal(p.id, zonaActiva, e.target.value)}
-                      onKeyDown={moverConteoConFlecha}
-                    />
+                    <ConteoPresentaciones key={`${key}:${tipo}:${semanaId}:${conteoRecuperado?.id || 'nuevo'}:${cargandoConteo}`} nombre={p.nombre} producto={p} base={valores[key] ?? ''} detalle={detallesConteo[key]} guardado={!!conteoRecuperado} disabled={cargandoConteo || guardando || (tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva))}
+                      onChange={(base,detalle,error) => { setVal(p.id,zonaActiva,base); setDetallesConteo(prev => { const copy={...prev}; if(detalle)copy[key]=detalle;else delete copy[key];return copy; }); setErroresPresentacion(prev=>({...prev,[key]:error||''})); }} onKeyDown={moverConteoConFlecha} />
                   )}
                 </li>
               );

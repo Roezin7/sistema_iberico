@@ -80,6 +80,7 @@ inventarioRouter.get('/snapshots/:id', soloAdmin, asyncHandler(async (req, res) 
     lineas: snapshot.inventory_lines.map(l => ({ product_id: Number(l.product_id), zona_id: Number(l.zona_id),
       qty_captura: Number(l.qty_captura), factor: Number(l.factor), cantidad_base: Number(l.qty_captura) * Number(l.factor),
       contado_at: (l.contado_at ?? snapshot.created_at).toISOString(),
+      presentaciones: l.presentaciones_json ? JSON.parse(l.presentaciones_json) : null,
     })),
   });
 }));
@@ -114,6 +115,7 @@ const conteoSchema = z.object({
         zona_id: z.coerce.number().int().positive(),
         qty_captura: z.number().finite().nonnegative(),
         cantidad_base: z.number().finite().nonnegative().optional(),
+        presentaciones: z.array(z.object({ unidades: z.number().finite().nonnegative(), contenido_base: z.number().finite().positive(), unidad_base: z.string().min(1).max(30), etiqueta: z.string().trim().min(1).max(180) })).min(1).max(10).optional(),
       }),
     )
     .min(1),

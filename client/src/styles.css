@@ -1318,6 +1318,15 @@ select:disabled {
 .conteo-row:last-child {
   border-bottom: none;
 }
+.conteo-row--unidades { display: grid; grid-template-columns: minmax(0,1fr) minmax(260px,1fr); align-items: start; }
+.conteo-unidades { min-width: 0; display: grid; gap: .4rem; }
+.conteo-unidades__fila { display: flex; flex-wrap: wrap; gap: .4rem; align-items: end; min-width: 0; }
+.conteo-unidades__fila > label:first-child { flex: 1; min-width: 0; }
+.conteo-unidades select { width: 100%; min-width: 0; font-size: .8rem; }
+.conteo-unidades label { display: grid; gap: .15rem; font-size: .72rem; }
+.conteo-unidades small { font-size: .7rem; }
+.conteo-unidades .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+@media (max-width: 600px) { .conteo-row--unidades { grid-template-columns: minmax(0,1fr); } .conteo-unidades .conteo-input { width: 88px; } }
 .conteo-info {
   display: flex;
   flex-direction: column;

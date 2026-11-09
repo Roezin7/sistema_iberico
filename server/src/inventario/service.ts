@@ -1,4 +1,5 @@
 import { valorFifoAlCorte } from './consumo-epos.js';
+import { validarPresentacionesConteo } from './conteo-presentaciones.js';
 import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import { prisma } from '../db.js';
 import { cargarLibroFisico, proyectarProducto, efectivaLote, q4 } from './libro-fisico.js';
@@ -753,6 +754,7 @@ export interface LineaConteoInput {
   qty_captura: number;
   /** Contenido físico explícito para tamaños mezclados; evita asumir botellas. */
   cantidad_base?: number;
+  presentaciones?: import('./conteo-presentaciones.js').PresentacionContada[];
 }
 
 export type TipoSnapshotInventario = 'apertura' | 'cierre' | 'ajuste' | 'conteo_operativo';
@@ -825,6 +827,7 @@ export async function crearConteo(
   const lineasPersistidas = lineasInput.map((l) => {
     const factor = factorDe(l.product_id, l.zona_id);
     const producto = productoDe(l.product_id);
+    const presentaciones_json = validarPresentacionesConteo(l, producto?.unidad_base);
     // En modo operativo el usuario siempre captura unidades físicas. El
     // snapshot, sin embargo, conserva la unidad de captura histórica para no
     // romper recetas ni FIFO. Convertimos primero a unidad base y después al
@@ -834,7 +837,7 @@ export async function crearConteo(
       if (!Number.isFinite(l.cantidad_base) || l.cantidad_base < 0) throw new HttpError(400, 'Cantidad base de conteo inválida');
       // qty_captura conserva dos decimales. Dividir un peso medido entre el
       // tamaño del envase redondearía fracciones y alteraría el conteo real.
-      return { ...l, qty_captura: l.cantidad_base, factor: 1 };
+      return { ...l, qty_captura: l.cantidad_base, factor: 1, presentaciones_json };
     } else if (metadata.unidad_conteo === 'operativa') {
       const unidadBase = normalizarUnidadBase(producto?.unidad_base);
       const contenido = producto?.contenido_compra == null ? null : num0(producto.contenido_compra);
@@ -845,7 +848,7 @@ export async function crearConteo(
           : l.qty_captura * factor;
       qtyCaptura = factor > 0 ? cantidadBase / factor : cantidadBase;
     }
-    return { ...l, qty_captura: qtyCaptura };
+    return { ...l, qty_captura: qtyCaptura, presentaciones_json };
   });
 
   // Un ajuste puntual no debe borrar los demás productos de esa zona. El
@@ -903,7 +906,7 @@ export async function crearConteo(
       ? conservadas
       : await tx.inventory_lines.findMany({
           where: { snapshot_id: continuarSnapshotId },
-          select: { product_id: true, zona_id: true, qty_captura: true, factor: true, contado_at: true },
+          select: { product_id: true, zona_id: true, qty_captura: true, factor: true, contado_at: true, presentaciones_json: true },
         });
     if (continuarSnapshotId != null && lineasAnteriores.some(l => zonaIds.includes(l.zona_id))) throw new HttpError(409, 'Esta zona ya fue guardada en el conteo. Usa un ajuste documentado para corregirla.');
     const reemplazos = new Set(lineasPersistidas.map((linea) => `${linea.product_id}:${linea.zona_id}`));
@@ -926,6 +929,7 @@ export async function crearConteo(
         qty_captura: l.qty_captura,
         factor: 'factor' in l ? l.factor : factorDe(l.product_id, l.zona_id),
         contado_at: l.contado_at,
+        presentaciones_json: 'presentaciones_json' in l ? l.presentaciones_json : null,
       })),
     });
     if (semanaId != null && (metadata.tipo === 'apertura' || metadata.tipo === 'cierre')) {
