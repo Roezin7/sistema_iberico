@@ -69,6 +69,8 @@ describe('recuperación de arranque sin depender del bundle', () => {
     const e=setup({previous:String(Date.now())});await vi.advanceTimersByTimeAsync(16000);e.events.retry();await vi.advanceTimersByTimeAsync(1);expect(e.location.replace).toHaveBeenCalledOnce();
   });
   it('no permite que Google Fonts bloquee el script de inicio', () => {
-    expect(html).toMatch(/href="https:\/\/fonts.googleapis.com[^>]+media="print"[^>]+onload="this.media='all'"/);
+    expect(html).toMatch(/href="https:\/\/fonts.googleapis.com[^>]+media="print"/);
+    expect(html).toContain("fonts.addEventListener('load'");
+    expect(html).not.toContain('onload='); // compatible con CSP script-src-attr none.
   });
 });

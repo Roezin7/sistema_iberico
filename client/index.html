@@ -16,15 +16,17 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
+      id="app-fonts"
       href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Cormorant+Garamond:wght@500;600&display=swap"
       rel="stylesheet"
       media="print"
-      onload="this.media='all'"
     />
 
     <!-- Resuelve el tema antes de pintar para evitar parpadeo claro/oscuro -->
     <script>
       (function () {
+        var fonts = document.getElementById('app-fonts');
+        fonts.addEventListener('load', function () { fonts.media = 'all'; });
         try {
           var guardado = localStorage.getItem('iberico-tema');
           var tema = guardado || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
