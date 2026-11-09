@@ -33,7 +33,7 @@ No se cerró financieramente la semana ni se inventaron faltantes, compras o con
 
 ## Verificaciones
 
-- 287 pruebas automatizadas, typecheck y build de producción.
+- 288 pruebas automatizadas, typecheck y build de producción.
 - Seis verificaciones integrales: cronología de zonas, ciclo FIFO, trazabilidad, integridad
   de aplicación, decimales y conteo por presentaciones. La nueva regresión comprueba que una
   venta capturada tarde pero ocurrida antes del físico no descuenta; una venta posterior sí

@@ -25,7 +25,7 @@ export function formatosConteo(p: ProductoMedida, u?: UnidadMedida): FormatoCont
   const add = (unidad: string, factor: number, etiqueta: string, referencia = false) => {
     if (!(factor > 0) || !Number.isFinite(factor)) return;
     const id = factor + ':' + etiqueta;
-    if (!formatos.some(f => f.factor === factor && f.unidad === unidad)) formatos.push({ id, unidad, factor, etiqueta, referencia });
+    if (!formatos.some(f => f.factor === factor && f.unidad === unidad && f.etiqueta === etiqueta)) formatos.push({ id, unidad, factor, etiqueta, referencia });
   };
   const contenido = Number(p.contenido_compra), unidad = nombreEnvase(p.unidad_compra || u?.unidad_captura);
   const catalogo = () => {

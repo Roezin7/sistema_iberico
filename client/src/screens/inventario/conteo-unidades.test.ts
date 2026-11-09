@@ -50,6 +50,12 @@ describe('unidades de apertura y cierre', () => {
     const p={unidad_base:'pieza',contenido_compra:1,unidad_compra:'pieza',formatos_envase:[{contenido:450,unidad:'ml',fecha:'2026-11-01'}]};
     expect(medidaConteo(p)).toMatchObject({factor:1,etiqueta:'pieza · 450 ml'});
   });
+  it('conserva tamaños distintos aunque ambos cuenten como una pieza', () => {
+    const p={unidad_base:'pieza',contenido_compra:1,unidad_compra:'pieza',formatos_envase:[{contenido:450,unidad:'ml',fecha:'2026-11-01'},{contenido:2000,unidad:'ml',fecha:'2026-10-01'}]};
+    const formatos=formatosConteo(p);
+    expect(formatos.some(f=>f.etiqueta==='pieza · 450 ml'&&f.factor===1)).toBe(true);
+    expect(formatos.some(f=>f.etiqueta==='pieza · 2 L'&&f.factor===1)).toBe(true);
+  });
   it('alcohol exacto conserva botella de 700 ml aunque haya un formato antiguo de 1 L', () => {
     expect(medidaConteo({unidad_base:'ml',unidad_compra:'botella',contenido_compra:700,presentacion_modo:'exacta',formatos_envase:[{contenido:1000,unidad:'ml',fecha:'2026-08-01'}]}).factor).toBe(700);
   });
