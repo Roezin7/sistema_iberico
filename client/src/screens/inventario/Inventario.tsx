@@ -9,6 +9,7 @@ import WeekSelector from '../../components/WeekSelector';
 import Compras from '../compras/Compras';
 import { inputHoraMexico, isoDesdeHoraMexico } from '../../operating';
 import { medidaConteo, cantidadDesdeSaldo, cantidadEnConteo } from './conteo-unidades';
+import { tabAbasto, rutaTabAbasto, type TabAbasto } from './navegacion';
 
 // --- Tipos de la API ---
 interface Zona { id: number; nombre: string; orden: number }
@@ -159,7 +160,6 @@ function pluralUnidad(unidad: string | null | undefined, cantidad?: number) {
   return plurales[u] ?? `${u}s`;
 }
 
-type Tab = 'conteo' | 'actual' | 'compras';
 type TipoCaptura = 'apertura' | 'cierre' | 'ajuste';
 
 /** Recorre la columna de captura sin alterar el valor del input numérico. */
@@ -178,19 +178,9 @@ function moverConteoConFlecha(event: KeyboardEvent<HTMLInputElement>) {
 export default function Inventario() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<Tab>(() => {
-    const requested = new URLSearchParams(location.search).get('tab');
-    return requested === 'actual' || requested === 'compras' ? requested : 'conteo';
-  });
-  useEffect(() => {
-    const requested = new URLSearchParams(location.search).get('tab');
-    if (requested === 'actual' || requested === 'compras') setTab(requested);
-    else if (!requested) setTab('conteo');
-  }, [location.search]);
-  function cambiarTab(value: Tab) {
-    const params = new URLSearchParams(location.search);
-    params.set('tab', value);
-    navigate(`/inventario?${params.toString()}`);
+  const tab = tabAbasto(location.search);
+  function cambiarTab(value: TabAbasto) {
+    navigate(rutaTabAbasto(location.search, value));
   }
   return (
     <div className="page">
