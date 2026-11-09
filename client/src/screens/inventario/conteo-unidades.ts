@@ -45,6 +45,10 @@ export function formatosConteo(p: ProductoMedida, u?: UnidadMedida): FormatoCont
   for (const f of [...(p.presentaciones_observadas || [])].sort((a,b) => (b.ultima_fecha || '').localeCompare(a.ultima_fecha || ''))) {
     const unit = nombreEnvase(f.unidad_compra);
     if (!(f.observaciones > 0) || unit === 'unidad' || !(f.contenido_compra > 0)) continue;
+    // Las observaciones antiguas no incluyen la dimensión del contenido.
+    // "botella, 750" puede ser ml, nunca prueba de 750 piezas. Sólo los
+    // empaques explícitos con conteo entero permiten agrupar piezas aquí.
+    if (base === 'pieza' && (!['caja', 'pack', 'paquete'].includes(unit) || !Number.isInteger(f.contenido_compra))) continue;
     add(unit, f.contenido_compra, unit + ' · ' + textoContenido(f.contenido_compra, base));
   }
   catalogo();

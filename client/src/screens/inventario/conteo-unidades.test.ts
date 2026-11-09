@@ -59,4 +59,14 @@ describe('unidades de apertura y cierre', () => {
   it('alcohol exacto conserva botella de 700 ml aunque haya un formato antiguo de 1 L', () => {
     expect(medidaConteo({unidad_base:'ml',unidad_compra:'botella',contenido_compra:700,presentacion_modo:'exacta',formatos_envase:[{contenido:1000,unidad:'ml',fecha:'2026-08-01'}]}).factor).toBe(700);
   });
+  it('no interpreta el volumen ambiguo de una botella como número de piezas', () => {
+    const p={unidad_base:'pieza',unidad_compra:'pieza',contenido_compra:1,presentaciones_observadas:[{unidad_compra:'botella',contenido_compra:750,observaciones:1}]};
+    expect(formatosConteo(p)).toHaveLength(1);
+    expect(formatosConteo(p)[0].factor).toBe(1);
+    expect(formatosConteo(p).some(f=>f.etiqueta.includes('750'))).toBe(false);
+  });
+  it('sí permite una caja explícita de 24 piezas sin mezclarla con volumen', () => {
+    const p={unidad_base:'pieza',unidad_compra:'pieza',contenido_compra:1,presentaciones_observadas:[{unidad_compra:'caja',contenido_compra:24,observaciones:1}]};
+    expect(formatosConteo(p).some(f=>f.factor===24&&f.etiqueta==='caja · 24 piezas')).toBe(true);
+  });
 });

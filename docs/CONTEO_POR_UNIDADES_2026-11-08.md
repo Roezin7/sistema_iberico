@@ -33,7 +33,8 @@ No se cerró financieramente la semana ni se inventaron faltantes, compras o con
 
 ## Verificaciones
 
-- 288 pruebas automatizadas, typecheck y build de producción.
+- 290 pruebas automatizadas, typecheck y build de producción.
+- Una observación antigua “botella, 750” sin dimensión no se interpreta como 750 piezas: se exige un empaque de conteo explícito para agrupar piezas. Las presentaciones documentadas en ml/g sólo cambian la etiqueta cuando el producto se cuenta por pieza, no multiplican las piezas.
 - Seis verificaciones integrales: cronología de zonas, ciclo FIFO, trazabilidad, integridad
   de aplicación, decimales y conteo por presentaciones. La nueva regresión comprueba que una
   venta capturada tarde pero ocurrida antes del físico no descuenta; una venta posterior sí
