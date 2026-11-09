@@ -528,7 +528,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
                       <button className={valores[key] === '0' ? 'pill pill--on' : 'pill'} disabled={tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva)} onClick={() => setVal(p.id, zonaActiva, '0')}>No</button>
                     </div>
                   ) : (
-                    <ConteoPresentaciones key={`${key}:${tipo}:${semanaId}:${conteoRecuperado?.id || 'nuevo'}:${cargandoConteo}`} nombre={p.nombre} producto={p} base={valores[key] ?? ''} detalle={detallesConteo[key]} guardado={!!conteoRecuperado} disabled={cargandoConteo || guardando || (tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva))}
+                    <ConteoPresentaciones key={`${key}:${tipo}:${semanaId}:${conteoRecuperado?.id || 'nuevo'}:${cargandoConteo}`} nombre={p.nombre} producto={p} unidadCaptura={u} base={valores[key] ?? ''} detalle={detallesConteo[key]} guardado={!!conteoRecuperado} disabled={cargandoConteo || guardando || (tipo !== 'ajuste' && zonasGuardadas.includes(zonaActiva))}
                       onChange={(base,detalle,error) => { setVal(p.id,zonaActiva,base); setDetallesConteo(prev => { const copy={...prev}; if(detalle)copy[key]=detalle;else delete copy[key];return copy; }); setErroresPresentacion(prev=>({...prev,[key]:error||''})); }} onKeyDown={moverConteoConFlecha} />
                   )}
                 </li>

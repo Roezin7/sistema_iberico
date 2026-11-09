@@ -1,13 +1,14 @@
 import { useState } from 'react';
-import { formatosConteo, textoContenido, type ProductoMedida } from './conteo-unidades';
+import { formatosConteo, textoContenido, type ProductoMedida, type UnidadMedida } from './conteo-unidades';
 export interface PresentacionContada { unidades: number; contenido_base: number; unidad_base: string; etiqueta: string }
 interface Fila { formato: string; cantidad: string; contenido?: string }
-export default function ConteoPresentaciones({ nombre, producto, base, guardado, detalle, disabled, onChange, onKeyDown }: {
+export default function ConteoPresentaciones({ nombre, producto, unidadCaptura, base, guardado, detalle, disabled, onChange, onKeyDown }: {
   nombre: string; producto: ProductoMedida; base: string; guardado: boolean; detalle?: PresentacionContada[] | null; disabled: boolean;
+  unidadCaptura?: UnidadMedida;
   onChange: (base: string, detalle?: PresentacionContada[], error?: string) => void;
   onKeyDown: React.KeyboardEventHandler<HTMLInputElement>;
 }) {
-  const formatos = formatosConteo(producto);
+  const formatos = formatosConteo(producto, unidadCaptura);
   const [filas, setFilas] = useState<Fila[]>(() => detalle?.length ? detalle.map(d => ({
     formato: formatos.find(f => f.factor === d.contenido_base && f.etiqueta === d.etiqueta)?.id || 'otro',
     contenido: String(d.contenido_base), cantidad: String(d.unidades),
