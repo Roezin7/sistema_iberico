@@ -95,17 +95,23 @@ app.use('/api', apiRouter);
 app.use(
   express.static(publicDir, {
     setHeaders: (res, filePath) => {
-      if (filePath.endsWith(`${path.sep}version.json`)) res.setHeader('Cache-Control', 'no-store');
+      if (['index.html', 'sw.js', 'registerSW.js', 'version.json'].some(name => filePath.endsWith(`${path.sep}${name}`))) res.setHeader('Cache-Control', 'no-store');
       if (filePath.includes(`${path.sep}assets${path.sep}`)) {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
       }
     },
   }),
 );
+// Un chunk de una versión retirada no es una ruta de la SPA. Devolver HTML
+// con 200 lo convierte en un error de módulo y deja el bootstrap detenido.
+app.use('/assets', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(404).type('text/plain').send('Archivo de aplicación no disponible. Recarga la aplicación.');
+});
 // SPA fallback: cualquier ruta que no sea /api devuelve index.html (sin cache, para
 // que un deploy nuevo se vea de inmediato).
 app.get(/^(?!\/api).*/, (_req, res) => {
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 

@@ -18,6 +18,8 @@
     <link
       href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&family=Cormorant+Garamond:wght@500;600&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
 
     <!-- Resuelve el tema antes de pintar para evitar parpadeo claro/oscuro -->
@@ -38,15 +40,94 @@
       <div id="boot-fallback" role="status">
         <strong>Ibérico</strong>
         <span>Cargando la aplicación…</span>
-        <a href="/">Recargar</a>
+        <button id="boot-retry" type="button">Recargar</button>
       </div>
     </div>
     <style>
       #boot-fallback { min-height: 100vh; display: grid; place-content: center; gap: .65rem; padding: 2rem; box-sizing: border-box; color: #F7F4EC; background: #292D14; font: 500 1rem/1.4 Inter, system-ui, sans-serif; text-align: center; }
       #boot-fallback strong { font: 600 2rem/1 Cormorant Garamond, Georgia, serif; }
       #boot-fallback span { color: #D8D5B8; font-size: .9rem; }
-      #boot-fallback a { color: #A09857; font-size: .85rem; text-decoration: underline; }
+      #boot-fallback button { color: #C1B878; font: inherit; font-size: .85rem; text-decoration: underline; background: none; border: 0; cursor: pointer; padding: .5rem; }
     </style>
+    <!-- Independiente del bundle: también funciona si el JS no pudo descargarse.
+         Sólo repara la caché de código de esta PWA; nunca toca sesión/IndexedDB. -->
+    <script id="iberico-boot-recovery">
+      (function () {
+        var retryKey = 'iberico-boot-retry-at';
+        var retryParam = '__iberico_recovery';
+        var running = false;
+        var timer;
+        var root = document.getElementById('root');
+        function loading() { return !!document.getElementById('boot-fallback'); }
+        function message(text) {
+          var span = document.querySelector('#boot-fallback span');
+          if (span) span.textContent = text;
+        }
+        function attempted() {
+          var url = new URL(window.location.href);
+          var previous = Number(url.searchParams.get(retryParam)) || 0;
+          try { previous = Math.max(previous, Number(sessionStorage.getItem(retryKey)) || 0); } catch (e) {}
+          return previous > 0 && Date.now() - previous < 300000;
+        }
+        async function recover(manual) {
+          if (running || (!manual && !loading())) return;
+          clearTimeout(timer);
+          if (!navigator.onLine) {
+            message('Sin conexión. Conéctate y pulsa Recargar. Tus datos locales se conservan.');
+            return;
+          }
+          if (!manual && attempted()) {
+            message('No se pudo iniciar la aplicación. Pulsa Recargar para volver a intentarlo.');
+            return;
+          }
+          running = true;
+          message('Recuperando la aplicación… Tus datos se conservan.');
+          var stamp = Date.now();
+          try { sessionStorage.setItem(retryKey, String(stamp)); } catch (e) {}
+          var cleanup = async function () {
+            try {
+              if ('serviceWorker' in navigator) {
+                var regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.filter(function (reg) {
+                  var worker = reg.active || reg.waiting || reg.installing;
+                  return worker && new URL(worker.scriptURL).origin === location.origin && new URL(worker.scriptURL).pathname === '/sw.js';
+                }).map(function (reg) { return reg.unregister(); }));
+              }
+              if ('caches' in window) {
+                var names = await caches.keys();
+                await Promise.all(names.filter(function (name) {
+                  return name === 'workbox-precache-v2-' + location.origin + '/';
+                }).map(function (name) { return caches.delete(name); }));
+              }
+            } catch (e) { /* La recarga sigue disponible si falla CacheStorage. */ }
+          };
+          // Un almacenamiento bloqueado tampoco puede dejar esta pantalla esperando.
+          await Promise.race([cleanup(), new Promise(function (resolve) { setTimeout(resolve, 2000); })]);
+          var next = new URL(window.location.href);
+          next.searchParams.set(retryParam, String(stamp));
+          window.location.replace(next.href);
+        }
+        document.getElementById('boot-retry').addEventListener('click', function () { void recover(true); });
+        window.addEventListener('iberico:recover', function () { void recover(true); });
+        window.addEventListener('online', function () { if (loading()) void recover(false); });
+        window.addEventListener('error', function (event) {
+          var target = event.target;
+          if (loading() && ((target && target.tagName === 'SCRIPT' && target.type === 'module') || target === window)) void recover(false);
+        }, true);
+        var observer = new MutationObserver(function () {
+          if (loading()) return;
+          clearTimeout(timer);
+          observer.disconnect();
+          var clean = new URL(window.location.href);
+          if (clean.searchParams.has(retryParam)) {
+            clean.searchParams.delete(retryParam);
+            history.replaceState(history.state, '', clean.href);
+          }
+        });
+        observer.observe(root, { childList: true, subtree: true });
+        timer = setTimeout(function () { void recover(false); }, 15000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

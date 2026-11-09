@@ -30,6 +30,14 @@ afterAll(async () => {
 });
 
 describe('contrato HTTP de seguridad', () => {
+  it('un módulo inexistente responde 404, nunca el HTML de la SPA', async () => {
+    const r=await fetch(`${base}/assets/version-retirada-qa.js`);
+    expect(r.status).toBe(404);expect(r.headers.get('content-type')).toMatch(/text\/plain/);expect(r.headers.get('cache-control')).toBe('no-store');
+    expect(await r.text()).not.toContain('<!doctype');
+  });
+  it.each(['/','/index.html','/inventario?tab=conteo'])('el HTML de inicio no se conserva como versión vigente: %s', async path => {
+    const r=await fetch(base+path);expect(r.status).toBe(200);expect(r.headers.get('cache-control')).toBe('no-store');expect(r.headers.get('content-type')).toMatch(/html/);
+  });
   it.each([null, '', false])('no convierte una cantidad de conteo vacía (%s) en cero', async (qty) => {
     const token = firmarToken({ sub: '1', negocio_id: '1', rol: 'admin', nombre: 'QA' });
     const r = await fetch(`${base}/api/inventario/snapshots`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ tipo: 'cierre', semana_id: 75, lineas: [{ product_id: 19, zona_id: 1, qty_captura: qty }] }) });

@@ -31,6 +31,8 @@ jobs:
       - run: npm ci
       - run: npm run prisma:generate
       - run: npm run typecheck -w client
+      # El contrato de inicio valida también los archivos reales de la PWA.
+      - run: npm run build
       - run: npm test
       - run: npx -w server prisma migrate deploy
       - run: npx tsx server/scripts/verificar-cronologia-zonas.ts
@@ -39,4 +41,3 @@ jobs:
       - run: npx tsx server/scripts/verificar-integridad-aplicacion.ts
       - run: npx tsx server/scripts/verificar-decimales-fifo.ts
       - run: npx tsx server/scripts/verificar-conteo-presentaciones.ts
-      - run: npm run build

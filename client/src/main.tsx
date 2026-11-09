@@ -21,7 +21,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error
       <div className="app-error" role="alert">
         <strong>No se pudo cargar esta vista</strong>
         <span>La sesión y los datos siguen protegidos. Recarga para intentarlo de nuevo.</span>
-        <button type="button" onClick={() => window.location.reload()}>Recargar aplicación</button>
+        <button type="button" onClick={() => window.dispatchEvent(new Event('iberico:recover'))}>Recargar aplicación</button>
       </div>
     );
   }
