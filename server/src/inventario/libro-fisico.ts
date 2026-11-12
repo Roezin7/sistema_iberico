@@ -37,7 +37,7 @@ export async function cargarLibroFisico(db: DbInventario, negocioId: bigint, has
     const receta = menu?.recetas.find(r => !r.vigente_desde || r.vigente_desde.toISOString().slice(0, 10) <= fechaMexico(venta.fecha));
     if (!receta?.lineas.length) { errores.push({ referencia: `venta:${venta.id}`, mensaje: `Sin receta histórica: ${venta.producto_nombre}` }); continue; }
     for (const l of receta.lineas) {
-      const cantidad = l.products.unidad_base ? convertirCantidad(Number(l.cantidad) * Number(venta.cantidad), l.unidad, l.products.unidad_base) : null;
+      const cantidad = l.products.unidad_base ? convertirCantidad(Number(l.cantidad) * Number(venta.cantidad), l.unidad, l.products.unidad_base, l) : null;
       if (cantidad == null || cantidad < 0) { errores.push({ referencia: `venta:${venta.id}`, mensaje: `Conversión pendiente: ${venta.producto_nombre}` }); continue; }
       cubiertas.add(`${venta.id}:${l.product_id}`);
       push({ tipo: 'venta', product_id: l.product_id, referencia: `venta:${venta.id}`, fecha: venta.fecha, cantidad });

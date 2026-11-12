@@ -61,7 +61,7 @@ function serialize(p: any) {
           unidadBase: l.products?.unidad_base ?? null,
           contenidoCompra: num(l.products?.contenido_compra),
           rendimientoUtil: num(l.products?.rendimiento_util),
-        });
+        }, l);
         return {
           product_id: Number(l.product_id),
           producto: l.products?.name ?? null,
@@ -171,7 +171,7 @@ recetasRouter.get('/resumen', asyncHandler(async (req, res) => {
   const items = productos.map((p) => {
     const receta = p.recetas[0];
     const lineas = receta?.lineas.map((l) => {
-      const costeo = costoLinea(Number(l.cantidad), l.unidad, { unitCost: num(l.products.unit_cost), unidadBase: l.products.unidad_base, contenidoCompra: num(l.products.contenido_compra), rendimientoUtil: num(l.products.rendimiento_util) });
+      const costeo = costoLinea(Number(l.cantidad), l.unidad, { unitCost: num(l.products.unit_cost), unidadBase: l.products.unidad_base, contenidoCompra: num(l.products.contenido_compra), rendimientoUtil: num(l.products.rendimiento_util) }, l);
       const cantidadBase = costeo.cantidadBase;
       const lotesProducto = (lotesPorProducto.get(l.product_id.toString()) ?? []).filter(lote=>loteElegibleParaReceta(lote,l,costeo.unidadBase));
       const fifo = cantidadBase != null && costeo.unidadBase
@@ -293,7 +293,7 @@ recetasRouter.post('/', soloAdmin, asyncHandler(async (req, res) => {
     if (!b.lineas.length) throw new HttpError(400, 'Una receta validada debe tener ingredientes');
     for (const l of b.lineas) {
       const p = insumos.find(p => Number(p.id) === l.product_id)!;
-      const base = p.unidad_base ? convertirCantidad(l.cantidad, l.unidad, p.unidad_base) : null;
+      const base = p.unidad_base ? convertirCantidad(l.cantidad, l.unidad, p.unidad_base, l) : null;
       if (base == null) throw new HttpError(400, `Unidad incompatible en ingrediente ${l.product_id}: ${l.unidad} no se convierte a ${p.unidad_base ?? 'unidad sin configurar'}`);
       if (l.envases_completos) {
         const envase = p.unidad_base === 'pieza' ? 1 : l.contenido_requerido!;
@@ -349,7 +349,7 @@ recetasRouter.patch('/:id/estado', soloAdmin, asyncHandler(async (req, res) => {
   if (estado === 'validada') {
     if (!receta.lineas.length || new Set(receta.lineas.map(l=>String(l.product_id))).size !== receta.lineas.length) throw new HttpError(400, 'La receta necesita ingredientes, sin duplicados');
     for (const l of receta.lineas) {
-      const base = l.products.unidad_base ? convertirCantidad(Number(l.cantidad), l.unidad, l.products.unidad_base) : null;
+      const base = l.products.unidad_base ? convertirCantidad(Number(l.cantidad), l.unidad, l.products.unidad_base, l) : null;
       if (!l.products.active || base == null || !(base > 0)) throw new HttpError(400, 'La receta contiene un producto inactivo o una cantidad/unidad incompatible');
       if (l.envases_completos) {
         const envase = l.products.unidad_base === 'pieza' ? 1 : Number(l.contenido_requerido);

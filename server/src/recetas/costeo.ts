@@ -19,13 +19,22 @@ const OZ_ML = 29.5735;
 const UNIDADES_VALIDAS = new Set<UnidadBase>(['g', 'ml', 'pieza', 'unidad']);
 
 /** Convierte una cantidad de receta a la unidad base del insumo. */
-export function convertirCantidad(cantidad: number, unidad: string, unidadBase: string): number | null {
+export interface PresentacionReceta { contenido_requerido?: unknown; unidad_requerida?: string | null }
+export function convertirCantidad(cantidad: number, unidad: string, unidadBase: string, presentacion?: PresentacionReceta): number | null {
   const u = unidad.trim().toLowerCase();
   const b = unidadBase.trim().toLowerCase();
   if (u === b || (u === 'unidad' && b === 'pieza') || (u === 'pieza' && b === 'unidad')) return cantidad;
   if (u === 'oz' && b === 'ml') return cantidad * OZ_ML;
   if (u === 'l' && b === 'ml') return cantidad * 1000;
   if (u === 'kg' && b === 'g') return cantidad * 1000;
+  // Una botella puede llevar inventario por pieza y consumirse parcialmente.
+  // La equivalencia es explícita de esta receta; nunca se infiere del catálogo.
+  const contenido = Number(presentacion?.contenido_requerido);
+  const dimension = presentacion?.unidad_requerida;
+  if (b === 'pieza' && Number.isFinite(contenido) && contenido > 0 && (dimension === 'ml' || dimension === 'g')) {
+    const medida = convertirCantidad(cantidad, unidad, dimension);
+    return medida == null ? null : medida / contenido;
+  }
   return null;
 }
 
@@ -34,7 +43,7 @@ export function convertirCantidad(cantidad: number, unidad: string, unidadBase: 
  * Si falta metadata, devuelve null en vez de multiplicar cantidades de ml/g
  * por el precio total del paquete (el error que esta capa corrige).
  */
-export function costoLinea(cantidad: number, unidad: string, insumo: CosteoInsumo): CostoReceta {
+export function costoLinea(cantidad: number, unidad: string, insumo: CosteoInsumo, presentacion?: PresentacionReceta): CostoReceta {
   const faltante: string[] = [];
   const unidadBase = insumo.unidadBase?.trim().toLowerCase() || null;
   if (!unidadBase || !UNIDADES_VALIDAS.has(unidadBase as UnidadBase)) faltante.push('unidad_base');
@@ -45,7 +54,7 @@ export function costoLinea(cantidad: number, unidad: string, insumo: CosteoInsum
   if (faltante.length > 0 || !unidadBase || insumo.unitCost == null || insumo.contenidoCompra == null) {
     return { costoUnitarioBase: null, costoEstimado: null, cantidadBase: null, unidadBase, faltaConfiguracion: faltante };
   }
-  const cantidadBase = convertirCantidad(cantidad, unidad, unidadBase);
+  const cantidadBase = convertirCantidad(cantidad, unidad, unidadBase, presentacion);
   if (cantidadBase == null) {
     return { costoUnitarioBase: null, costoEstimado: null, cantidadBase: null, unidadBase, faltaConfiguracion: [`unidad_incompatible:${unidad}->${unidadBase}`] };
   }

@@ -171,7 +171,7 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
   const errores:string[]=[];
   for (const linea of receta.lineas) {
     const unidadBase = linea.products.unidad_base;
-    const objetivo = unidadBase ? convertirCantidad(Number(linea.cantidad) * cantidadVendida, linea.unidad, unidadBase) : null;
+    const objetivo = unidadBase ? convertirCantidad(Number(linea.cantidad) * cantidadVendida, linea.unidad, unidadBase, linea) : null;
     const asignado = context?.asignadoPorVentaProducto.get(`${venta.id}:${linea.product_id}`) ?? 0;
     const cantidadBase = objetivo == null ? null : redondearCantidad(Math.max(0,objetivo-asignado));
     if (cantidadBase == null) { errores.push(`Conversión pendiente: ${linea.products.name}`); continue; }
