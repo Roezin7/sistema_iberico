@@ -36,6 +36,12 @@ export function normalizarNombreMenu(value: string) {
 
 type VentaMap = { nombre: string; epos_product_id: number | null; cantidad: number; ventas: number };
 
+/** Dos SKU de Epos, una preparación confirmada por el propietario 17/11/2026.
+ * No cambia los IDs originales de ventas ni reemplaza el ID principal del menú. */
+export function aliasIdMenuEpos(id:number|null):number|null {
+  return id===3978588?3978590:null;
+}
+
 export async function auditarMapeoEpos(input: { negocioId: bigint; from?: Date; to?: Date }) {
   const [ventas, menu] = await Promise.all([
     prisma.epos_ventas.findMany({
@@ -61,7 +67,8 @@ export async function auditarMapeoEpos(input: { negocioId: bigint; from?: Date; 
     else grouped.set(key, { nombre: venta.producto_nombre, epos_product_id: venta.epos_product_id, cantidad: Number(venta.cantidad), ventas: Number(venta.venta_bruta) });
   }
   return [...grouped.values()].map((venta) => {
-    const candidato = (venta.epos_product_id == null ? null : byId.get(venta.epos_product_id)) ?? byName.get(normalizarNombreMenu(venta.nombre)) ?? null;
+    const alias=aliasIdMenuEpos(venta.epos_product_id);
+    const candidato = (venta.epos_product_id == null ? null : byId.get(venta.epos_product_id)) ?? (alias==null?null:byId.get(alias)) ?? byName.get(normalizarNombreMenu(venta.nombre)) ?? null;
     return {
       ...venta,
       menu_id: candidato ? Number(candidato.id) : null,

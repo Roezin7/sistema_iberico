@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { normalizarNombreEpos, normalizarNombreMenu } from './mapeo-menu.js';
+import { normalizarNombreEpos, normalizarNombreMenu,aliasIdMenuEpos } from './mapeo-menu.js';
 
 describe('normalizarNombreEpos', () => {
+  it('asocia exclusivamente el ID de Café confirmado a americano sin reescribir el principal',()=>{expect(aliasIdMenuEpos(3978588)).toBe(3978590);expect(aliasIdMenuEpos(3978590)).toBeNull();expect(aliasIdMenuEpos(123)).toBeNull();expect(aliasIdMenuEpos(null)).toBeNull();});
   it('iguala acentos, mayúsculas y puntuación', () => {
     expect(normalizarNombreEpos('Margarita de Fresa')).toBe(normalizarNombreEpos(' margarita  de fresa '));
     expect(normalizarNombreEpos('Piña Colada')).toBe('pina colada');

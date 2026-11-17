@@ -4,7 +4,7 @@ import { prisma } from '../db.js';
 import { HttpError } from '../middleware/error.js';
 import { convertirCantidad } from '../recetas/costeo.js';
 import { consumirFIFO } from './fifo.js';
-import { normalizarNombreMenu } from '../epos/mapeo-menu.js';
+import { normalizarNombreMenu,aliasIdMenuEpos } from '../epos/mapeo-menu.js';
 import { filtroConsumoFifoActivo } from './fuentes.js';
 import { referenciaDiaMexico } from './cronologia.js';
 import { efectivaLote, ordenLote } from './libro-fisico.js';
@@ -148,7 +148,9 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
       where: { negocio_id: negocioId, activo: true, epos_product_id: venta.epos_product_id },
       include: includeReceta,
     });
-  const menuExacto = menuPorId ?? (context
+  const alias=aliasIdMenuEpos(venta.epos_product_id);
+  const menuPorAlias=menuPorId??(alias==null?null:context?context.menus.find(m=>m.epos_product_id===alias)??null:await client.productos_menu.findFirst({where:{negocio_id:negocioId,activo:true,epos_product_id:alias},include:includeReceta}));
+  const menuExacto = menuPorAlias ?? (context
     ? context.menus.find((candidate) => candidate.nombre === venta.producto_nombre) ?? null
     : await client.productos_menu.findFirst({
       where: { negocio_id: negocioId, activo: true, nombre: venta.producto_nombre },
