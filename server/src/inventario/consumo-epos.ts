@@ -11,6 +11,7 @@ import { efectivaLote, ordenLote } from './libro-fisico.js';
 import { bloquearLibro } from './control-cierre.js';
 import { loteElegibleParaReceta, saldoEnvasesCompletos } from './presentaciones.js';
 import { decimalSql } from '../lib/decimal-sql.js';
+import { esNotaAdministrativaEpos } from '../epos/notas.js';
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
@@ -116,7 +117,8 @@ function disponibleParaVenta(lote: CachedLot, venta: Date) {
   return lote.disponible_desde ? lote.disponible_desde <= venta : lote.purchases?.recibida_at ? lote.purchases.recibida_at <= venta : lote.recibido_at <= finDelDia(venta);
 }
 
-async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date }, context?: PlanContext): Promise<PlanConsumo> {
+async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date; venta_bruta?:unknown;venta_neta?:unknown;raw_json?:string|null;costeo_estado?:string;costo_fifo?:unknown }, context?: PlanContext): Promise<PlanConsumo> {
+  if(esNotaAdministrativaEpos(venta))return{estado:venta.costeo_estado==='costeada'&&Number(venta.costo_fifo)===0?'ya_costeada':'costeable',costoTotal:0,consumos:[]};
   const previo = context
     ? context.consumedVentaIds.has(venta.id.toString())
     : await client.inventory_consumptions.findFirst({
