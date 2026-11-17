@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';import{prisma as db}from'../src/db.js';
 import{consumirVentasEpos}from'../src/inventario/consumo-epos.js';import{cargarLibroFisico}from'../src/inventario/libro-fisico.js';
+import{auditarMapeoEpos}from'../src/epos/mapeo-menu.js';
 const u=new URL(process.env.DATABASE_URL??'');assert(['localhost','127.0.0.1'].includes(u.hostname)&&/test|audit/.test(u.pathname),'Sólo DB local de pruebas');
 try{
  const n=await db.negocios.create({data:{nombre:'QA nota '+Date.now()}});
@@ -9,5 +10,6 @@ try{
  assert.equal((await run()).costeadas,1);const saved=await db.epos_ventas.findUniqueOrThrow({where:{id:note.id}});assert.equal(saved.costeo_estado,'costeada');assert.equal(Number(saved.costo_fifo),0);assert.equal(await db.inventory_consumptions.count({where:{negocio_id:n.id}}),0);
  const second=await run();assert.equal(second.ya_costeadas,1);assert.deepEqual(await db.epos_ventas.findUniqueOrThrow({where:{id:note.id}}),saved);
  const book=await cargarLibroFisico(db,n.id,new Date('2026-11-13T06:00:00Z'));assert.equal(book.eventos.length,0);assert.equal(book.errores.length,0);
+ assert.equal((await auditarMapeoEpos({negocioId:n.id})).length,0);
  console.log(JSON.stringify({ok:true,nota_sin_receta_ni_consumo:true,no_borra_venta:true,reintento_sin_cambio:true,libro_sin_advertencia_falsa:true,production_writes:0}));
 }finally{await db.$disconnect()}

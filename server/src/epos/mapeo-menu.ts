@@ -1,4 +1,5 @@
 import { prisma } from '../db.js';
+import { esNotaAdministrativaEpos } from './notas.js';
 
 export function normalizarNombreEpos(value: string) {
   return value
@@ -39,7 +40,7 @@ export async function auditarMapeoEpos(input: { negocioId: bigint; from?: Date; 
   const [ventas, menu] = await Promise.all([
     prisma.epos_ventas.findMany({
       where: { negocio_id: input.negocioId, ...(input.from || input.to ? { fecha: { ...(input.from ? { gte: input.from } : {}), ...(input.to ? { lt: input.to } : {}) } } : {}) },
-      select: { producto_nombre: true, epos_product_id: true, cantidad: true, venta_bruta: true },
+      select: { producto_nombre: true, epos_product_id: true, cantidad: true, venta_bruta: true, venta_neta:true,raw_json:true },
     }),
     prisma.productos_menu.findMany({ where: { negocio_id: input.negocioId, activo: true }, select: { id: true, nombre: true, epos_product_id: true } }),
   ]);
@@ -53,6 +54,7 @@ export async function auditarMapeoEpos(input: { negocioId: bigint; from?: Date; 
   }
   const grouped = new Map<string, VentaMap>();
   for (const venta of ventas) {
+    if(esNotaAdministrativaEpos(venta))continue;
     const key = `${venta.epos_product_id ?? 'nombre'}:${normalizarNombreEpos(venta.producto_nombre)}`;
     const prev = grouped.get(key);
     if (prev) { prev.cantidad += Number(venta.cantidad); prev.ventas += Number(venta.venta_bruta); }
