@@ -3,6 +3,7 @@ import { convertirCantidad } from '../recetas/costeo.js';
 import { normalizarNombreEpos,aliasIdMenuEpos } from '../epos/mapeo-menu.js';
 import { esConsumoFifoActivo } from './fuentes.js';
 import { esNotaAdministrativaEpos } from '../epos/notas.js';
+import { aplicarSustituciones } from '../epos/sustituciones.js';
 import { referenciaDiaMexico, reconstruirZonas, type AnclaZona, type EventoFisico } from './cronologia.js';
 
 export type DbInventario = Prisma.TransactionClient | PrismaClient;
@@ -39,7 +40,7 @@ export async function cargarLibroFisico(db: DbInventario, negocioId: bigint, has
     const menu = ((venta.epos_product_id ?? 0) > 0 ? porId.get(venta.epos_product_id!) : null) ?? (alias==null?null:porId.get(alias)) ?? porNombre.get(normalizarNombreEpos(venta.producto_nombre));
     const receta = menu?.recetas.find(r => !r.vigente_desde || r.vigente_desde.toISOString().slice(0, 10) <= fechaMexico(venta.fecha));
     if (!receta?.lineas.length) { errores.push({ referencia: `venta:${venta.id}`, mensaje: `Sin receta histórica: ${venta.producto_nombre}` }); continue; }
-    for (const l of receta.lineas) {
+    for (const l of aplicarSustituciones(receta.lineas, venta.sustituciones_json)) {
       const cantidad = l.products.unidad_base ? convertirCantidad(Number(l.cantidad) * Number(venta.cantidad), l.unidad, l.products.unidad_base, l) : null;
       if (cantidad == null || cantidad < 0) { errores.push({ referencia: `venta:${venta.id}`, mensaje: `Conversión pendiente: ${venta.producto_nombre}` }); continue; }
       cubiertas.add(`${venta.id}:${l.product_id}`);

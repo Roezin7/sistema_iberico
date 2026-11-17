@@ -919,6 +919,8 @@ model epos_ventas {
   costeo_estado          String                   @default("pendiente")
   costeo_error           String?
   costeado_at            DateTime?                @db.Timestamptz(6)
+  // Variantes confirmadas por venta; separadas del JSON original de Epos.
+  sustituciones_json     String?                  @db.Text
   raw_json               String?
   creado_at              DateTime                 @default(now()) @db.Timestamptz(6)
   negocios               negocios                 @relation(fields: [negocio_id], references: [id], onDelete: Cascade)

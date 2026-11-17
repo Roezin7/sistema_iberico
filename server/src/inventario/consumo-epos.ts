@@ -12,6 +12,7 @@ import { bloquearLibro } from './control-cierre.js';
 import { loteElegibleParaReceta, saldoEnvasesCompletos } from './presentaciones.js';
 import { decimalSql } from '../lib/decimal-sql.js';
 import { esNotaAdministrativaEpos } from '../epos/notas.js';
+import { aplicarSustituciones } from '../epos/sustituciones.js';
 
 type DbClient = Prisma.TransactionClient | PrismaClient;
 
@@ -117,7 +118,7 @@ function disponibleParaVenta(lote: CachedLot, venta: Date) {
   return lote.disponible_desde ? lote.disponible_desde <= venta : lote.purchases?.recibida_at ? lote.purchases.recibida_at <= venta : lote.recibido_at <= finDelDia(venta);
 }
 
-async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date; venta_bruta?:unknown;venta_neta?:unknown;raw_json?:string|null;costeo_estado?:string;costo_fifo?:unknown }, context?: PlanContext): Promise<PlanConsumo> {
+async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigint; epos_product_id: number | null; producto_nombre: string; cantidad: Prisma.Decimal; fecha: Date; venta_bruta?:unknown;venta_neta?:unknown;raw_json?:string|null;sustituciones_json?:string|null;costeo_estado?:string;costo_fifo?:unknown }, context?: PlanContext): Promise<PlanConsumo> {
   if(esNotaAdministrativaEpos(venta))return{estado:venta.costeo_estado==='costeada'&&Number(venta.costo_fifo)===0?'ya_costeada':'costeable',costoTotal:0,consumos:[]};
   const previo = context
     ? context.consumedVentaIds.has(venta.id.toString())
@@ -173,7 +174,7 @@ async function planificar(client: DbClient, negocioId: bigint, venta: { id: bigi
 
   const consumos: PlanConsumo['consumos'] = [];
   const errores:string[]=[];
-  for (const linea of receta.lineas) {
+  for (const linea of aplicarSustituciones(receta.lineas, venta.sustituciones_json)) {
     const unidadBase = linea.products.unidad_base;
     const objetivo = unidadBase ? convertirCantidad(Number(linea.cantidad) * cantidadVendida, linea.unidad, unidadBase, linea) : null;
     const asignado = context?.asignadoPorVentaProducto.get(`${venta.id}:${linea.product_id}`) ?? 0;
@@ -215,17 +216,16 @@ async function cargarContexto(client: DbClient, negocioId: bigint, ventas: { id:
       },
     },
   }) as CachedMenu[];
-  const productIds = [...new Set(menus.flatMap((menu) => menu.recetas.flatMap(r => r.lineas.map(linea => linea.product_id.toString()))))].map(BigInt);
-  const lots = productIds.length ? await client.inventory_lots.findMany({
+  // Incluye lotes de sustitutos confirmados aunque no aparezcan en el menú.
+  const lots = await client.inventory_lots.findMany({
     where: {
       negocio_id: negocioId,
-      product_id: { in: productIds },
       estado: 'abierto',
       cantidad_restante: { gt: 0 },
     },
     orderBy: [{ recibido_at: 'asc' }, { id: 'asc' }],
     select: { id: true, product_id: true, recibido_at: true, cantidad_restante: true, costo_unitario: true, fuente: true, disponible_desde: true, orden_fifo_at: true, contenido_presentacion: true, unidad_presentacion: true, purchases: { select: { recibida_at: true } } },
-  }) : [];
+  });
   const consumed = await client.inventory_consumptions.findMany({
     where: {
       negocio_id: negocioId,
