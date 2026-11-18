@@ -13,6 +13,11 @@ try{
  await db.cierres_semana.create({data:{semana_id:b!.id,ubicacion_id:cash.id,saldo_inicial:1000,saldo_teorico:1100,saldo_real:1080,saldo_final:1080}});await db.semanas.update({where:{id:b!.id},data:{estado:'cerrada'}});
  const final=await cuadre(n.id,c!.id);assert.equal(final.ubicaciones[0]!.saldo_inicial,1080);assert.equal(final.saldo_inicial_provisional,false);
  const store=await db.stores.create({data:{negocio_id:n.id,name:'QA'}}),p=await db.products.create({data:{negocio_id:n.id,store_id:store.id,name:'Producto QA',unidad_base:'pieza'}});
+ const otro=await db.negocios.create({data:{nombre:'QA aislamiento '+Date.now()}});
+ const otroStore=await db.stores.create({data:{negocio_id:otro.id,name:store.name}});
+ await db.products.create({data:{negocio_id:otro.id,store_id:otroStore.id,name:p.name,unidad_base:'pieza'}});
+ await assert.rejects(()=>db.stores.create({data:{negocio_id:n.id,name:store.name}}),{code:'P2002'});
+ await assert.rejects(()=>db.products.create({data:{negocio_id:n.id,store_id:store.id,name:p.name}}),{code:'P2002'});
  await db.productos_menu.create({data:{negocio_id:n.id,nombre:'Venta QA',epos_product_id:987654,recetas:{create:{estado:'validada',lineas:{create:{product_id:p.id,cantidad:1,unidad:'pieza'}}}}}});
  const lot=await db.inventory_lots.create({data:{negocio_id:n.id,product_id:p.id,recibido_at:new Date('2026-11-02'),cantidad_inicial:2,cantidad_restante:2,costo_unitario:0,costo_estimado:true,fuente:'inventario_inicial'}});
  const imp=await db.epos_importaciones.create({data:{negocio_id:n.id,clave:'QA',periodo_desde:new Date('2026-11-02'),periodo_hasta:new Date('2026-11-16')}});
