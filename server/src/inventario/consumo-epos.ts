@@ -255,6 +255,7 @@ function aplicarPlanEnMemoria(context: PlanContext, plan: PlanConsumo) {
 
 /** Calcula o aplica consumo FIFO para ventas Epos ya importadas. */
 export async function consumirVentasEpos(input: { negocioId: bigint; from: string; to: string; confirmar: boolean; modo?: ModoCosteo }) {
+  if(input.modo==='historico_prueba'&&process.env.NODE_ENV==='production')throw new HttpError(403,'El modo de pruebas históricas no está disponible en producción.');
   if(!input.confirmar) return consumirVentasEposEnLibro(input,prisma);
   return prisma.$transaction(async tx=>{await bloquearLibro(tx,input.negocioId);return consumirVentasEposEnLibro(input,tx);},{maxWait:15000,timeout:300000});
 }

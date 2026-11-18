@@ -87,6 +87,7 @@ export async function prepararAperturaFifo(input: {
 }) {
   const criterio = input.criterio ?? 'catalogo';
   const modo = input.modo ?? 'normal';
+  if(modo==='historico_prueba'&&process.env.NODE_ENV==='production')throw new HttpError(403,'El modo de pruebas históricas no está disponible en producción.');
   if (criterio !== 'catalogo') throw new HttpError(400, 'Criterio de costo de apertura no soportado');
 
   return prisma.$transaction(async (tx) => {
@@ -96,6 +97,7 @@ export async function prepararAperturaFifo(input: {
       include: { inventario_semanal: true },
     });
     if (!semana) throw new HttpError(404, 'Semana no encontrada');
+    if(modo==='normal'&&(semana.estado==='cerrada'||await tx.inventory_control_closures.findFirst({where:{negocio_id:input.negocioId,semana_id:semana.id}})))throw new HttpError(409,'El periodo ya está cerrado o conciliado; no se regeneran sus lotes de apertura.');
     if (!semana.inventario_semanal?.apertura_snapshot_id) {
       throw new HttpError(409, 'La semana no tiene snapshot de inventario de apertura');
     }
@@ -249,6 +251,7 @@ export async function prepararAperturaFifo(input: {
           cantidad_inicial: lote.cantidad,
           cantidad_restante: lote.cantidad,
           costo_unitario: lote.costo,
+          costo_estimado:true,
           moneda: 'MXN',
           fuente,
           ticket_ref: referencia,

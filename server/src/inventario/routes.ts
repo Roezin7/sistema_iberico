@@ -191,7 +191,7 @@ inventarioRouter.post('/lotes/:id/transferir', soloAdmin, asyncHandler(async (re
 
 /** POST /inventario/apertura-fifo — materializa el snapshot de apertura como lotes FIFO. */
 inventarioRouter.post('/apertura-fifo', soloAdmin, asyncHandler(async (req, res) => {
-  const body = z.object({ semana_id: z.coerce.number().int().positive(), criterio: z.literal('catalogo').default('catalogo'), modo: z.enum(['normal', 'historico_prueba']).default('normal') }).parse(req.body);
+  const body = z.object({ semana_id: z.coerce.number().int().positive(), criterio: z.literal('catalogo').default('catalogo'), modo: z.literal('normal').default('normal') }).parse(req.body);
   res.status(201).json(await prepararAperturaFifo({ negocioId: req.auth!.negocioId, semanaId: BigInt(body.semana_id), criterio: body.criterio, modo: body.modo }));
 }));
 
@@ -390,7 +390,7 @@ inventarioRouter.post(
       from: z.string().datetime({ offset: true }),
       to: z.string().datetime({ offset: true }),
       confirmar: z.boolean().default(false),
-      modo: z.enum(['normal', 'historico_prueba']).default('normal'),
+      modo: z.literal('normal').default('normal'),
     }).parse(req.body);
     res.json(await consumirVentasEpos({ negocioId: req.auth!.negocioId, ...body }));
   }),

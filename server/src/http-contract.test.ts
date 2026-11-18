@@ -30,6 +30,7 @@ afterAll(async () => {
 });
 
 describe('contrato HTTP de seguridad', () => {
+  it.each(['/api/inventario/consumo-epos','/api/inventario/apertura-fifo'])('no expone el piloto histórico en HTTP: %s',async path=>{const token=firmarToken({sub:'1',negocio_id:'1',rol:'admin',nombre:'QA'});const r=await fetch(base+path,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({semana_id:76,from:'2026-11-09T00:00:00-06:00',to:'2026-11-16T00:00:00-06:00',confirmar:true,modo:'historico_prueba'})});expect(r.status).toBe(400)});
   it('un módulo inexistente responde 404, nunca el HTML de la SPA', async () => {
     const r=await fetch(`${base}/assets/version-retirada-qa.js`);
     expect(r.status).toBe(404);expect(r.headers.get('content-type')).toMatch(/text\/plain/);expect(r.headers.get('cache-control')).toBe('no-store');
