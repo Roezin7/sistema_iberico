@@ -35,7 +35,7 @@ export function formatosConteo(p: ProductoMedida, u?: UnidadMedida): FormatoCont
   }
   const catalogo = () => {
     if (base === 'pieza') {
-      add('pieza', 1, /\b\d+\s*(ml|g)\b/i.test(p.unidad_compra || '') ? p.unidad_compra! : 'pieza individual');
+      add('pieza', 1, contenido <= 1 && /\b\d+\s*(ml|g)\b/i.test(p.unidad_compra || '') ? p.unidad_compra! : 'pieza individual');
     } else if (contenido > 0) {
       const ref = unidad === 'unidad' || p.presentacion_modo === 'variable' || (base === 'g' && unidad === 'pieza');
       add(unidad, contenido, (ref ? 'Unidad de referencia' : unidad) + ' · ' + textoContenido(contenido, base) + (p.presentacion_modo === 'variable' ? ' aprox.' : ''), ref);

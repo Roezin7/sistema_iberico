@@ -9,6 +9,7 @@ describe('unidades de apertura y cierre', () => {
     expect(cantidadEnConteo(40,p,u)).toBe(2);
     expect(cantidadBaseConteo(2,p,u)).toBe(40);
     expect(formatosConteo(p,u).some(f=>f.etiqueta==='pieza · 45 g')).toBe(false);
+    expect(formatosConteo(p,u).filter(f=>f.factor===1).map(f=>f.etiqueta)).toEqual(['pieza individual']);
   });
   it('conserva la caja explícita de ocho piezas al precargar el conteo', () => {
     const p={unidad_base:'pieza',unidad_compra:'caja',contenido_compra:8,presentacion_modo:'exacta'};
