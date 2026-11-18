@@ -22,6 +22,8 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/iberico_ci_test
       NODE_ENV: test
+      # Valor público exclusivo de la base aislada de CI; nunca usar en producción.
+      JWT_SECRET: iberico-ci-test-only-not-production
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
