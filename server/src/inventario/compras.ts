@@ -212,6 +212,8 @@ export async function listarLotes(negocioId: bigint, productId?: bigint) {
     id: Number(l.id),
     product_id: Number(l.product_id),
     producto: l.products.name,
+    purchase_id: l.purchase_id==null?null:Number(l.purchase_id),
+    fuente:l.fuente,
     unidad_base: l.products.unidad_base,
     recibido_at: l.recibido_at.toISOString().slice(0, 10),
     cantidad_inicial: Number(l.cantidad_inicial),

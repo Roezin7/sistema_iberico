@@ -387,6 +387,7 @@ interface Zona { id: number; nombre: string; orden: number }
 interface CategoriaInv { id: number; nombre: string; orden: number; activo: boolean }
 interface UnidadZona { id: number; zona_id: number; unidad_captura: string; factor: number }
 interface Producto {
+  medidas_errores?:string[];
   id: number; nombre: string; store_id: number; store: string;
   base_qty: number; unit_cost: number | null; active: boolean; categoria_id: number | null; unidades: UnidadZona[];
   categoria: string | null;
@@ -426,7 +427,7 @@ function InventarioCfg() {
       .filter((p) => mostrarInactivos || p.active)
       .filter((p) => storeFilter === '' || p.store_id === storeFilter)
       .filter((p) => categoriaFilter === '' || p.categoria_id === categoriaFilter)
-      .filter((p) => calidadFilter === 'todos' || calidadFilter === 'sin_zona' && p.unidades.length === 0 || calidadFilter === 'sin_categoria' && p.categoria_id == null || calidadFilter === 'sin_conversion' && (!p.unidad_base || !p.contenido_compra))
+      .filter((p) => calidadFilter === 'todos' || calidadFilter === 'sin_zona' && p.unidades.length === 0 || calidadFilter === 'sin_categoria' && p.categoria_id == null || calidadFilter === 'sin_conversion' && (!p.unidad_base || !p.contenido_compra || !!p.medidas_errores?.length))
       .filter((p) => `${p.nombre} ${p.store} ${p.categoria ?? ''}`.toLowerCase().includes(filtro.toLowerCase())),
     [productos, filtro, mostrarInactivos, storeFilter, categoriaFilter, calidadFilter],
   );
@@ -567,13 +568,14 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
   const [nombre, setNombre] = useState('');
   const [storeId, setStoreId] = useState<number | ''>(stores[0]?.id ?? '');
   const [categoriaId, setCategoriaId] = useState<number | ''>('');
-  const [baseQty, setBaseQty] = useState('');
+  const [baseQty, setBaseQty] = useState('1');
   const [costo, setCosto] = useState('');
   const [unidadBase, setUnidadBase] = useState('');
   const [contenidoCompra, setContenidoCompra] = useState('');
   const [unidadCompra, setUnidadCompra] = useState('');
   const [error, setError] = useState('');
   const [nuevaTienda, setNuevaTienda] = useState('');
+  const [modoPresentacion,setModoPresentacion]=useState('por_lote');
 
   return (
     <div className="form-mov">
@@ -607,10 +609,11 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
       <label>Contenido por presentación
         <input type="number" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" />
       </label>
+      <label>Tipo de presentación<select value={modoPresentacion} onChange={e=>setModoPresentacion(e.target.value)}><option value="por_lote">Puede variar: confirmar en cada compra</option><option value="exacta">Fija y confirmada</option><option value="variable">Peso variable: registrar cantidad medida</option></select></label>
       </div>
       {error && <p className="error-msg">{error}</p>}
       <button className="btn-primary" onClick={async () => {
-        if (!nombre.trim() || storeId === '') { setError('Nombre y tienda son obligatorios.'); return; }
+        if (!nombre.trim() || storeId === ''||!unidadBase||!unidadCompra||!(Number(contenidoCompra)>0)||!(Number(baseQty)>=1)) { setError('Completa nombre, proveedor, unidad base, presentación, contenido positivo y mínimo de al menos1.'); return; }
         try {
           await api('/catalogo/products', { method: 'POST', body: {
             nombre: nombre.trim(), store_id: storeId, base_qty: Number(baseQty) || 0,
@@ -618,6 +621,7 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
             unidad_base: unidadBase || null,
             contenido_compra: contenidoCompra === '' ? null : Number(contenidoCompra),
             unidad_compra: unidadCompra || null,
+            presentacion_modo:modoPresentacion,
             categoria_id: categoriaId === '' ? null : categoriaId,
           } });
           onCreado();
@@ -631,7 +635,6 @@ const UNIDADES_BASE = [
   { value: 'g', label: 'gramos (g)' },
   { value: 'ml', label: 'mililitros (ml)' },
   { value: 'pieza', label: 'piezas' },
-  { value: 'unidad', label: 'unidades' },
 ];
 const PRESENTACIONES = ['botella', 'caja', 'paquete', 'bolsa', 'pieza', 'rollo', 'bote', 'litro', 'kilogramo', 'unidad'];
 const UNIDADES_CAPTURA = ['botellas', 'cajas', 'paquetes', 'bolsas', 'piezas', 'rollos', 'botes', 'unidades'];

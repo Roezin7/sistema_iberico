@@ -1,0 +1,26 @@
+import assert from 'node:assert/strict';
+import {prisma as db} from '../src/db.js';
+import {cuadre} from '../src/finanzas/service.js';
+import {costearVentasPendientesEnVivo,consumirVentasEpos} from '../src/inventario/consumo-epos.js';
+import {listarVentasEpos} from '../src/epos/imports.js';
+const url=new URL(process.env.DATABASE_URL??'');assert(['localhost','127.0.0.1'].includes(url.hostname)&&/test|audit/.test(url.pathname),'Sólo DB local de pruebas');
+try{
+ const n=await db.negocios.create({data:{nombre:'QA protecciones '+Date.now()}}),u=await db.usuarios.create({data:{negocio_id:n.id,nombre:'QA',pin_hash:'sin-login',rol:'admin'}}),cash=await db.ubicaciones_fondos.create({data:{negocio_id:n.id,nombre:'Caja QA',tipo:'efectivo'}});
+ const [a,b,c]=await Promise.all([['2026-10-26','2026-11-01','cerrada'],['2026-11-02','2026-11-08','abierta'],['2026-11-09','2026-11-15','abierta']].map(([from,to,estado])=>db.semanas.create({data:{negocio_id:n.id,fecha_inicio:new Date(from!),fecha_fin:new Date(to!),estado:estado as 'cerrada'|'abierta',etiqueta:'QA'}})));
+ await db.cierres_semana.create({data:{semana_id:a!.id,ubicacion_id:cash.id,saldo_inicial:1000,saldo_teorico:1000,saldo_real:1000,saldo_final:1000}});
+ await db.movimientos.create({data:{negocio_id:n.id,semana_id:b!.id,fecha:new Date('2026-11-06'),tipo:'venta_efectivo',monto:100,ubicacion_destino_id:cash.id,usuario_id:u.id}});
+ const provisional=await cuadre(n.id,c!.id);assert.equal(provisional.ubicaciones[0]!.saldo_inicial,1100);assert.equal(provisional.saldo_inicial_provisional,true);
+ await db.cierres_semana.create({data:{semana_id:b!.id,ubicacion_id:cash.id,saldo_inicial:1000,saldo_teorico:1100,saldo_real:1080,saldo_final:1080}});await db.semanas.update({where:{id:b!.id},data:{estado:'cerrada'}});
+ const final=await cuadre(n.id,c!.id);assert.equal(final.ubicaciones[0]!.saldo_inicial,1080);assert.equal(final.saldo_inicial_provisional,false);
+ const store=await db.stores.create({data:{negocio_id:n.id,name:'QA'}}),p=await db.products.create({data:{negocio_id:n.id,store_id:store.id,name:'Producto QA',unidad_base:'pieza'}});
+ await db.productos_menu.create({data:{negocio_id:n.id,nombre:'Venta QA',epos_product_id:987654,recetas:{create:{estado:'validada',lineas:{create:{product_id:p.id,cantidad:1,unidad:'pieza'}}}}}});
+ const lot=await db.inventory_lots.create({data:{negocio_id:n.id,product_id:p.id,recibido_at:new Date('2026-11-02'),cantidad_inicial:2,cantidad_restante:2,costo_unitario:0,costo_estimado:true,fuente:'inventario_inicial'}});
+ const imp=await db.epos_importaciones.create({data:{negocio_id:n.id,clave:'QA',periodo_desde:new Date('2026-11-02'),periodo_hasta:new Date('2026-11-16')}});
+ const venta=(clave:string,fecha:string)=>db.epos_ventas.create({data:{negocio_id:n.id,importacion_id:imp.id,clave,fecha:new Date(fecha),epos_product_id:987654,producto_nombre:'Venta QA',cantidad:1,venta_bruta:50,metodo_pago:'Cash',costeo_estado:'excepcion',costeo_error:'Inventario insuficiente'}});
+ const old=await venta('cerrada','2026-11-06T20:00:00-06:00'),fresh=await venta('actual','2026-11-12T20:00:00-06:00');
+ await costearVentasPendientesEnVivo({negocioId:n.id});assert.deepEqual(await db.epos_ventas.findUnique({where:{id:old.id}}),old);assert.equal((await db.epos_ventas.findUniqueOrThrow({where:{id:fresh.id}})).costeo_estado,'costeada');
+ assert.equal(Number((await db.inventory_lots.findUniqueOrThrow({where:{id:lot.id}})).cantidad_restante),1);
+ const retry=await consumirVentasEpos({negocioId:n.id,from:'2026-11-02T06:00:00Z',to:'2026-11-09T06:00:00Z',confirmar:true});assert.equal(retry.ventas_historicas_protegidas,1);assert.deepEqual(await db.epos_ventas.findUnique({where:{id:old.id}}),old);
+ const visible=await listarVentasEpos({negocioId:n.id});assert.equal(visible.find(v=>v.id===Number(fresh.id))!.calidad_costo,'estimado');assert.equal(visible.find(v=>v.id===Number(old.id))!.calidad_costo,'incompleto');
+ console.log(JSON.stringify({ok:true,continuidad_provisional_1100:true,cierre_real_encadenado_1080:true,historico_intacto:true,costo_cero_estimado_identificado:true,reproceso_idempotente:true,production_writes:0}));
+}finally{await db.$disconnect()}

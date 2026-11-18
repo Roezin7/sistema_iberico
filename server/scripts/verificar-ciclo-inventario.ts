@@ -70,6 +70,8 @@ try {
   assert.equal((await costosSinVenta(negocioId,w.id)).total,20);
   assert.equal((await costosSinVenta(negocioId,siguiente.id)).total,44);
   checks.push('Dos diferencias nuevas generan recurrencia por causa/signo; merma conocida no se suma dos veces');
+  await assert.rejects(()=>cerrarSemana(negocioId,u.id,siguiente.id,true),/semanas financieras anteriores/);
+  await cerrarSemana(negocioId,u.id,w.id,true);
   await assert.rejects(()=>cerrarSemana(negocioId,u.id,siguiente.id,false),/excepciones de costeo/);
   await cerrarSemana(negocioId,u.id,siguiente.id,true);
   assert.equal((await db.semanas.findUniqueOrThrow({where:{id:siguiente.id}})).estado,'cerrada');

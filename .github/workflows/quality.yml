@@ -45,3 +45,4 @@ jobs:
       - run: npx tsx server/scripts/verificar-nota-epos.ts
       - run: npx tsx server/scripts/verificar-alias-cafe.ts
       - run: npx tsx server/scripts/verificar-sustituciones-venta.ts
+      - run: npx tsx server/scripts/verificar-protecciones-operativas.ts

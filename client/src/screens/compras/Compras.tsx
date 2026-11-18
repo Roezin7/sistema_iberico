@@ -9,6 +9,7 @@ import WeekSelector from '../../components/WeekSelector';
 import { cantidadBaseDesdePresentacion, cantidadBaseCompra } from './fifo-form';
 import { LineaCompra } from './LineaCompra';
 import { leerBorrador, guardarBorrador, borrarBorrador } from './borradores';
+import { lotesDeCompras } from './resumen-entradas';
 
 interface Producto {
   id: number; nombre: string; unidad_base: string | null; unidad_compra?: string | null; contenido_compra?: number | null; rendimiento_util?: number | null;
@@ -18,7 +19,7 @@ interface Producto {
   fuente_existencia_actual?: 'fisico'; ultimo_costo_fifo_base?: number | null; ultimo_costo_fifo_fecha?: string | null;
   precio_ultimo_fifo?: number | null; precio_catalogo?: number | null;
 }
-interface Lote { id: number; producto: string; unidad_base: string | null; recibido_at: string; cantidad_inicial: number; cantidad_restante: number; costo_unitario: number; estado: string; ticket_ref: string | null }
+interface Lote { id: number; producto: string; unidad_base: string | null; recibido_at: string; cantidad_inicial: number; cantidad_restante: number; costo_unitario: number; estado: string; ticket_ref: string | null;purchase_id?:number|null;fuente?:string }
 interface ConsumoResult { confirmar: boolean; ventas: number; costeadas: number; excepciones: number; ya_costeadas: number; costo_fifo: number; detalle: { venta_id: number; producto: string; estado: string; costo_fifo: number; error: string | null }[] }
 interface LiveStatus { lotes_abiertos: number; unidades_base_abiertas: number; valor_fifo_abierto: number; ventas_pendientes: number; ventas_excepcion: number; costeo: 'en_vivo' }
 interface ExceptionRow { venta_id: number; fecha: string; producto: string; cantidad: number; error: string }
@@ -141,7 +142,9 @@ export default function Compras({ embebida = false }: { embebida?: boolean }) {
       loading={cargandoSemanas}
       disabled={!semanas.length}
     />}
+    <details className="card" open={!esAdmin||parametros.get('captura')==='compra'}><summary><strong>Registrar compra</strong><small className="muted">Ticket, cantidades y forma de pago.</small></summary>
     {(!esAdmin || tab === 'tickets') ? <CapturaRapida key={semana?.id ?? fechaInicial} fechaInicial={semana ? fechaInicial < semana.fecha_inicio ? semana.fecha_inicio : fechaInicial > semana.fecha_fin ? semana.fecha_fin : fechaInicial : fechaInicial} onSaved={() => { if (esAdmin) { setTab('pendientes'); void cargar(); } }} /> : <button className="btn-secondary" onClick={() => setTab('tickets')}>Registrar nueva compra</button>}
+    </details>
     {esAdmin && semana && tab === 'tickets' && <GastoRapido semana={semana} onSaved={() => void cargarTickets()} />}
     {esAdmin && <nav className="tabs">
       <button className={tab === 'tickets' ? 'tab tab--on' : 'tab'} onClick={() => { setTab('tickets'); void cargarTickets(); }}>Historial de entradas</button>
@@ -279,7 +282,7 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
         if (producto) {
           if (!siguiente.descripcion_fuente.trim()) siguiente.descripcion_fuente = producto.nombre;
           siguiente.cantidad_base = '';
-          siguiente.unidad_fuente = producto.unidad_compra ?? siguiente.unidad_fuente;
+          siguiente.unidad_fuente = producto.presentacion_modo==='variable'?producto.unidad_base??'g':producto.unidad_compra ?? siguiente.unidad_fuente;
           siguiente.unidad_compra = producto.unidad_compra ?? siguiente.unidad_compra;
           siguiente.contenido_compra = producto.presentacion_modo === 'exacta' && producto.contenido_compra != null ? String(producto.contenido_compra) : '';
         }
@@ -287,7 +290,7 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
       if (campo === 'cantidad_fuente' || campo === 'unidad_fuente' || campo === 'unidad_compra' || campo === 'contenido_compra' || campo === 'product_id') {
         const producto = refs?.productos.find((p) => p.id === Number(siguiente.product_id));
         const base = cantidadBaseCompra(siguiente, producto);
-        siguiente.cantidad_base = producto?.presentacion_modo === 'variable' ? siguiente.cantidad_base : base == null ? '' : String(base);
+        siguiente.cantidad_base = base == null ? '' : String(base);
       }
       if (campo === 'importe') siguiente.importe_auto = false;
 
@@ -453,7 +456,7 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
         if (producto) {
           siguiente.cantidad_base = null; siguiente.contenido_presentacion = null; siguiente.unidad_presentacion = null;
           if (!siguiente.descripcion_fuente.trim()) siguiente.descripcion_fuente = producto.nombre;
-          siguiente.unidad_fuente = producto.unidad_compra ?? siguiente.unidad_fuente;
+          siguiente.unidad_fuente = producto.presentacion_modo==='variable'?producto.unidad_base??'g':producto.unidad_compra ?? siguiente.unidad_fuente;
           siguiente.unidad_compra = producto.unidad_compra ?? siguiente.unidad_compra;
           siguiente.contenido_compra = contenidoCatalogoSiExacto(producto) ?? null;
         }
@@ -461,7 +464,7 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
       if (campo === 'cantidad_fuente' || campo === 'unidad_fuente' || campo === 'unidad_compra' || campo === 'contenido_compra' || campo === 'product_id') {
         const producto = productos.find((p) => p.id === Number(siguiente.product_id));
         const base = cantidadBaseCompra(siguiente, producto);
-        siguiente.cantidad_base = producto?.presentacion_modo === 'variable' ? siguiente.cantidad_base : base;
+        siguiente.cantidad_base = base;
 
       }
       return siguiente;
@@ -552,9 +555,10 @@ function estadoCompraTexto(estado: string) {
 
 function ResumenSemana({ semana, compras, lotes }: { semana: Semana; compras: CompraDia[]; lotes: Lote[] }) {
   const totalCompras = compras.reduce((s, c) => s + c.total, 0);
-  const totalFifo = lotes.reduce((s, l) => s + l.cantidad_inicial * l.costo_unitario, 0);
+  const recepciones=lotesDeCompras(lotes);
+  const totalFifo = recepciones.reduce((s, l) => s + l.cantidad_inicial * l.costo_unitario, 0);
   const confirmadas = compras.filter((c) => c.estado === 'confirmada').length;
-  return <section className="card compras-week-summary"><div className="section-heading"><div><h2>{weekLabel(semana)}</h2><p className="muted">{weekStateLabel(semana)} · entradas</p></div><span className="muted">Semana</span></div><div className="summary-grid"><div><small>Tickets</small><strong>{compras.length}</strong><span>{confirmadas} confirmadas</span></div><div><small>Compras registradas</small><strong>{mxn(totalCompras)}</strong><span>Esta semana</span></div><div><small>Lotes FIFO recibidos</small><strong>{lotes.length}</strong><span>Recepciones</span></div><div><small>Valor recibido FIFO</small><strong>{mxn(totalFifo)}</strong><span>Valor inicial</span></div></div></section>;
+  return <section className="card compras-week-summary"><div className="section-heading"><div><h2>{weekLabel(semana)}</h2><p className="muted">{weekStateLabel(semana)} · entradas</p></div><span className="muted">Semana</span></div><div className="summary-grid"><div><small>Tickets</small><strong>{compras.length}</strong><span>{confirmadas} confirmadas</span></div><div><small>Compras registradas</small><strong>{mxn(totalCompras)}</strong><span>Esta semana</span></div><div><small>Lotes de compras recibidas</small><strong>{recepciones.length}</strong><span>Sin apertura ni ajustes</span></div><div><small>Valor recibido por compras</small><strong>{mxn(totalFifo)}</strong><span>Costo de recepción</span></div></div></section>;
 }
 
 function Tickets({ compras, cargando }: { compras: CompraDia[]; cargando: boolean }) {

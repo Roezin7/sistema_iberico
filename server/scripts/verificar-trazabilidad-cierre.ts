@@ -15,7 +15,7 @@ try {
   const zones=await Promise.all(['Local','Bodega'].map((nombre,orden)=>db.zonas_inventario.create({data:{negocio_id:id,nombre,orden}})));
   const p=await db.products.create({data:{negocio_id:id,store_id:store.id,name:`Agua reservas ${id}`,unidad_base:'pieza',unit_cost:20,contenido_compra:1,unidad_compra:'botella'}});
   const w=await db.semanas.create({data:{negocio_id:id,fecha_inicio:new Date('2026-10-19'),fecha_fin:new Date('2026-10-25'),etiqueta:'QA'}});
-  const line=(z:bigint,q:number)=>({product_id:Number(p.id),zona_id:Number(z),qty_captura:q});
+  const line=(z:bigint,q:number)=>({product_id:Number(p.id),zona_id:Number(z),qty_captura:q,cantidad_base:q});
   await crearConteo(id,[line(zones[0]!.id,10),line(zones[1]!.id,0)],{tipo:'apertura',semana_id:Number(w.id),contado_at:d('2026-10-19','09:00').toISOString()});
   const old=await db.inventory_lots.create({data:{negocio_id:id,product_id:p.id,recibido_at:new Date('2026-10-19'),cantidad_inicial:10,cantidad_restante:10,costo_unitario:20,fuente:'inventario_inicial'}});
   const imp=await db.epos_importaciones.create({data:{negocio_id:id,clave:'qa',periodo_desde:d('2026-10-26','00:00'),periodo_hasta:d('2026-11-02','00:00')}});

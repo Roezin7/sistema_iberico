@@ -40,6 +40,7 @@ export default function ConteoPresentaciones({ nombre, producto, unidadCaptura, 
       {!disabled && filas.length > 1 && <button type="button" className="link-btn" aria-label={`Quitar presentación ${i+1} de ${nombre}`} onClick={() => editar(filas.filter((_,j) => j!==i))}>Quitar</button>}
     </div>)}
     {filas.some(f => formatos.find(o => o.id===f.formato)?.referencia) && <small className="muted">Referencia de tamaño, no peso uniforme garantizado. Puedes definir el tamaño real.</small>}
+    {base!==''&&Number.isFinite(Number(base))&&<small className="muted">Total equivalente: <strong>{textoContenido(Number(base),producto.unidad_base)}</strong>. Se guarda en {producto.unidad_base}; el tamaño no multiplica dos veces la cantidad.</small>}
     {!disabled && filas.length < 10 && <button type="button" className="link-btn" onClick={() => {setFilas([...filas,{formato:formatos[0].id,cantidad:''}]);onChange('',undefined,`Completa la nueva presentación de ${nombre} antes de guardar.`);}}>+ Otro tamaño</button>}
   </div>;
 }

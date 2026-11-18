@@ -31,7 +31,7 @@ export function LineaCompra({ linea, productos, numero, editar, quitar }: {
   const cantidad = calculada ?? (linea.cantidad_base ? Number(linea.cantidad_base) : null);
   const importe = Number(linea.importe);
   const costo = cantidad && importe >= 0 ? importe / cantidad : null;
-  const etiqueta = variable ? `Cantidad recibida (${producto?.unidad_base ?? 'unidad base'})` : `Cantidad (${linea.unidad_fuente || producto?.unidad_compra || 'unidades'})`;
+  const etiqueta = variable ? `Cantidad recibida (${fuente || producto?.unidad_base || 'unidad base'})` : `Cantidad (${linea.unidad_fuente || producto?.unidad_compra || 'unidades'})`;
   const money = (v: number) => v.toLocaleString('es-MX', { style:'currency', currency:'MXN', maximumFractionDigits:4 });
   return <article className="purchase-item" aria-label={`Artículo ${numero}`}>
     <div className="purchase-item__head"><strong>Artículo {numero}</strong>{quitar && <button type="button" className="btn-ghost" onClick={quitar} aria-label={`Quitar artículo ${numero}`}>Quitar</button>}</div>
@@ -45,10 +45,12 @@ export function LineaCompra({ linea, productos, numero, editar, quitar }: {
     </div>
     <div className="purchase-item__fields">
       {linea.tipo_linea === 'inventario' && <label>{etiqueta}<input aria-label={etiqueta} type="number" inputMode="decimal" min="0" step="any"
-        value={variable ? linea.cantidad_base ?? '' : linea.cantidad_fuente ?? ''}
-        placeholder={variable ? 'Peso medido o estimado' : 'Ej. 2'} onChange={(e) => editar(variable ? 'cantidad_base' : 'cantidad_fuente', e.target.value)} /></label>}
+        value={variable ? linea.cantidad_fuente ?? linea.cantidad_base ?? '' : linea.cantidad_fuente ?? ''}
+        placeholder={variable ? 'Peso medido o estimado' : 'Ej. 2'} onChange={(e) => editar('cantidad_fuente', e.target.value)} /></label>}
+      {variable&&['g','ml'].includes(producto?.unidad_base??'')&&<label>Unidad de la medida<select value={fuente||producto?.unidad_base||''} onChange={e=>{editar('unidad_fuente',e.target.value);editar('unidad_compra',e.target.value)}}>{(producto?.unidad_base==='g'?['g','kg']:['ml','l']).map(u=><option key={u} value={u}>{u}</option>)}</select></label>}
       {linea.tipo_linea === 'inventario' && porLote && !metrica && <label>Contenido de cada unidad ({producto?.unidad_base})<input type="number" inputMode="decimal" min="0" step="any"
         value={linea.contenido_compra ?? ''} placeholder="Ej. 600, 1700 o 2000" onChange={(e) => editar('contenido_compra', e.target.value)} /></label>}
+      {linea.tipo_linea==='inventario'&&producto?.unidad_base==='pieza'&&porLote&&<label>Tamaño del envase individual (si corresponde)<div className="row-actions"><input aria-label="Contenido del envase" type="number" min="0" step="any" value={linea.contenido_presentacion??''} placeholder="Ej. 450" onChange={e=>editar('contenido_presentacion',e.target.value)}/><select aria-label="Unidad del contenido" value={linea.unidad_presentacion??''} onChange={e=>editar('unidad_presentacion',e.target.value||null)}><option value="">Unidad…</option><option value="ml">ml</option><option value="g">g</option></select></div><small>No multiplica las piezas recibidas. 5 Coca de450ml entran como5piezas, no2250piezas.</small></label>}
       <label>Importe de esta línea<input type="number" min="0" step="0.01" inputMode="decimal" value={linea.importe} placeholder="Total de las unidades" onChange={(e) => editar('importe', e.target.value)} /></label>
     </div>
     {producto && linea.tipo_linea === 'inventario' && <>

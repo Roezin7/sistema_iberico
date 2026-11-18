@@ -816,6 +816,9 @@ export async function crearConteo(
   for (const l of lineasInput) {
     if (!productosOk.has(l.product_id.toString())) throw new HttpError(400, `Producto ${l.product_id} no pertenece al negocio`);
     if (!zonasOk.has(l.zona_id.toString())) throw new HttpError(400, `Zona ${l.zona_id} no pertenece al negocio`);
+    const producto=productos.find(p=>p.id===BigInt(l.product_id));
+    if(!['g','ml','pieza'].includes(producto?.unidad_base??''))throw new HttpError(400,`Producto ${l.product_id}: unidad base sin definir; configura la medida antes de contar.`);
+    if(l.cantidad_base==null&&!pzus.some(u=>u.product_id===BigInt(l.product_id)&&u.zona_id===BigInt(l.zona_id)))throw new HttpError(400,`Producto ${l.product_id}: falta la conversión de esta zona. No se supone factor1.`);
   }
 
   // Mapa de factor por (product, zona).

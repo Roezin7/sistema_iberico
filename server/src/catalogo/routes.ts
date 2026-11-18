@@ -8,6 +8,7 @@ import { asyncHandler, HttpError } from '../middleware/error.js';
 import { requireAuth, soloAdmin } from '../auth/middleware.js';
 import { registrarAuditoria } from '../lib/auditoria.js';
 import { registrarCambioCostoCatalogo } from '../inventario/costos-historicos.js';
+import { erroresMedidas,errorFactorZona } from '../lib/validar-medidas.js';
 
 export const catalogoRouter = Router();
 catalogoRouter.use(requireAuth); // lecturas: cualquier usuario autenticado
@@ -57,6 +58,7 @@ catalogoRouter.get(
       productos.map((p) => ({
         id: Number(p.id),
         nombre: p.name,
+        medidas_errores:[...erroresMedidas(p),...p.product_zone_units.flatMap(u=>{const e=errorFactorZona(p,u.unidad_captura,Number(u.factor));return e?[`Zona ${u.zona_id}: ${e}`]:[]})],
         store_id: Number(p.store_id),
         store: p.stores.name,
         base_qty: num(p.base_qty),
@@ -90,13 +92,13 @@ catalogoRouter.get(
 const productoBody = z.object({
   nombre: z.string().min(1),
   store_id: z.coerce.number().int().positive(),
-  base_qty: z.coerce.number().min(0).default(0),
+  base_qty: z.coerce.number().min(1).default(1),
   unit_cost: z.coerce.number().min(0).nullable().optional(),
   unidad_base: z.enum(['g', 'ml', 'pieza', 'unidad']).nullable().optional(),
   contenido_compra: z.coerce.number().positive().nullable().optional(),
   unidad_compra: z.string().min(1).max(30).nullable().optional(),
   rendimiento_util: z.coerce.number().gt(0).lte(1).optional(),
-  presentacion_modo: z.enum(['exacta', 'por_lote', 'variable']).default('exacta'),
+  presentacion_modo: z.enum(['exacta', 'por_lote', 'variable']).default('por_lote'),
   presentacion_nota: z.string().max(500).nullable().optional(),
   active: z.boolean().optional(),
   categoria_id: z.coerce.number().int().positive().nullable().optional(),
@@ -112,10 +114,11 @@ catalogoRouter.post(
   soloAdmin,
   asyncHandler(async (req, res) => {
     const b = productoBody.parse(req.body);
+    const errores=erroresMedidas(b);if(errores.length)throw new HttpError(400,errores.join(' '));
     const creado = await prisma.$transaction(async tx => {
       await bloquearLibro(tx, req.auth!.negocioId);
       await validarReferenciasProducto(tx, req.auth!.negocioId, b);
-      return tx.products.create({
+      const producto=await tx.products.create({
       data: {
         negocio_id: req.auth!.negocioId,
         name: b.nombre,
@@ -132,6 +135,9 @@ catalogoRouter.post(
         categoria_id: b.categoria_id != null ? BigInt(b.categoria_id) : null,
       },
       });
+      const zonas=await tx.zonas_inventario.findMany({where:{negocio_id:req.auth!.negocioId}});
+      if(zonas.length)await tx.product_zone_units.createMany({data:zonas.map(z=>({product_id:producto.id,zona_id:z.id,unidad_captura:b.unidad_base==='pieza'?'pieza':b.unidad_compra!,factor:b.unidad_base==='pieza'?1:b.contenido_compra!}))});
+      return producto;
     });
     res.status(201).json({ id: Number(creado.id) });
   }),
@@ -149,6 +155,7 @@ catalogoRouter.patch(
       await tx.$queryRaw`SELECT id FROM products WHERE id = ${id} AND negocio_id = ${req.auth!.negocioId} FOR UPDATE`;
       const prod = await tx.products.findFirst({ where: { id, negocio_id: req.auth!.negocioId } });
       if (!prod) throw new HttpError(404, 'Producto no encontrado');
+      const errores=erroresMedidas({...prod,...b});if(errores.length)throw new HttpError(400,errores.join(' '));
       await validarReferenciasProducto(tx, req.auth!.negocioId, b);
       if (b.unidad_base !== undefined && b.unidad_base !== prod.unidad_base) {
         const usado = await tx.products.findFirst({ where: { id, OR: [
@@ -343,6 +350,7 @@ catalogoRouter.put(
       prisma.zonas_inventario.findFirst({ where: { id: BigInt(b.zona_id), negocio_id: req.auth!.negocioId } }),
     ]);
     if (!prod || !zona) throw new HttpError(400, 'Producto o zona inválidos para este negocio');
+    const errorMedida=errorFactorZona(prod,b.unidad_captura,b.factor);if(errorMedida)throw new HttpError(400,errorMedida);
     const r = await prisma.product_zone_units.upsert({
       where: { product_id_zona_id: { product_id: BigInt(b.product_id), zona_id: BigInt(b.zona_id) } },
       update: { unidad_captura: b.unidad_captura, factor: b.factor },

@@ -5,6 +5,7 @@ import { HttpError } from '../middleware/error.js';
 import { intentarPostGuardado } from '../lib/post-guardado.js';
 import { consumirVentasEpos } from '../inventario/consumo-epos.js';
 import { aplicarMapeoEpos } from './mapeo-menu.js';
+import { filtroConsumoFifoActivo } from '../inventario/fuentes.js';
 import {
   buildReconcilePreview,
   fetchReconcileData,
@@ -210,6 +211,7 @@ export async function listarVentasEpos(input: { negocioId: bigint; from?: string
     where: { negocio_id: input.negocioId, ...pertenencia },
     orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
     take: Math.min(Math.max(input.limite ?? 5000, 1), 20000),
+    include:{inventory_consumptions:{where:filtroConsumoFifoActivo(),select:{lote:{select:{costo_estimado:true}}}}},
   });
   return rows.map((row) => ({
     id: Number(row.id), importacion_id: Number(row.importacion_id), fecha: row.fecha.toISOString(),
@@ -220,6 +222,9 @@ export async function listarVentasEpos(input: { negocioId: bigint; from?: string
     descuento: Number(row.descuento), metodo_pago: row.metodo_pago,
     costo_fifo: row.costo_fifo == null ? null : Number(row.costo_fifo),
     costeo_estado: row.costeo_estado,
+    costo_estimado:row.inventory_consumptions.some(c=>c.lote.costo_estimado),
+    calidad_costo:row.costeo_estado!=='costeada'?'incompleto':row.inventory_consumptions.some(c=>c.lote.costo_estimado)?'estimado':'documentado',
+    sustitucion_confirmada:row.sustituciones_json!=null,
     costeo_error: row.costeo_error,
   }));
 }

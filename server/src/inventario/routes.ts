@@ -14,11 +14,13 @@ import { listarTransferencias, transferirLote } from './ubicacion-lotes.js';
 import { actualizarRecepcionReal } from './compras-rapidas.js';
 import { vistaPreviaControl, confirmarControlCierre, completarCierre } from './control-cierre.js';
 import { controlInventario, registrarOperacion, clasificarDiferencia, CAUSAS_INVENTARIO } from './operaciones.js';
+import{disponibilidadMenu}from'./disponibilidad.js';
 
 export const inventarioRouter = Router();
 
 // Inventario y tareas son accesibles para admin y empleado.
 inventarioRouter.use(requireAuth);
+inventarioRouter.get('/disponibilidad-menu',asyncHandler(async(req,res)=>{res.json(await disponibilidadMenu(req.auth!.negocioId))}));
 
 inventarioRouter.get('/control', soloAdmin, asyncHandler(async (req, res) => {
   res.json(await controlInventario(req.auth!.negocioId));

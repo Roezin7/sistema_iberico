@@ -171,7 +171,10 @@ export async function fijarSaldosIniciales(negocioId: bigint, saldos: { ubicacio
 }
 
 /** Mapa ubicacion_id -> saldo inicial de la semana dada (de cierre previo, o bootstrap). */
-async function mapaSaldoInicial(negocioId: bigint, fechaInicio: Date): Promise<Record<number, number>> {
+async function contextoSaldoInicial(negocioId: bigint, fechaInicio: Date) {
+  // Un cierre financiero conserva su apertura aunque otra semana se reabra.
+  const congelada = await prisma.semanas.findFirst({where:{negocio_id:negocioId,fecha_inicio:fechaInicio,estado:'cerrada'},include:{cierres:true}});
+  if(congelada?.cierres.length) return {saldos:Object.fromEntries(congelada.cierres.map(c=>[Number(c.ubicacion_id),num0(c.saldo_inicial)])),provisional:false,semanas_pendientes:[] as number[]};
   const prev = await prisma.semanas.findFirst({
     where: { negocio_id: negocioId, estado: 'cerrada', fecha_inicio: { lt: fechaInicio } },
     orderBy: { fecha_inicio: 'desc' },
@@ -184,7 +187,12 @@ async function mapaSaldoInicial(negocioId: bigint, fechaInicio: Date): Promise<R
     const boot = await prisma.saldos_iniciales.findMany({ where: { negocio_id: negocioId } });
     for (const b of boot) map[Number(b.ubicacion_id)] = num0(b.monto);
   }
-  return map;
+  const intermedias=await prisma.semanas.findMany({where:{negocio_id:negocioId,fecha_inicio:{lt:fechaInicio,...(prev?{gt:prev.fecha_inicio}:{})}},select:{id:true,estado:true}});
+  const movimientos=intermedias.length?await prisma.movimientos.findMany({where:{negocio_id:negocioId,semana_id:{in:intermedias.map(s=>s.id)}}}):[];
+  return {saldos:calcularSaldosTeoricos(map,movimientos.map(aMovBalance)),provisional:intermedias.some(s=>s.estado==='abierta'),semanas_pendientes:intermedias.filter(s=>s.estado==='abierta').map(s=>Number(s.id))};
+}
+async function mapaSaldoInicial(negocioId: bigint, fechaInicio: Date): Promise<Record<number, number>> {
+  return (await contextoSaldoInicial(negocioId,fechaInicio)).saldos;
 }
 
 // ---------------------------------------------------------------------------
@@ -1290,11 +1298,12 @@ function aMovBalance(m: { ubicacion_origen_id: bigint | null; ubicacion_destino_
 
 export async function cuadre(negocioId: bigint, semanaId: bigint) {
   const semana = await getSemanaAbierta(negocioId, semanaId);
-  const [ubicaciones, movs, inicialMap] = await Promise.all([
+  const [ubicaciones, movs, inicial] = await Promise.all([
     prisma.ubicaciones_fondos.findMany({ where: { negocio_id: negocioId, activo: true }, orderBy: { id: 'asc' } }),
     movimientosDeSemana(negocioId, semanaId),
-    mapaSaldoInicial(negocioId, semana.fecha_inicio),
+    contextoSaldoInicial(negocioId, semana.fecha_inicio),
   ]);
+  const inicialMap=inicial.saldos;
   const teoricos = calcularSaldosTeoricos(inicialMap, movs.map(aMovBalance));
 
   // Último arqueo por ubicación dentro de la semana.
@@ -1320,7 +1329,7 @@ export async function cuadre(negocioId: bigint, semanaId: bigint) {
       descuadre: real != null ? descuadre(real, saldo_teorico) : null,
     };
   });
-  return { semana_id: Number(semanaId), ubicaciones: filas };
+  return { semana_id: Number(semanaId), ubicaciones: filas, saldo_inicial_provisional:inicial.provisional, semanas_financieras_pendientes:inicial.semanas_pendientes };
 }
 
 export async function crearArqueo(negocioId: bigint, usuarioId: bigint, semanaId: bigint, ubicacionId: number, montoReal: number, fecha?: string) {
@@ -1516,7 +1525,8 @@ async function resumenCalculado(negocioId: bigint, semanaId: bigint) {
   const resultadoOperativo = utilidadBruta == null
     ? null
     : redondear(utilidadBruta - comisionTerminal(ventaTarjeta, propinaTarjeta) - gastosOperativos - salidasSinVenta.total);
-  const resultadoIndependiente = salidasSinVenta.pendientes === 0 && salidasSinVenta.estimados === 0 && costosEstimados === 0 && Boolean(conciliacion_inventario.reporte_independiente && (inventario.control_fifo?.reporte_independiente ?? false) && eposPendientes._count._all === 0);
+  const aperturaFinanciera=await contextoSaldoInicial(negocioId,semana.fecha_inicio);
+  const resultadoIndependiente = !aperturaFinanciera.provisional && salidasSinVenta.pendientes === 0 && salidasSinVenta.estimados === 0 && costosEstimados === 0 && Boolean(conciliacion_inventario.reporte_independiente && (inventario.control_fifo?.reporte_independiente ?? false) && eposPendientes._count._all === 0);
   // El patrimonio representa activos físicos comprobados, no el valor bruto
   // del ledger FIFO. Si la semana sigue abierta sin conteo, se deja pendiente
   // para no mostrar una cifra inflada como si fuera patrimonio real.
@@ -1562,6 +1572,7 @@ async function resumenCalculado(negocioId: bigint, semanaId: bigint) {
     resultado_operativo_estado: resultadoOperativo == null ? 'pendiente' : resultadoIndependiente ? 'verificado' : 'provisional_fifo',
     costo_ventas_fifo_activo: inventario.costo_ventas,
     costos_sin_venta: salidasSinVenta, costos_fifo_estimados: costosEstimados,
+    saldo_inicial_provisional:aperturaFinanciera.provisional,
     ventas_epos_pendientes: eposPendientes._count._all,
     importe_ventas_epos_pendientes: redondear(num0(eposPendientes._sum.venta_neta ?? eposPendientes._sum.venta_bruta)),
     excepciones_costeo,
@@ -1774,7 +1785,7 @@ export async function saludOperativa(negocioId: bigint) {
     prisma.products.count({ where: { negocio_id: negocioId, active: true, product_zone_units: { none: {} } } }),
     prisma.products.count({ where: { negocio_id: negocioId, active: true, categoria_id: null } }),
     prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true } }),
-    prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, epos_product_id: null } }),
+    prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, OR:[{epos_product_id:null},{epos_product_id:{lte:0}}] } }),
     // `validada` is the current terminal state for a recipe. Keep the legacy
     // `completada` value accepted so historical records remain operable.
     prisma.productos_menu.count({ where: { negocio_id: negocioId, activo: true, recetas: { none: { estado: { in: ['validada', 'completada'] } } } } }),
@@ -1813,12 +1824,12 @@ export async function saludOperativa(negocioId: bigint) {
   const semanasAbiertas = semanasAbiertasFilas.length;
   const bloqueadores = [
     ...(sinZona ? [`${sinZona} producto(s) activo(s) sin zona de conteo`] : []),
-    ...(menuSinEpos ? [`${menuSinEpos} producto(s) de menú sin vínculo Epos`] : []),
     ...(menuSinReceta ? [`${menuSinReceta} producto(s) de menú sin receta completada`] : []),
 
   ];
   const controlFisico = await controlInventario(negocioId);
   const advertencias = [
+    ...(menuSinEpos ? [`${menuSinEpos} producto(s) de menú sin vínculo Epos real; puede ser un producto local. No bloquea el conteo físico.`] : []),
     ...controlFisico.alertas.map(a=>a.mensaje),
     ...controlFisico.ventas_tardias.map(v=>`${v.ventas} venta(s) importada(s) después de conciliar la semana ${v.semana_id}; no se volvió a descontar el físico, revisar su explicación/costo`),
     ...(ventasPendientes ? [`${ventasPendientes} venta(s) Epos con costo pendiente; alerta, no bloqueo del inventario físico`] : []),
@@ -1843,6 +1854,7 @@ export async function saludOperativa(negocioId: bigint) {
 export async function cerrarSemana(negocioId: bigint, usuarioId: bigint, semanaId: bigint, _confirmarExcepciones = false) {
   const semana = await getSemanaAbierta(negocioId, semanaId);
   if (semana.estado === 'cerrada') throw new HttpError(409, 'La semana ya está cerrada');
+  if(await prisma.semanas.findFirst({where:{negocio_id:negocioId,estado:'abierta',fecha_inicio:{lt:semana.fecha_inicio}}})) throw new HttpError(409,'Cierra primero las semanas financieras anteriores. El inventario físico y la operación pueden continuar con saldos provisionales.');
 
   // El cierre no debe ocultar ventas que no pudieron convertirse en consumo
   // FIFO. Permitimos continuar únicamente después de una confirmación explícita

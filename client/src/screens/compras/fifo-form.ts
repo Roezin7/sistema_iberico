@@ -1,4 +1,4 @@
-import { convertirCompraABase, normalizarUnidadCompra } from '../../../../server/src/lib/unidades-compra';
+import { convertirCompraABase, normalizarUnidadCompra,cantidadVariableMedida } from '../../../../server/src/lib/unidades-compra';
 export interface ProductoPresentacion {
   unidad_base?: string | null;
   unidad_compra?: string | null;
@@ -81,7 +81,8 @@ export function costoBase(importe: number | null | undefined, cantidadBase: numb
 }
 
 export function cantidadBaseCompra(linea: { cantidad_fuente: string | number | null; unidad_fuente?: string | null; unidad_compra?: string | null; contenido_compra?: string | number | null }, producto?: ProductoPresentacion) {
-  if (!producto || producto.presentacion_modo === 'variable') return null;
+  if (!producto) return null;
+  if(producto.presentacion_modo==='variable')return cantidadVariableMedida(linea.cantidad_fuente,linea.unidad_fuente||linea.unidad_compra,producto.unidad_base);
   return cantidadBaseDesdePresentacion({ cantidadCompra: Number(linea.cantidad_fuente), unidadCompra: linea.unidad_fuente || linea.unidad_compra,
     contenidoPorPresentacion: Number(linea.contenido_compra ?? (producto.presentacion_modo === 'exacta' ? producto.contenido_compra : null)),
     unidadBase: producto.unidad_base, rendimientoUtil: producto.rendimiento_util });

@@ -1,10 +1,12 @@
 import ControlInventario from './ControlInventario';
+import DisponibilidadMenu from './DisponibilidadMenu';
 import ConteoPresentaciones, { type PresentacionContada } from './ConteoPresentaciones';
 import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../../api';
 import { Icono } from '../../icons';
 import { Cargando } from '../../ui/Cargando';
+import { useConfirm } from '../../ui/ConfirmProvider';
 import WeekSelector from '../../components/WeekSelector';
 import Compras from '../compras/Compras';
 import { inputHoraMexico, isoDesdeHoraMexico } from '../../operating';
@@ -217,6 +219,7 @@ export default function Inventario() {
 //  CONTEO
 // ===========================================================================
 function Conteo({ onGuardado }: { onGuardado: () => void }) {
+  const confirmar=useConfirm();
   const navigate = useNavigate();
   const parametros = new URLSearchParams(window.location.search);
   const cierreGuiado = parametros.get('tipo') === 'cierre';
@@ -228,6 +231,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
   const semanaParam = parametros.get('semana');
   const semanaSolicitada = semanaParam ? Number(semanaParam) : null;
   const [zonas, setZonas] = useState<Zona[]>([]);
+  const [cargandoReferencias,setCargandoReferencias]=useState(true);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [zonaActiva, setZonaActiva] = useState<number | null>(null);
@@ -290,7 +294,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       }
       setValoresActuales(previos);
       setExistenciasActuales(actual.productos);
-    }).catch(e => setMsg(e instanceof Error ? e.message : 'No se pudo cargar el inventario.'));
+    }).catch(e => setMsg(e instanceof Error ? e.message : 'No se pudo cargar el inventario.')).finally(()=>setCargandoReferencias(false));
   }, []);
 
   useEffect(() => {
@@ -383,6 +387,9 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
       setMsg('Captura al menos un producto.');
       return;
     }
+    // Advertencia de captura, no límite de negocio; nunca ajusta cantidades.
+    const atipicas=lineas.filter(l=>{const antes=Number(valoresActuales[`${l.product_id}:${l.zona_id}`]);return antes>0&&l.cantidad_base>0&&(l.cantidad_base/antes>=100||antes/l.cantidad_base>=100)});
+    if(atipicas.length&&!await confirmar({message:'Revisa las unidades: '+atipicas.map(l=>`${productos.find(p=>p.id===l.product_id)?.nombre}: ${l.cantidad_base.toLocaleString('es-MX')} ${productos.find(p=>p.id===l.product_id)?.unidad_base}`).join('; ')+'. Son cambios de100veces o más respecto a la referencia. Confirma unidades y tamaño antes de guardar.',confirmText:'Confirmo cantidades y unidades'}))return;
     setGuardando(true);
     setMsg('');
     try {
@@ -463,6 +470,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
             label="Semana del conteo"
             description="Apertura o cierre que vas a registrar."
             ariaLabel="Semana del conteo"
+            loading={cargandoReferencias}
           />}
           {tipo === 'ajuste' && <label>Motivo del ajuste<input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Ej. conteo corregido de cajas" /></label>}
         </div>
@@ -744,6 +752,7 @@ function InventarioActual() {
         <small className="muted">Cantidades: último físico + entradas − consumos posteriores. El importe principal usa los costos guardados de los lotes, sin sustituirlos por catálogo. Costos estimados y diferencias se señalan por separado.</small>
       </div>
       <ControlInventario />
+      <DisponibilidadMenu />
       {data.sin_costo.length > 0 && (
         <p className="aviso">
           <Icono name="alertTriangle" size={16} />

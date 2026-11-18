@@ -17,6 +17,16 @@ export function unidadesMetricasIncompatibles(origen?: string | null, destino?: 
   return dimension(a) != null && dimension(b) != null && dimension(a) !== dimension(b);
 }
 
+/** Peso/volumen observado de un producto variable: no aplicar de nuevo
+ * rendimiento ni tamaño aproximado de catálogo sobre su medida final. */
+export function cantidadVariableMedida(cantidad:unknown,unidad?:string|null,base?:string|null) {
+ const n=Number(cantidad),u=normalizarUnidadCompra(unidad),b=normalizarUnidadCompra(base);
+ if(!Number.isFinite(n)||n<=0)return null;
+ if(u===b&&['g','ml'].includes(b??''))return n;
+ if(u==='kg'&&b==='g'||u==='l'&&b==='ml')return n*1000;
+ return null;
+}
+
 export function convertirCompraABase(input: {
   cantidadCompra?: number | null; unidadCompra?: string | null;
   contenidoPorPresentacion?: number | null; unidadBase?: string | null;
@@ -32,6 +42,9 @@ export function convertirCompraABase(input: {
   if (origen && origen === destino && ['g', 'kg', 'ml', 'l'].includes(origen)) return cantidad * rendimiento;
   if (origen === 'kg' && destino === 'g') return cantidad * 1000 * rendimiento;
   if (origen === 'l' && destino === 'ml') return cantidad * 1000 * rendimiento;
+  // Una pieza individual nunca se convierte en el contenido del paquete ni
+  // en sus ml. Para 2 cajas de24piezas el origen debe decir caja, no pieza.
+  if (origen === 'pieza' && destino === 'pieza') return cantidad * rendimiento;
   const contenido = Number(input.contenidoPorPresentacion);
   if (Number.isFinite(contenido) && contenido > 0) return cantidad * contenido * rendimiento;
   if (origen && origen === destino) return cantidad;

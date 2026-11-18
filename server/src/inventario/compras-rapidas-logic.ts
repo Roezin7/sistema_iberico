@@ -1,4 +1,4 @@
-import { convertirCompraABase, normalizarUnidadCompra, unidadesMetricasIncompatibles } from '../lib/unidades-compra.js';
+import { convertirCompraABase, normalizarUnidadCompra, unidadesMetricasIncompatibles,cantidadVariableMedida } from '../lib/unidades-compra.js';
 export type TipoLineaCompra = 'inventario' | 'gasto' | 'pendiente';
 
 export interface LineaCompraResumen {
@@ -84,7 +84,7 @@ export function cantidadBaseDesdePresentacion(input: {
  * acepta cantidad base explícita; una presentación por lote nunca hereda
  * el tamaño del catálogo. Las unidades métricas sí convierten directamente. */
 export function cantidadBaseCompra(linea: Pick<LineaCompraValidable, 'cantidad_base' | 'cantidad_fuente' | 'unidad_fuente' | 'unidad_compra' | 'contenido_compra'>, producto: ProductoReglaCompra) {
-  if (producto.presentacion_modo === 'variable') return linea.cantidad_base ?? null;
+  if (producto.presentacion_modo === 'variable') return cantidadVariableMedida(linea.cantidad_fuente,linea.unidad_fuente||linea.unidad_compra,producto.unidad_base)??linea.cantidad_base??null;
   return cantidadBaseDesdePresentacion({
     cantidadCompra: linea.cantidad_fuente,
     unidadCompra: linea.unidad_fuente || linea.unidad_compra || producto.unidad_compra,

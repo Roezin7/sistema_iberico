@@ -565,6 +565,8 @@ function CorteConfirmado({ evidencia, propina }: { evidencia: ConciliacionDiaria
 }
 
 function DetalleVentasEpos({ filas, preview, metodoMixto }: { filas: EposVenta[]; preview: Map<number, CosteoVentaPreview>; metodoMixto: MetodoMixto | null }) {
+  const estimadas=filas.filter(f=>f.costo_estimado).length;
+  const parciales=filas.filter(f=>f.costo_fifo!=null&&f.costeo_estado!=='costeada').length;
   const porProducto = new Map<string, { cantidad: number; venta: number; costo: number; aplicadas: number; disponibles: number; pendientes: number; excepciones: number }>();
   const porMetodo = new Map<string, number>();
   filas.forEach((fila) => {
@@ -598,6 +600,7 @@ function DetalleVentasEpos({ filas, preview, metodoMixto }: { filas: EposVenta[]
   const excepcionesReales = productos.filter(([, dato]) => dato.excepciones > 0).length;
   return <details className="ventas-detalle" open>
     <summary><strong>Detalle de ventas Epos</strong><span className="muted">{filas.length} líneas · {productos.length} productos</span></summary>
+    {(estimadas>0||parciales>0)&&<p className="info-box">{estimadas} líneas usan costos estimados y {parciales} tienen costo parcial. Un costo aplicado no significa margen verificado.</p>}
     <div className="ventas-detalle__summary">
       {[...porMetodo.entries()].map(([metodo, total]) => <span key={metodo}><small>{metodo}</small><strong>{mxn(total)}</strong></span>)}
     </div>
@@ -1035,6 +1038,7 @@ function CuadreView({ ref_, semana, filas, resumen, onChange }: { ref_: Referenc
   const cajaLista = filas.length > 0 && filas.every((f) => f.saldo_real != null);
   return (
     <>
+      {resumen?.saldo_inicial_provisional&&<p className="info-box">Apertura financiera provisional: incluye los movimientos de semanas anteriores aún abiertas. Puedes operar y contar inventario; cierra el dinero en orden cronológico para confirmar estos saldos.</p>}
       <section className="closure-flow" aria-labelledby="cierre-guiado-titulo">
         <div className="section-heading"><div><span className="eyebrow">Cierre guiado</span><h2 id="cierre-guiado-titulo">Deja la semana lista</h2><p className="muted">Completa los cuatro pasos.</p></div></div>
         <div className="closure-flow__steps">

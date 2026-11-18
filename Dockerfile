@@ -18,7 +18,8 @@ RUN npm ci
 
 # 2) Código y build: prisma generate + (client -> server/public, server -> server/dist)
 COPY . .
-RUN npm run prisma:generate -w server && npm run build
+# Generar el cliente no necesita credenciales reales ni acceso a producción.
+RUN DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build npm run prisma:generate -w server && npm run build
 
 # El entorno de ejecución es producción (no afecta a las capas de instalación de arriba).
 ENV NODE_ENV=production
@@ -29,4 +30,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=5 \
   CMD curl -fsS http://localhost:3000/api/health || exit 1
 
 # Aplica migraciones pendientes y arranca. migrate deploy es idempotente y seguro.
-CMD ["sh", "-c", "npx --workspace server prisma migrate deploy && npm start"]
+CMD ["sh", "-c", "DATABASE_URL=\"${DATABASE_MIGRATION_URL:-$DATABASE_URL}\" npx --workspace server prisma migrate deploy && npm start"]

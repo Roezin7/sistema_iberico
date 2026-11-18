@@ -24,6 +24,7 @@ export interface FilaCuadre {
   saldo_inicial: number; saldo_teorico: number; saldo_real: number | null; descuadre: number | null;
 }
 export interface Resumen {
+  saldo_inicial_provisional?:boolean;
   estado: string;
   ventas: { efectivo: number; tarjeta: number; propinas: number; total: number };
   comision_terminal_estimada: number;
@@ -183,6 +184,7 @@ export interface EposVenta {
   venta_bruta: number; venta_neta: number | null; descuento: number;
   metodo_pago: string; costo_fifo: number | null;
   costeo_estado: string; costeo_error: string | null;
+  costo_estimado?:boolean;calidad_costo?:'incompleto'|'estimado'|'documentado';sustitucion_confirmada?:boolean;
 }
 
 export interface CosteoVentaPreview {

@@ -270,15 +270,17 @@ async function consumirVentasEposEnLibro(input: { negocioId: bigint; from: strin
     where: { negocio_id: input.negocioId, periodo_desde: from, periodo_hasta: to },
     select: { id: true },
   });
-  const ventas = await client.epos_ventas.findMany({
+  const consultadas = await client.epos_ventas.findMany({
     where: {
       negocio_id: input.negocioId,
       ...(importaciones.length ? { importacion_id: { in: importaciones.map((row) => row.id) } } : { fecha: { gte: from, lt: to } }),
     },
     orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
   });
-  const resultado = { periodo: { from: input.from, to: input.to }, confirmar: input.confirmar, ventas: ventas.length, costeadas: 0, excepciones: 0, pendientes: 0, ya_costeadas: 0, costo_fifo: 0, detalle: [] as Record<string, unknown>[] };
   const modo = input.modo ?? 'normal';
+  const cerradas=modo==='normal'?await client.semanas.findMany({where:{negocio_id:input.negocioId,estado:'cerrada'},select:{fecha_inicio:true,fecha_fin:true}}):[];
+  const ventas=consultadas.filter(v=>!cerradas.some(s=>fechaISO(v.fecha)>=s.fecha_inicio.toISOString().slice(0,10)&&fechaISO(v.fecha)<=s.fecha_fin.toISOString().slice(0,10)));
+  const resultado = { periodo: { from: input.from, to: input.to }, confirmar: input.confirmar, ventas: ventas.length, ventas_historicas_protegidas:consultadas.length-ventas.length, costeadas: 0, excepciones: 0, pendientes: 0, ya_costeadas: 0, costo_fifo: 0, detalle: [] as Record<string, unknown>[] };
   const context = await cargarContexto(client, input.negocioId, ventas, modo);
   const planes = [] as { venta: typeof ventas[number]; plan: PlanConsumo }[];
   for (const venta of ventas) {
@@ -389,10 +391,12 @@ export async function costearVentasPendientesEnVivo(input: {
   from?: Date;
   to?: Date;
 }) {
+  const cerradas=await prisma.semanas.findMany({where:{negocio_id:input.negocioId,estado:'cerrada'},select:{fecha_inicio:true,fecha_fin:true}});
   const pendientes = await prisma.epos_ventas.findMany({
     where: {
       negocio_id: input.negocioId,
       costeo_estado: { in: ['pendiente', 'excepcion'] },
+      NOT:cerradas.map(s=>({fecha:{gte:new Date(`${s.fecha_inicio.toISOString().slice(0,10)}T00:00:00-06:00`),lt:new Date(new Date(`${s.fecha_fin.toISOString().slice(0,10)}T00:00:00-06:00`).getTime()+86400000)}})),
       ...(input.from || input.to ? { fecha: { ...(input.from ? { gte: input.from } : {}), ...(input.to ? { lt: input.to } : {}) } } : {}),
     },
     orderBy: [{ fecha: 'asc' }, { id: 'asc' }],
