@@ -282,6 +282,7 @@ export function CapturaRapida({ fechaInicial, onSaved }: { fechaInicial: string;
         if (producto) {
           if (!siguiente.descripcion_fuente.trim()) siguiente.descripcion_fuente = producto.nombre;
           siguiente.cantidad_base = '';
+          siguiente.cantidad_fuente='';siguiente.contenido_presentacion=null;siguiente.unidad_presentacion=null;
           siguiente.unidad_fuente = producto.presentacion_modo==='variable'?producto.unidad_base??'g':producto.unidad_compra ?? siguiente.unidad_fuente;
           siguiente.unidad_compra = producto.unidad_compra ?? siguiente.unidad_compra;
           siguiente.contenido_compra = producto.presentacion_modo === 'exacta' && producto.contenido_compra != null ? String(producto.contenido_compra) : '';
@@ -455,6 +456,7 @@ function PendienteCardV2({ fila, productos, ubicaciones, onChange }: { fila: Pen
         const producto = productos.find((p) => p.id === Number(valor));
         if (producto) {
           siguiente.cantidad_base = null; siguiente.contenido_presentacion = null; siguiente.unidad_presentacion = null;
+          siguiente.cantidad_fuente=null;
           if (!siguiente.descripcion_fuente.trim()) siguiente.descripcion_fuente = producto.nombre;
           siguiente.unidad_fuente = producto.presentacion_modo==='variable'?producto.unidad_base??'g':producto.unidad_compra ?? siguiente.unidad_fuente;
           siguiente.unidad_compra = producto.unidad_compra ?? siguiente.unidad_compra;

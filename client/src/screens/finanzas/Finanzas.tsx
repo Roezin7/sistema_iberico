@@ -1239,14 +1239,14 @@ function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number
   }, [compraId]);
 
   function editar(i: number, campo: keyof CompraDetalleLinea, valor: string) {
-    const numerico = campo === 'cantidad_fuente' || campo === 'cantidad_base' || campo === 'contenido_compra' || campo === 'importe' || campo === 'costo_unitario';
+    const numerico = campo === 'cantidad_fuente' || campo === 'cantidad_base' || campo === 'contenido_compra' || campo === 'contenido_presentacion' || campo === 'importe' || campo === 'costo_unitario';
     setLineas((v) => v.map((l, idx) => {
       if (idx !== i) return l;
       const siguiente = { ...l, [campo]: numerico ? (valor === '' ? null : Number(valor)) : valor };
       if (campo === 'cantidad_fuente' || campo === 'unidad_fuente' || campo === 'unidad_compra' || campo === 'contenido_compra') {
         const producto = productos.find((p) => p.id === siguiente.product_id);
         const base = cantidadBaseCompra({ ...siguiente, cantidad_fuente: siguiente.cantidad_fuente ?? null }, producto);
-        if (base != null) siguiente.cantidad_base = base;
+        siguiente.cantidad_base = base;
       }
       return siguiente;
     }));
@@ -1262,9 +1262,11 @@ function CompraEditorV2({ compraId, ref_, onClose, onSaved }: { compraId: number
         product_id: productId,
         producto: producto?.nombre ?? null,
         unidad_compra: producto?.unidad_compra ?? l.unidad_compra,
-        unidad_fuente: producto?.unidad_compra ?? l.unidad_fuente,
+        unidad_fuente: producto?.presentacion_modo==='variable'?producto.unidad_base:producto?.unidad_compra ?? l.unidad_fuente,
         contenido_compra: producto?.presentacion_modo === 'exacta' ? producto.contenido_compra ?? null : null,
         cantidad_base: null,
+        cantidad_fuente:null,
+        contenido_presentacion:null,unidad_presentacion:null,
         descripcion_fuente: l.descripcion_fuente || producto?.nombre || '',
       };
       const base = cantidadBaseCompra({ ...siguiente, cantidad_fuente: siguiente.cantidad_fuente ?? null }, producto);
