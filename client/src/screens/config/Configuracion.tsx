@@ -497,7 +497,7 @@ function InventarioCfg() {
           {filtrados.map((p) => <button type="button" key={p.id} className={`product-list__item ${p.id === seleccionado ? 'product-list__item--on' : ''}`} onClick={() => setSeleccionado(p.id)}>
             <span className="product-list__name">{p.nombre} {!p.active && <span className="chip chip--warn">inactivo</span>}</span>
             <span className="product-list__meta">{p.store}{p.categoria ? ` · ${p.categoria}` : ''}</span>
-            <span className="product-list__meta">mín. {p.base_qty} {p.unidad_compra ?? 'unidades'}</span>
+            <span className="product-list__meta">mín. {p.base_qty} {p.unidad_base==='pieza'?'piezas individuales':p.unidad_compra ?? 'unidades de referencia'}</span>
           </button>)}
           {filtrados.length === 0 && <p className="muted product-list__empty">Sin resultados.</p>}
         </aside>
@@ -594,7 +594,7 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
         <button className="btn-secondary" onClick={async () => { if (!nuevaTienda.trim()) return; await api('/catalogo/stores', { method: 'POST', body: { nombre: nuevaTienda.trim() } }); setNuevaTienda(''); onNuevaTienda(); }}>+ Tienda</button>
       </div>
       <div className="form-grid form-grid--three">
-      <label>Mínimo de compra (presentaciones)
+      <label>Mínimo ({unidadBase==='pieza'?'piezas individuales':'unidades de referencia'})
         <input type="number" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} placeholder="0" />
       </label>
       <label>Costo de la presentación (opcional)
@@ -608,6 +608,7 @@ function NuevoProducto({ stores, categorias, onCreado, onNuevaTienda }: { stores
       </label>
       <label>Contenido por presentación
         <input type="number" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" />
+        <small className="muted">{unidadBase==='pieza'?'Número de piezas por paquete; una botella individual=1pieza. Los ml/g se registran aparte en la compra.':`Contenido en ${unidadBase||'unidad base'} por envase. Si cambia por compra, es sólo referencia.`}</small>
       </label>
       <label>Tipo de presentación<select value={modoPresentacion} onChange={e=>setModoPresentacion(e.target.value)}><option value="por_lote">Puede variar: confirmar en cada compra</option><option value="exacta">Fija y confirmada</option><option value="variable">Peso variable: registrar cantidad medida</option></select></label>
       </div>
@@ -703,9 +704,9 @@ function ProductoEditorPanel({ p, stores, zonas, categorias, focusField, onChang
           </label>
       </div></section>
       <section className="product-editor__section"><h3>Compra y FIFO</h3><p className="muted">Configura mínimo y presentación.</p><div className="form-grid form-grid--four">
-        <label>Mínimo de compra<input ref={minimoRef} data-product-field="minimo" type="number" min="0" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} /></label>
+        <label>Mínimo ({unidadBase==='pieza'?'piezas individuales':'unidades de referencia'})<input ref={minimoRef} data-product-field="minimo" type="number" min="1" inputMode="decimal" value={baseQty} onChange={(e) => setBaseQty(e.target.value)} /></label>
         <label>Presentación<select value={unidadCompra} onChange={(e) => setUnidadCompra(e.target.value)}><option value="">Selecciona…</option>{PRESENTACIONES.map((u) => <option key={u} value={u}>{u}</option>)}</select></label>
-        <label>Contenido por presentación<input type="number" min="0" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" /></label>
+        <label>Contenido por presentación<input type="number" min="0" inputMode="decimal" value={contenidoCompra} onChange={(e) => setContenidoCompra(e.target.value)} placeholder="Ej. 700" /><small className="muted">{unidadBase==='pieza'?'Piezas por paquete, no ml/g. Envase individual=1pieza.':`Contenido en ${unidadBase} por envase o unidad de referencia.`}</small></label>
         <label>Costo presentación<input type="number" min="0" inputMode="decimal" value={costo} onChange={(e) => setCosto(e.target.value)} placeholder="—" /></label>
       </div><div className="form-grid form-grid--three">
         <label>Unidad base FIFO<select value={unidadBase} onChange={(e) => setUnidadBase(e.target.value)}><option value="">Pendiente</option>{UNIDADES_BASE.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}</select></label>

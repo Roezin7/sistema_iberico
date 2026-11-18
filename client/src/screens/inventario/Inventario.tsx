@@ -389,7 +389,7 @@ function Conteo({ onGuardado }: { onGuardado: () => void }) {
     }
     // Advertencia de captura, no límite de negocio; nunca ajusta cantidades.
     const atipicas=lineas.filter(l=>{const antes=Number(valoresActuales[`${l.product_id}:${l.zona_id}`]);return antes>0&&l.cantidad_base>0&&(l.cantidad_base/antes>=100||antes/l.cantidad_base>=100)});
-    if(atipicas.length&&!await confirmar({message:'Revisa las unidades: '+atipicas.map(l=>`${productos.find(p=>p.id===l.product_id)?.nombre}: ${l.cantidad_base.toLocaleString('es-MX')} ${productos.find(p=>p.id===l.product_id)?.unidad_base}`).join('; ')+'. Son cambios de100veces o más respecto a la referencia. Confirma unidades y tamaño antes de guardar.',confirmText:'Confirmo cantidades y unidades'}))return;
+    if(atipicas.length&&!await confirmar({message:'Revisa las unidades: '+atipicas.map(l=>`${productos.find(p=>p.id===l.product_id)?.nombre}: ${l.cantidad_base.toLocaleString('es-MX')} ${productos.find(p=>p.id===l.product_id)?.unidad_base}`).join('; ')+'. Son cambios de 100 veces o más respecto a la referencia. Confirma unidades y tamaño antes de guardar.',confirmText:'Confirmo cantidades y unidades'}))return;
     setGuardando(true);
     setMsg('');
     try {
