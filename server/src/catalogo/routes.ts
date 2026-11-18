@@ -136,7 +136,7 @@ catalogoRouter.post(
       },
       });
       const zonas=await tx.zonas_inventario.findMany({where:{negocio_id:req.auth!.negocioId}});
-      if(zonas.length)await tx.product_zone_units.createMany({data:zonas.map(z=>({product_id:producto.id,zona_id:z.id,unidad_captura:b.unidad_base==='pieza'?'pieza':b.unidad_compra!,factor:b.unidad_base==='pieza'?1:b.contenido_compra!}))});
+      if(zonas.length)await tx.product_zone_units.createMany({data:zonas.map(z=>({product_id:producto.id,zona_id:z.id,unidad_captura:b.unidad_compra!,factor:b.contenido_compra!}))});
       return producto;
     });
     res.status(201).json({ id: Number(creado.id) });

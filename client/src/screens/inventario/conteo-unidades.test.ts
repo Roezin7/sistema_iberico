@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { cantidadBaseConteo, cantidadDesdeSaldo, cantidadEnConteo, medidaConteo, formatosConteo } from './conteo-unidades';
 
 describe('unidades de apertura y cierre', () => {
+  it('un paquete de hierbas no convierte su peso en una sola hoja', () => {
+    const p={unidad_base:'pieza',unidad_compra:'paquete 45 g / 20 hojas',contenido_compra:20,presentacion_modo:'por_lote',formatos_envase:[{contenido:45,unidad:'g',fecha:'2026-11-12'}]};
+    const u={factor:20,unidad_captura:'paquete 45 g / 20 hojas'};
+    expect(medidaConteo(p,u)).toMatchObject({factor:20,referencia:true});
+    expect(cantidadEnConteo(40,p,u)).toBe(2);
+    expect(cantidadBaseConteo(2,p,u)).toBe(40);
+    expect(formatosConteo(p,u).some(f=>f.etiqueta==='pieza · 45 g')).toBe(false);
+  });
+  it('conserva la caja explícita de ocho piezas al precargar el conteo', () => {
+    const p={unidad_base:'pieza',unidad_compra:'caja',contenido_compra:8,presentacion_modo:'exacta'};
+    const u={factor:8,unidad_captura:'caja'};
+    expect(medidaConteo(p,u)).toMatchObject({factor:8,referencia:false});
+    expect(cantidadDesdeSaldo({qty_captura:16,factor:1},p,u)).toBe(2);
+  });
   const pepino = { unidad_base: 'g', unidad_compra: 'kg', contenido_compra: 1000, presentacion_modo: 'por_lote' };
   it('440 g guardados con factor 1 son 0.44 kg, no 440 kg', () => {
     expect(cantidadDesdeSaldo({ qty_captura: 440, factor: 1 }, pepino, {factor:1000})).toBe(.44);

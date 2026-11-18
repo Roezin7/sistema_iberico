@@ -28,6 +28,11 @@ export function formatosConteo(p: ProductoMedida, u?: UnidadMedida): FormatoCont
     if (!formatos.some(f => f.factor === factor && f.unidad === unidad && f.etiqueta === etiqueta)) formatos.push({ id, unidad, factor, etiqueta, referencia });
   };
   const contenido = Number(p.contenido_compra), unidad = nombreEnvase(p.unidad_compra || u?.unidad_captura);
+  if (base === 'pieza' && u && u.factor > 1) {
+    const referencia = p.presentacion_modo !== 'exacta';
+    add(u.unidad_captura || 'paquete', u.factor,
+      (u.unidad_captura || 'paquete') + ' · ' + textoContenido(u.factor, base) + (referencia ? ' (referencia)' : ''), referencia);
+  }
   const catalogo = () => {
     if (base === 'pieza') {
       add('pieza', 1, /\b\d+\s*(ml|g)\b/i.test(p.unidad_compra || '') ? p.unidad_compra! : 'pieza individual');
@@ -39,7 +44,7 @@ export function formatosConteo(p: ProductoMedida, u?: UnidadMedida): FormatoCont
   if (p.presentacion_modo === 'exacta' && base !== 'pieza') catalogo();
   for (const f of p.formatos_envase || []) {
     if (f.unidad === base) add(unidad === 'unidad' ? 'envase' : unidad, f.contenido, (unidad === 'unidad' ? 'envase' : unidad) + ' · ' + textoContenido(f.contenido, base));
-    else if (base === 'pieza' && ['ml','g'].includes(f.unidad)) add('pieza', 1, 'pieza · ' + textoContenido(f.contenido, f.unidad));
+    else if (base === 'pieza' && contenido <= 1 && ['ml','g'].includes(f.unidad)) add('pieza', 1, 'pieza · ' + textoContenido(f.contenido, f.unidad));
   }
   if (base === 'pieza') catalogo();
   for (const f of [...(p.presentaciones_observadas || [])].sort((a,b) => (b.ultima_fecha || '').localeCompare(a.ultima_fecha || ''))) {
