@@ -567,10 +567,10 @@ function CorteConfirmado({ evidencia, propina }: { evidencia: ConciliacionDiaria
 function DetalleVentasEpos({ filas, preview, metodoMixto }: { filas: EposVenta[]; preview: Map<number, CosteoVentaPreview>; metodoMixto: MetodoMixto | null }) {
   const estimadas=filas.filter(f=>f.costo_estimado).length;
   const parciales=filas.filter(f=>f.costo_fifo!=null&&f.costeo_estado!=='costeada').length;
-  const porProducto = new Map<string, { cantidad: number; venta: number; costo: number; aplicadas: number; disponibles: number; pendientes: number; excepciones: number }>();
+  const porProducto = new Map<string, { cantidad: number; venta: number; costo: number; aplicadas: number; disponibles: number; pendientes: number; excepciones: number;estimadas:number;parciales:number }>();
   const porMetodo = new Map<string, number>();
   filas.forEach((fila) => {
-    const previo = porProducto.get(fila.producto) ?? { cantidad: 0, venta: 0, costo: 0, aplicadas: 0, disponibles: 0, pendientes: 0, excepciones: 0 };
+    const previo = porProducto.get(fila.producto) ?? { cantidad: 0, venta: 0, costo: 0, aplicadas: 0, disponibles: 0, pendientes: 0, excepciones: 0,estimadas:0,parciales:0 };
     const vista = preview.get(fila.id);
     const aplicado = fila.costo_fifo != null || fila.costeo_estado === 'costeada';
     const disponible = !aplicado && vista?.estado === 'costeable';
@@ -584,7 +584,9 @@ function DetalleVentasEpos({ filas, preview, metodoMixto }: { filas: EposVenta[]
       cantidad: previo.cantidad + fila.cantidad,
       venta: previo.venta + (fila.venta_neta ?? fila.venta_bruta),
       costo: previo.costo + costo,
-      aplicadas: previo.aplicadas + (aplicado ? 1 : 0),
+      aplicadas: previo.aplicadas + (fila.costeo_estado==='costeada'&&!fila.costo_estimado ? 1 : 0),
+      estimadas:previo.estimadas+(fila.costo_estimado?1:0),
+      parciales:previo.parciales+(fila.costo_fifo!=null&&fila.costeo_estado!=='costeada'?1:0),
       disponibles: previo.disponibles + (disponible ? 1 : 0),
       pendientes: previo.pendientes + (esPendiente ? 1 : 0),
       excepciones: previo.excepciones + (esExcepcion ? 1 : 0),
@@ -607,7 +609,9 @@ function DetalleVentasEpos({ filas, preview, metodoMixto }: { filas: EposVenta[]
     {productosDisponibles > 0 && <div className="info-box info-box--compact"><strong>{productosDisponibles} producto(s) tienen costo FIFO disponible.</strong><span className="muted">El costo se aplica automáticamente al sincronizar las ventas; aquí se muestra el estado para revisión.</span></div>}
     {excepcionesReales > 0 && <div className="info-box info-box--compact"><strong>{excepcionesReales} producto(s) tienen una excepción real.</strong><span className="muted">Sólo se muestran aquí productos sin mapeo Epos o con inventario FIFO insuficiente.</span></div>}
     <div className="ventas-detalle__table table-wrap"><table><thead><tr><th>Producto</th><th>Unidades</th><th>Venta</th><th>Costo FIFO</th><th>Estado</th></tr></thead><tbody>
-      {productos.map(([producto, dato]) => <tr key={producto}><td><strong>{producto}</strong></td><td>{dato.cantidad}</td><td>{mxn(dato.venta)}</td><td>{dato.costo > 0 ? mxn(dato.costo) : '—'}</td><td><div className="ventas-detalle__statuses">
+      {productos.map(([producto, dato]) => <tr key={producto}><td><strong>{producto}</strong></td><td>{dato.cantidad}</td><td>{mxn(dato.venta)}</td><td>{dato.aplicadas+dato.estimadas+dato.parciales+dato.disponibles>0 ? mxn(dato.costo) : '—'}</td><td><div className="ventas-detalle__statuses">
+        {dato.estimadas>0&&<span className="status status--warning">Costo estimado · {dato.estimadas}</span>}
+        {dato.parciales>0&&<span className="status status--warning">Costo parcial · {dato.parciales}</span>}
         {dato.aplicadas > 0 && <span className="status status--ok">Costo aplicado · {dato.aplicadas}</span>}
         {dato.disponibles > 0 && <span className="status status--info">Costo disponible · {dato.disponibles}</span>}
         {dato.excepciones > 0 && <span className="status status--danger">Excepción real · {dato.excepciones}</span>}

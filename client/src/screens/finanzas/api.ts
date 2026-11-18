@@ -184,7 +184,7 @@ export interface EposVenta {
   venta_bruta: number; venta_neta: number | null; descuento: number;
   metodo_pago: string; costo_fifo: number | null;
   costeo_estado: string; costeo_error: string | null;
-  costo_estimado?:boolean;calidad_costo?:'incompleto'|'estimado'|'documentado';sustitucion_confirmada?:boolean;
+  costo_estimado?:boolean;calidad_costo?:'incompleto'|'estimado'|'asignado';sustitucion_confirmada?:boolean;
 }
 
 export interface CosteoVentaPreview {

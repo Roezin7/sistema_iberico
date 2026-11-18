@@ -363,7 +363,7 @@ function RecetasCfg() {
         {menu.length === 0 && <p className="muted">Aún no hay recetas cargadas.</p>}
         {menu.filter((p) => {
           const receta = p.recetas[0];
-          const calidad = filtroCalidad === 'sin_epos' ? p.epos_product_id == null : filtroCalidad === 'sin_receta' ? !receta : filtroCalidad === 'incompleta' ? !!receta && receta.lineas.some((l) => l.falta_configuracion.length > 0) : true;
+          const calidad = filtroCalidad === 'sin_epos' ? !(Number(p.epos_product_id)>0) : filtroCalidad === 'sin_receta' ? !receta : filtroCalidad === 'incompleta' ? !!receta && receta.lineas.some((l) => l.falta_configuracion.length > 0) : true;
           return calidad && p.nombre.toLowerCase().includes(filtroMenu.toLowerCase());
         }).map((p) => {
           const r = p.recetas[0];

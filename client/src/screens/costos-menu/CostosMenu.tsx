@@ -148,7 +148,7 @@ export default function CostosMenu() {
 
           <section className="menu-costos-kpis" aria-label="Resumen del costeo">
             <div className="menu-costos-kpi"><span>Productos de la carta</span><strong>{data.resumen.productos}</strong><small>activos en el catálogo</small></div>
-            <div className="menu-costos-kpi"><span>Con costo calculado</span><strong>{data.resumen.costeados}</strong><small>{data.resumen.pendientes} pendientes de completar</small></div>
+            <div className="menu-costos-kpi"><span>Con referencia de costo</span><strong>{data.resumen.costeados}</strong><small>{data.productos.filter(p=>p.fifo_disponible).length} con FIFO actual completo · {data.resumen.pendientes} sin referencia completa</small></div>
             <div className="menu-costos-kpi"><span>Food cost promedio</span><strong>{percent(data.resumen.food_cost_promedio)}</strong><small>promedio de productos con precio</small></div>
             <div className="menu-costos-kpi"><span>Margen promedio</span><strong>{money(data.resumen.margen_promedio)}</strong><small>por unidad vendida</small></div>
           </section>
@@ -194,7 +194,7 @@ function ResultadoMensual({ data }: { data: RespuestaResultado }) {
 }
 
 function ProductCard({ product }: { product: ProductoCosto }) {
-  const status = product.receta_id == null ? 'Sin receta' : product.completa ? 'Completo' : 'Pendiente';
+  const status = product.receta_id == null ? 'Sin receta' : product.completa ? 'Receta configurada' : 'Pendiente';
   const statusClass = product.receta_id == null ? 'is-missing' : product.completa ? 'is-ok' : 'is-pending';
   const seleccion = costoVisibleMenu(product);
   const costoVisible = seleccion.costo;

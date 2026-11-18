@@ -223,7 +223,7 @@ export async function listarVentasEpos(input: { negocioId: bigint; from?: string
     costo_fifo: row.costo_fifo == null ? null : Number(row.costo_fifo),
     costeo_estado: row.costeo_estado,
     costo_estimado:row.inventory_consumptions.some(c=>c.lote.costo_estimado),
-    calidad_costo:row.costeo_estado!=='costeada'?'incompleto':row.inventory_consumptions.some(c=>c.lote.costo_estimado)?'estimado':'documentado',
+    calidad_costo:row.costeo_estado!=='costeada'?'incompleto':row.inventory_consumptions.some(c=>c.lote.costo_estimado)?'estimado':'asignado',
     sustitucion_confirmada:row.sustituciones_json!=null,
     costeo_error: row.costeo_error,
   }));
