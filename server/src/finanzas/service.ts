@@ -1845,6 +1845,7 @@ export async function saludOperativa(negocioId: bigint) {
     catalogo: { productos_activos: productosActivos, sin_zona: sinZona, sin_categoria: sinCategoria, menu_activo: menuActivo, menu_sin_epos: menuSinEpos, menu_sin_receta: menuSinReceta, menu_sin_precio: menuSinPrecio },
     operacion: { compras_pendientes: comprasPendientes, ventas_pendientes: ventasPendientes, semanas_abiertas: semanasAbiertas, snapshots_sin_semana: snapshotsLegado },
     bloqueadores, advertencias,
+    patrones_inventario: controlFisico.alertas,
   };
 }
 

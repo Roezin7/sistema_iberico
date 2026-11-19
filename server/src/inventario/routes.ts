@@ -23,7 +23,8 @@ inventarioRouter.use(requireAuth);
 inventarioRouter.get('/disponibilidad-menu',asyncHandler(async(req,res)=>{res.json(await disponibilidadMenu(req.auth!.negocioId))}));
 
 inventarioRouter.get('/control', soloAdmin, asyncHandler(async (req, res) => {
-  res.json(await controlInventario(req.auth!.negocioId));
+  const semana=req.query.casos_semana==null?undefined:BigInt(z.coerce.number().int().positive().parse(req.query.casos_semana));
+  res.json(await controlInventario(req.auth!.negocioId,{semanaCasos:semana}));
 }));
 inventarioRouter.get('/control/:semanaId', soloAdmin, asyncHandler(async (req, res) => {
   res.json(await vistaPreviaControl(req.auth!.negocioId, BigInt(z.coerce.number().int().positive().parse(req.params.semanaId))));

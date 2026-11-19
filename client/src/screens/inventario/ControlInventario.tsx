@@ -3,6 +3,8 @@ import { api } from '../../api';
 import { useAuth } from '../../auth';
 import { useConfirm } from '../../ui/ConfirmProvider';
 import { inputHoraMexico, isoDesdeHoraMexico } from '../../operating';
+import { AvisosSistema, type PatronAviso } from '../../ui/AvisosSistema';
+import { pendientesSemana, type ResumenCasos } from './seguimiento';
 
 const num = (n: number) => n.toLocaleString('es-MX', { maximumFractionDigits: 4 });
 const money = (n: number | null) => n == null ? 'Costo pendiente' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
@@ -11,7 +13,7 @@ const label = (s: string) => (({cortesia:'cortesía',produccion:'producción',co
 type Fila = { product_id: number; producto: string; unidad: string; esperado: number; contado: number; diferencia: number; arrastre_previo: number; costo_estimado: boolean; no_cubierto: number };
 type Preview = { revision?:string; pendiente_conteo?:boolean; faltantes?:{product_id:number;producto:string;zona_id:number;zona:string;unidad:string}[]; confirmada: boolean; snapshot_id: number; corte_at: string; filas: Fila[]; advertencias: { mensaje: string }[] };
 type Caso = { id: number; semana_id: number; producto: string; unidad: string; origen: string; diferencia: number; valor: number | null; costo_estimado: boolean; causa: string; estado: string; responsable: string | null; nota: string | null; evidencia: string | null; version: number };
-type Control = { ventas_tardias?:{semana_id:number;ventas:number}[]; casos: Caso[]; alertas: { mensaje: string; cantidad: number; unidad: string; valor: number }[]; criterio_alerta: string; operaciones: { id: number; tipo: string; efectiva_at: string; motivo: string; pendiente_costo?: boolean }[] };
+type Control = { resumen_casos?:ResumenCasos[]; casos_completos?:boolean;casos_total?:number;ventas_tardias?:{semana_id:number;ventas:number}[]; casos: Caso[]; alertas: (PatronAviso & { cantidad: number; unidad: string; valor: number })[]; criterio_alerta: string; operaciones: { id: number; tipo: string; efectiva_at: string; motivo: string; pendiente_costo?: boolean }[] };
 
 export function ControlCiclo({ semanaId, onCambio }: { semanaId: number; onCambio?: () => void }) {
   const { usuario } = useAuth();
@@ -63,13 +65,13 @@ function Incidencia({ caso:c, onCambio }: { caso: Caso; onCambio:()=>void }) {
 }
 
 function SalidaInventario({ onCambio }: { onCambio:()=>void }) {
-  type Producto = { id:number; nombre:string; unidad_base:string };
+  type Producto = { id:number; nombre:string; unidad_base:string; active:boolean };
   const [productos,setProductos]=useState<Producto[]>([]), [zonas,setZonas]=useState<{id:number;nombre:string}[]>([]);
   const [tipo,setTipo]=useState('merma'), [hora,setHora]=useState(()=>inputHoraMexico(new Date().toISOString())), [motivo,setMotivo]=useState(''), [responsable,setResponsable]=useState('');
   const [lineas,setLineas]=useState([{product_id:'',zona_id:'',cantidad:'',entrada:false}]);
   const [busy,setBusy]=useState(false),[mensaje,setMensaje]=useState('');
   const [solicitud,setSolicitud]=useState(()=>crypto.randomUUID());
-  useEffect(()=>{Promise.all([api<Producto[]>('/catalogo/products'),api<{id:number;nombre:string}[]>('/catalogo/zonas')]).then(([p,z])=>{setProductos(p);setZonas(z);}).catch(()=>setMensaje('No se pudieron cargar productos y zonas'));},[]);
+  useEffect(()=>{Promise.all([api<Producto[]>('/catalogo/products'),api<{id:number;nombre:string}[]>('/catalogo/zonas')]).then(([p,z])=>{setProductos(p.filter(p=>p.active));setZonas(z);}).catch(()=>setMensaje('No se pudieron cargar productos y zonas'));},[]);
   return <details id="salida-inventario" open={new URLSearchParams(window.location.search).get('registro')==='salida'} className="card inventory-control"><summary><strong>Registrar merma, cortesía o producción</strong><small className="muted">Sólo salidas no registradas en Epos; sin movimiento de Caja.</small></summary>
     <form className="inventory-control__form" onSubmit={async e=>{e.preventDefault();setBusy(true);setMensaje('');try{const r=await api<{pendiente_costo:boolean}>('/inventario/operaciones',{method:'POST',body:{tipo,efectiva_at:isoDesdeHoraMexico(hora),motivo,responsable,solicitud_id:solicitud,lineas:lineas.map(l=>({product_id:Number(l.product_id),zona_id:Number(l.zona_id),cantidad:Math.abs(Number(l.cantidad))*(tipo==='produccion'&&l.entrada?1:-1)}))}});setMensaje(r.pendiente_costo?'Guardado. Hay costo pendiente; revisa sus lotes, no repitas la salida.':'Guardado una vez en físico y FIFO; sin egreso de dinero.');setLineas([{product_id:'',zona_id:'',cantidad:'',entrada:false}]);setMotivo('');setSolicitud(crypto.randomUUID());onCambio();}catch(e){setMensaje(e instanceof Error?e.message:'No se pudo guardar');}finally{setBusy(false);}}}>
       <label>Movimiento<select aria-label="Movimiento" value={tipo} onChange={e=>setTipo(e.target.value)}>{['merma','cortesia','consumo_interno','produccion'].map(t=><option key={t} value={t}>{label(t)}</option>)}</select></label>
@@ -93,14 +95,23 @@ function SalidaInventario({ onCambio }: { onCambio:()=>void }) {
 export default function ControlInventario() {
   const {usuario}=useAuth(); const [semanas,setSemanas]=useState<{id:number;etiqueta:string}[]>([]),[semana,setSemana]=useState(''),[data,setData]=useState<Control|null>(null),[error,setError]=useState('');
   const [verHistoricas,setVerHistoricas]=useState(false),[version,setVersion]=useState(0);
-  async function cargar(){try{setData(await api<Control>('/inventario/control'));setError('');}catch(e){setError(e instanceof Error?e.message:'No se pudo cargar seguimiento');}}
-  useEffect(()=>{if(usuario?.rol==='admin'){void cargar();api<{id:number;etiqueta:string}[]>('/finanzas/semanas').then(s=>{setSemanas(s);setSemana(v=>v||String(s[0]?.id??''));}).catch(()=>{});}},[usuario?.rol,version]);
+  const lectura=useRef(0);
+  async function cargar(){const revision=++lectura.current;setData(null);setError('');try{const nuevo=await api<Control>(`/inventario/control${semana?`?casos_semana=${semana}`:''}`);if(lectura.current===revision)setData(nuevo);}catch(e){if(lectura.current===revision)setError(e instanceof Error?e.message:'No se pudo cargar seguimiento');}}
+  useEffect(()=>{if(usuario?.rol==='admin')api<{id:number;etiqueta:string}[]>('/finanzas/semanas').then(s=>{setSemanas(s);setSemana(v=>v||String(s[0]?.id??''));}).catch(()=>setError('No se pudieron cargar las semanas'));},[usuario?.rol]);
+  useEffect(()=>{if(usuario?.rol==='admin'&&semana)void cargar();return()=>{lectura.current++;};},[usuario?.rol,semana,version]);
   if(usuario?.rol!=='admin')return null;
+  const resumen=data?.resumen_casos??data?.casos.map(c=>({semana_id:c.semana_id,estado:c.estado,origen:c.origen,total:1}))??[];
+  const otras=semanas.filter(s=>s.id!==Number(semana)).map(s=>({...s,pendientes:pendientesSemana(resumen,s.id)})).filter(s=>s.pendientes>0);
   return <>
     <details className="card inventory-control"><summary><strong>Cierre y siguiente apertura</strong><small className="muted">Conciliar por semana sin esperar el cierre bancario.</small></summary><label>Semana<select aria-label="Semana" value={semana} onChange={e=>setSemana(e.target.value)}>{semanas.map(s=><option key={s.id} value={s.id}>{s.etiqueta}</option>)}</select></label>{semana&&<ControlCiclo key={`${semana}:${version}`} semanaId={Number(semana)} onCambio={()=>{setVersion(v=>v+1);window.dispatchEvent(new Event('iberico-inventario-cambio'));}}/>}</details>
     <SalidaInventario onCambio={()=>{void cargar();window.dispatchEvent(new Event('iberico-inventario-cambio'));}}/>
-    <details className="card inventory-control"><summary><strong>Diferencias documentadas y alertas</strong><small className="muted">{data?.casos.filter(c=>c.estado!=='documentada'&&c.origen==='semanal'&&c.semana_id===Number(semana)).length??0} diferencias semanales por explicar en la semana seleccionada · no bloquean el cierre.</small></summary>
-      {error&&<p role="alert">{error}</p>}{data?.ventas_tardias?.map(v=><p className="info-box" key={v.semana_id}>{v.ventas} ventas llegaron después de conciliar la semana {v.semana_id}. No reducen otra vez el inventario físico. Revisa la explicación de la diferencia y su costo histórico.</p>)}{data?.alertas.map((a,i)=><p className="info-box" key={i}>{a.mensaje} {num(a.cantidad)} {a.unidad} · {money(a.valor)}</p>)}<p className="muted">{data?.criterio_alerta}</p>
+    <details className="card inventory-control"><summary><strong>Diferencias documentadas y alertas</strong><small className="muted">{data?pendientesSemana(resumen,Number(semana),true):'…'} diferencias semanales por explicar en la semana seleccionada · no bloquean el cierre.</small></summary>
+      {error&&<p role="alert">{error}</p>}{data?.ventas_tardias?.map(v=><p className="info-box" key={v.semana_id}>{v.ventas} ventas llegaron después de conciliar la semana {v.semana_id}. No reducen otra vez el inventario físico. Revisa la explicación de la diferencia y su costo histórico.</p>)}
+      {data&&<AvisosSistema advertencias={[]} patrones={data.alertas.map(a=>({...a,mensaje:`${a.mensaje} ${num(a.cantidad)} ${a.unidad} · ${money(a.valor)}`}))}/>}
+      <p className="muted">{data?.criterio_alerta}</p>
+      {!data&&!error&&<p role="status">Revisando seguimiento de la semana…</p>}
+      {data?.casos_completos===false&&<p role="alert">Se muestran {data.casos.length} de {data.casos_total} casos. Selecciona una semana para consultar todos sus casos.</p>}
+      {!!otras.length&&<details className="alert-history"><summary>Diferencias de otras semanas · {otras.reduce((s,r)=>s+r.pendientes,0)} casos por explicar</summary><p className="muted">Conservan su semana original; no son pérdidas nuevas de la semana seleccionada. Elige una semana para revisar todos sus casos sin crear otra salida.</p>{otras.map(s=><p key={s.id}><button className="link-btn" onClick={()=>setSemana(String(s.id))}>{s.etiqueta} · {s.pendientes} por explicar</button></p>)}</details>}
       <label>Semana<select aria-label="Semana" value={semana} onChange={e=>setSemana(e.target.value)}>{semanas.map(s=><option key={s.id} value={s.id}>{s.etiqueta}</option>)}</select></label>
       <label><input type="checkbox" checked={verHistoricas} onChange={e=>setVerHistoricas(e.target.checked)}/> Incluir brecha anterior al ciclo (no es pérdida semanal nueva)</label>
       {data?.casos.filter(c=>c.semana_id===Number(semana)&&(verHistoricas||c.origen==='semanal')).sort((a,b)=>(b.valor??0)-(a.valor??0)).map(c=><Incidencia key={`${c.id}:${c.version}`} caso={c} onCambio={cargar}/>)}

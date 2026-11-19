@@ -121,5 +121,16 @@ try {
   assert.equal(await db.movimientos.count({where:{negocio_id:negocioId}}),movAntes);
   await assert.rejects(()=>actualizarRecepcionReal(negocioId,u.id,BigInt(draft1.purchase_id),d('2026-10-24').toISOString()),/conciliado|posterior/);
   checks.push('Venta antigua importada después del cierre no descuenta apertura nueva; genera advertencia histórica');
+  const casosAntes=await db.inventory_variance_cases.findMany({where:{negocio_id:negocioId},orderBy:{id:'asc'}});
+  const historicoFiltrado=await controlInventario(negocioId,{semanaCasos:w.id});
+  assert.equal(historicoFiltrado.casos.length,casosAntes.filter(c=>c.semana_id===w.id).length);
+  assert(historicoFiltrado.casos.every(c=>c.semana_id===Number(w.id)));
+  assert.equal(historicoFiltrado.casos_completos,true);
+  assert.equal(historicoFiltrado.resumen_casos.reduce((s,r)=>s+r.total,0),casosAntes.length);
+  const seguimientoActual=await controlInventario(negocioId,{semanaCasos:tercera.id});
+  assert.equal(seguimientoActual.casos.length,0);
+  assert.equal(seguimientoActual.resumen_casos.reduce((s,r)=>s+r.total,0),casosAntes.length);
+  assert.deepEqual(await db.inventory_variance_cases.findMany({where:{negocio_id:negocioId},orderBy:{id:'asc'}}),casosAntes);
+  checks.push('El seguimiento separa semana actual e histórico completo por semana; conserva los contadores y no clasifica ni borra casos');
   console.log(JSON.stringify({ok:true,negocio_qa:Number(negocioId),checks,cierres:[first.cierre_id,second.cierre_id],production_writes:0}));
 } finally { await db.$disconnect(); }

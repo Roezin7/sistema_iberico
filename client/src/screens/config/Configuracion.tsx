@@ -9,6 +9,7 @@ import { Cargando } from '../../ui/Cargando';
 import CostosMenu from '../costos-menu/CostosMenu';
 import Facturacion from '../facturacion/Facturacion';
 import Marketing from '../marketing/Marketing';
+import { metricasCatalogo } from './calidad-catalogo';
 
 const mxn = (n: number | null) =>
   n == null ? '—' : n.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
@@ -451,6 +452,7 @@ function InventarioCfg() {
   }, [productos, productoSolicitado]);
 
   const productoSeleccionado = filtrados.find((p) => p.id === seleccionado) ?? null;
+  const metricas = metricasCatalogo(productos);
   const recargar = () => { void cargar(); };
 
   return (
@@ -461,9 +463,10 @@ function InventarioCfg() {
           <p className="muted">Nombre, tienda, mínimo y presentación.</p>
         </div>
         <div className="config-stats">
-          <span><b>{productos.filter((p) => p.active).length}</b> activos</span>
-          <span><b>{productos.filter((p) => p.unidad_base && p.contenido_compra).length}</b> con conversión</span>
-          <span><b>{productos.filter((p) => !p.unidad_base || !p.contenido_compra).length}</b> por configurar</span>
+          <span><b>{metricas.activos}</b> activos</span>
+          <span><b>{metricas.conConversion}</b> activos con conversión</span>
+          <span><b>{metricas.porConfigurar}</b> activos por configurar</span>
+          <span><b>{metricas.inactivos}</b> retirados · sólo historial</span>
         </div>
       </div>
       <details className="config-advanced">

@@ -6,6 +6,7 @@ import { instanteReal } from './cronologia.js';
 import { filtroConsumoFifoActivo } from './fuentes.js';
 import { bloquearLibro, exigirPeriodoMutable } from './control-cierre.js';
 import { cargarLibroFisico, efectivaLote, ordenLote, diaDb, q4 } from './libro-fisico.js';
+import { patronesInventario } from './patrones.js';
 
 export const CAUSAS_INVENTARIO = ['sin_explicar', 'merma', 'cortesia', 'consumo_interno', 'error_conteo', 'error_presentacion', 'compra_omitida', 'venta_omitida', 'receta', 'arrastre_previo'] as const;
 export interface OperacionInput {
@@ -109,12 +110,13 @@ export async function clasificarDiferencia(negocioId: bigint, usuarioId: bigint,
   });
 }
 
-export async function controlInventario(negocioId: bigint) {
-  const [casos, cierres, productos, operaciones] = await Promise.all([
-    prisma.inventory_variance_cases.findMany({ where: { negocio_id: negocioId }, orderBy: [{ semana_id: 'desc' }, { id: 'desc' }], take: 500 }),
+export async function controlInventario(negocioId: bigint, opciones: {semanaCasos?:bigint} = {}) {
+  const [casos, cierres, productos, operaciones, resumenCasos] = await Promise.all([
+    prisma.inventory_variance_cases.findMany({ where: { negocio_id: negocioId, semana_id:opciones.semanaCasos }, orderBy: [{ semana_id: 'desc' }, { id: 'desc' }], ...(opciones.semanaCasos==null?{take:500}:{}) }),
     prisma.inventory_control_closures.findMany({ where: { negocio_id: negocioId }, orderBy: { corte_at: 'desc' }, take: 12 }),
     prisma.products.findMany({ where: { negocio_id: negocioId }, select: { id: true, name: true, unidad_base: true } }),
     prisma.inventory_operations.findMany({ where: { negocio_id: negocioId }, orderBy: { efectiva_at: 'desc' }, take: 30 }),
+    prisma.inventory_variance_cases.groupBy({by:['semana_id','estado','origen'],where:{negocio_id:negocioId},_count:{_all:true}}),
   ]);
   const operacionesParaAlertas = await prisma.inventory_operations.findMany({where:{negocio_id:negocioId,semana_id:{in:cierres.slice(0,4).map(c=>c.semana_id)}}});
   const todasOperaciones=[...new Map([...operaciones,...operacionesParaAlertas].map(o=>[String(o.id),o])).values()];
@@ -122,19 +124,13 @@ export async function controlInventario(negocioId: bigint) {
   const serializarCaso = (c: typeof casos[number]) => ({ ...c, id: Number(c.id), negocio_id: undefined, cierre_id: Number(c.cierre_id), semana_id: Number(c.semana_id), product_id: Number(c.product_id), producto: productos.find(p => p.id === c.product_id)?.name ?? 'Producto', unidad: productos.find(p => p.id === c.product_id)?.unidad_base, esperado: Number(c.esperado), contado: Number(c.contado), diferencia: Number(c.diferencia), costo_unitario: c.costo_unitario == null ? null : Number(c.costo_unitario), valor: c.costo_unitario == null ? null : q4(Math.abs(Number(c.diferencia)) * Number(c.costo_unitario)) });
   const casosSerializados=casos.map(serializarCaso);
   const casosRecientes=(await prisma.inventory_variance_cases.findMany({where:{negocio_id:negocioId,cierre_id:{in:cierres.slice(0,4).map(c=>c.id)}}})).map(serializarCaso);
-  const recientes = new Set(cierres.slice(0, 4).map(c => c.id.toString()));
-  const patrones = new Map<string, { producto: string; semanas: Set<number>; cantidad: number; valor: number; signo: string; causa: string; unidad: string | null | undefined }>();
-  for (const c of casosRecientes.filter(c => c.origen === 'semanal' && recientes.has(String(c.cierre_id)) && c.diferencia !== 0 && !['error_conteo','error_presentacion','compra_omitida','venta_omitida','receta'].includes(c.causa))) {
-    const signo = c.diferencia < 0 ? 'faltante' : 'sobrante'; const key = `${c.product_id}:${signo}:${c.causa}`;
-    const p = patrones.get(key) ?? { producto: c.producto, semanas: new Set(), cantidad: 0, valor: 0, signo, causa: c.causa, unidad: c.unidad };
-    p.semanas.add(c.semana_id); p.cantidad += Math.abs(c.diferencia); p.valor += c.valor ?? 0; patrones.set(key, p);
-  }
   const semanasRecientes=new Set(cierres.slice(0,4).map(c=>String(c.semana_id)));
-  for(const o of operacionesParaAlertas.filter(o=>['merma','cortesia','consumo_interno'].includes(o.tipo)&&semanasRecientes.has(String(o.semana_id)))) for(const l of lineasOperacion.filter(l=>l.operacion_id===o.id&&Number(l.cantidad)<0)) {
-    const prod=productos.find(p=>p.id===l.product_id); const key=`${l.product_id}:faltante:${o.tipo}`;
-    const p=patrones.get(key)??{producto:prod?.name??'Producto',semanas:new Set<number>(),cantidad:0,valor:0,signo:'faltante',causa:o.tipo,unidad:prod?.unidad_base};p.semanas.add(Number(o.semana_id));p.cantidad+=Math.abs(Number(l.cantidad));p.valor+=Number(l.costo_total??0);patrones.set(key,p);
-  }
+  const salidasParaPatrones=operacionesParaAlertas.filter(o=>semanasRecientes.has(String(o.semana_id))).flatMap(o=>lineasOperacion.filter(l=>l.operacion_id===o.id).map(l=>{
+    const prod=productos.find(p=>p.id===l.product_id);
+    return {product_id:Number(l.product_id),producto:prod?.name??'Producto',semana_id:Number(o.semana_id),tipo:o.tipo,cantidad:Number(l.cantidad),valor:Number(l.costo_total??0),unidad:prod?.unidad_base};
+  }));
   const ventasTardias = await Promise.all(cierres.map(async c=>({semana_id:Number(c.semana_id),ventas:await prisma.epos_ventas.count({where:{negocio_id:negocioId,fecha:{lte:c.corte_at,gte:new Date(`${(await prisma.semanas.findUniqueOrThrow({where:{id:c.semana_id}})).fecha_inicio.toISOString().slice(0,10)}T00:00:00-06:00`)},creado_at:{gt:c.creado_at}}})})));
-  const alertas = [...patrones.values()].filter(p => p.semanas.size >= 2).map(p => ({ ...p, semanas: [...p.semanas], cantidad: q4(p.cantidad), valor: q4(p.valor), mensaje: `${p.producto}: ${p.signo} en ${p.semanas.size} cierres distintos de los últimos cuatro. Causa: ${p.causa}.` }));
-  return { ventas_tardias:ventasTardias.filter(v=>v.ventas>0), casos: casosSerializados, alertas, cierres: cierres.map(c => ({ id: Number(c.id), semana_id: Number(c.semana_id), corte_at: c.corte_at, snapshot_id: Number(c.snapshot_id) })), operaciones: operaciones.map(o => ({ id: Number(o.id), tipo: o.tipo, efectiva_at: o.efectiva_at, motivo: o.motivo, responsable: o.responsable, clasificacion_epos: !!o.epos_venta_id, pendiente_costo: lineasOperacion.some(l=>l.operacion_id===o.id && (Number(l.pendiente_cantidad)>0 || l.costo_estimado)) })), criterio_alerta: 'Aviso de repetición en al menos dos de los últimos cuatro cierres; no es tolerancia de merma ni prueba de causa.' };
+  const alertas = patronesInventario(casosRecientes,salidasParaPatrones);
+  const totalCasos=resumenCasos.filter(r=>opciones.semanaCasos==null||r.semana_id===opciones.semanaCasos).reduce((s,r)=>s+r._count._all,0);
+  return { ventas_tardias:ventasTardias.filter(v=>v.ventas>0), casos: casosSerializados, casos_total:totalCasos, casos_completos:casos.length===totalCasos, resumen_casos:resumenCasos.map(r=>({semana_id:Number(r.semana_id),estado:r.estado,origen:r.origen,total:r._count._all})), alertas, cierres: cierres.map(c => ({ id: Number(c.id), semana_id: Number(c.semana_id), corte_at: c.corte_at, snapshot_id: Number(c.snapshot_id) })), operaciones: operaciones.map(o => ({ id: Number(o.id), tipo: o.tipo, efectiva_at: o.efectiva_at, motivo: o.motivo, responsable: o.responsable, clasificacion_epos: !!o.epos_venta_id, pendiente_costo: lineasOperacion.some(l=>l.operacion_id===o.id && (Number(l.pendiente_cantidad)>0 || l.costo_estimado)) })), criterio_alerta: 'Aviso de repetición en al menos dos de los últimos cuatro cierres; no es tolerancia de merma ni prueba de causa.' };
 }
