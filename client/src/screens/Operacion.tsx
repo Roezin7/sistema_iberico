@@ -8,6 +8,7 @@ import { mxn, type ConciliacionDiaria, type DiaFila, type Resumen, type SaludOpe
 import { todayMexico, weekLabel, weekStateLabel } from '../operating';
 import { TareasDelDia } from './tareas/Tareas';
 import { textoMedida } from '../../../server/src/lib/medidas-operativas';
+import { separarAvisos } from '../ui/AvisosSistema';
 
 interface InventarioActual { valor_total: number; valor_fifo_actual_total: number; valoracion_fifo: { provisional: boolean; productos_con_diferencia_cantidad: number }; productos: ProductoInventario[]; sin_costo: { product_id: number; nombre: string }[]; lista_compras?: ListaCompras }
 interface ProductoInventario { product_id: number; nombre: string; total_operativo: number; minimo_operativo: number; faltante_operativo?: number; unidad_operativa: string; fuente_valoracion: string; }
@@ -49,7 +50,10 @@ function actionFromHealth(salud: SaludOperativa | null, semana: Semana | null, r
   const diferencias = caja?.ubicaciones.filter((u) => u.descuadre != null && Math.abs(u.descuadre) > 0.01) ?? [];
   if (semana && diferencias.length) items.push({ id:'cash-difference',title:'Conciliar caja y banco',description:diferencias.map((u) => `${u.nombre}: ${mxn(u.descuadre)}`).join(' · '),href:`/finanzas?semana=${semana.id}&tab=cuadre`,tone:'warning',label:'Revisar arqueo' });
   if (semana && !semana.cerrada_at && conciliaciones.filter((c) => c.fecha >= semana.fecha_inicio && c.fecha <= semana.fecha_fin).length === 0) items.push({ id: 'daily-cut', title: 'Confirmar corte diario', description: 'Importa las ventas de Epos y confirma los métodos de pago del día.', href: `/finanzas?semana=${semana.id}&tab=dia`, tone: 'info', label: 'Abrir corte' });
-  (salud?.advertencias ?? []).slice(0, 3).forEach((description, i) => items.push({ id: `warn-${i}`, title: 'Revisar advertencia', description, href: destinoProblema(description), tone: 'warning', label: 'Corregir ahora' }));
+  const avisos=separarAvisos(salud?.advertencias??[],salud?.patrones_inventario);
+  avisos.operativos.slice(0,3).forEach((description,i)=>items.push({id:`warn-${i}`,title:'Revisar advertencia actual',description,href:destinoProblema(description),tone:'warning',label:'Corregir ahora'}));
+  if(avisos.pendientes.length)items.push({id:'historical-patterns',title:'Seguimiento de cierres anteriores',description:`${avisos.pendientes.length} patrones históricos por explicar. No son pérdidas nuevas de esta semana.`,href:'/inventario?tab=actual&seguimiento=1#seguimiento-inventario',tone:'info',label:'Revisar histórico'});
+  if(avisos.documentados.length)items.push({id:'documented-trends',title:'Tendencias documentadas',description:`${avisos.documentados.length} patrones ya explicados siguen bajo seguimiento.`,href:'/inventario?tab=actual&seguimiento=1#seguimiento-inventario',tone:'info',label:'Ver tendencias'});
   if (!items.length) items.push({ id: 'ok', title: 'Operación en orden', description: 'No hay bloqueadores críticos. Mantén el registro diario y confirma el cierre cuando corresponda.', href: '/', tone: 'success', label: 'Ver operación' });
   return items.slice(0, 6);
 }

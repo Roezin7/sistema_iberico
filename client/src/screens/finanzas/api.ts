@@ -1,4 +1,5 @@
 import { api } from '../../api';
+import type { PatronAviso } from '../../ui/AvisosSistema';
 
 export type TipoMov =
   | 'venta_efectivo' | 'venta_tarjeta' | 'propina_tarjeta' | 'comision_terminal' | 'gasto'
@@ -105,6 +106,7 @@ export interface SaludOperativa {
   operacion: { compras_pendientes: number; ventas_pendientes: number; semanas_abiertas: number; snapshots_sin_semana: number };
   bloqueadores: string[];
   advertencias: string[];
+  patrones_inventario?: PatronAviso[];
 }
 
 export interface TableroSnapshot {
