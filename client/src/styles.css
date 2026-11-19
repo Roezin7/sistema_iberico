@@ -2655,6 +2655,7 @@ select:disabled {
 .system-health__list--muted { border-left-color: var(--warning); background: var(--warning-bg); }
 .alert-history { margin-block: .75rem; padding: .65rem .8rem; border: 1px solid var(--border); border-radius: var(--r-input); min-width: 0; }
 .alert-history summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+#seguimiento-inventario { scroll-margin-top: 6rem; }
 .alert-history .system-health__list { max-height: 26rem; overflow-y: auto; overflow-wrap: anywhere; }
 .inventory-history { margin-top: 1rem; }
 .inventory-history > summary { display: flex; justify-content: space-between; align-items: baseline; gap: .75rem; padding: .8rem; cursor: pointer; list-style: none; }

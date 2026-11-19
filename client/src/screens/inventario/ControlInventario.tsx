@@ -99,6 +99,7 @@ export default function ControlInventario() {
   async function cargar(){const revision=++lectura.current;setData(null);setError('');try{const nuevo=await api<Control>(`/inventario/control${semana?`?casos_semana=${semana}`:''}`);if(lectura.current===revision)setData(nuevo);}catch(e){if(lectura.current===revision)setError(e instanceof Error?e.message:'No se pudo cargar seguimiento');}}
   useEffect(()=>{if(usuario?.rol==='admin')api<{id:number;etiqueta:string}[]>('/finanzas/semanas').then(s=>{setSemanas(s);setSemana(v=>v||String(s[0]?.id??''));}).catch(()=>setError('No se pudieron cargar las semanas'));},[usuario?.rol]);
   useEffect(()=>{if(usuario?.rol==='admin'&&semana)void cargar();return()=>{lectura.current++;};},[usuario?.rol,semana,version]);
+  useEffect(()=>{if(usuario?.rol==='admin'&&new URLSearchParams(window.location.search).get('seguimiento')==='1')document.getElementById('seguimiento-inventario')?.scrollIntoView({block:'start'});},[usuario?.rol]);
   if(usuario?.rol!=='admin')return null;
   const resumen=data?.resumen_casos??data?.casos.map(c=>({semana_id:c.semana_id,estado:c.estado,origen:c.origen,total:1}))??[];
   const otras=semanas.filter(s=>s.id!==Number(semana)).map(s=>({...s,pendientes:pendientesSemana(resumen,s.id)})).filter(s=>s.pendientes>0);
